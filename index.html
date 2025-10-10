@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com;">
+    <title>Teleprompter</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="app-container">
+
+        <header class="top-ribbon">
+            <button id="btn-new-script" title="New Script"><i class="fa-solid fa-file"></i></button>
+            <button id="btn-open-file" title="Open File"><i class="fa-solid fa-folder-open"></i></button>
+            <button id="btn-save" title="Save"><i class="fa-solid fa-save"></i></button>
+            <span class="divider"></span>
+            <button id="btn-start" title="Start Teleprompting"><i class="fa-solid fa-play"></i></button>
+            <button id="btn-extend-monitor" title="Extend Monitor"><i class="fa-solid fa-display"></i></button>
+            <span class="divider"></span>
+            <button id="btn-prev-bookmark" title="Previous Bookmark"><i class="fa-solid fa-backward"></i></button>
+            <button id="btn-next-bookmark" title="Next Bookmark"><i class="fa-solid fa-forward"></i></button>
+            <button id="btn-new-bookmark" title="New Bookmark"><i class="fa-solid fa-bookmark"></i></button>
+            <span class="divider"></span>
+            <button id="btn-font-settings" title="Font Settings"><i class="fa-solid fa-font"></i></button>
+            <button id="btn-bg-color" title="Background Color"><i class="fa-solid fa-fill-drip"></i></button>
+            <button id="btn-font-color" title="Font Color"><i class="fa-solid fa-palette"></i></button>
+            <button id="btn-bold" title="Bold"><i class="fa-solid fa-bold"></i></button>
+            <button id="btn-italic" title="Italic"><i class="fa-solid fa-italic"></i></button>
+            <button id="btn-underline" title="Underline"><i class="fa-solid fa-underline"></i></button>
+            <span class="divider"></span>
+            <button id="btn-toggle-runlist" title="Show/Hide Runlist"><i class="fa-solid fa-list-alt"></i></button>
+        </header>
+
+        <main class="content-area">
+            <div id="teleprompter-view">
+                <div id="indicator-bar" class="indicator stopped"></div>
+                <div id="indicator-triangle" class="indicator stopped"></div>
+                <div id="teleprompter-text" contenteditable="true">
+                    Welcome to your new teleprompter. Start typing, paste your script, or open a file to begin...
+                </div>
+            </div>
+            <div id="resizer"></div>
+            <aside id="runlist-panel">
+                <div class="runlist-ribbon">
+                    <button title="New Runlist"><i class="fa-solid fa-file-circle-plus"></i></button>
+                    <button title="Load Runlist"><i class="fa-solid fa-folder-open"></i></button>
+                    <button title="Save Runlist"><i class="fa-solid fa-save"></i></button>
+                    <span class="divider"></span>
+                    <button title="Add File(s)"><i class="fa-solid fa-plus"></i></button>
+                    <button title="Remove File"><i class="fa-solid fa-trash"></i></button>
+                    <span class="divider"></span>
+                    <button title="Move Up"><i class="fa-solid fa-arrow-up"></i></button>
+                    <button title="Move Down"><i class="fa-solid fa-arrow-down"></i></button>
+                </div>
+                <div class="runlist-files"></div>
+                <div class="birds-eye-view"></div>
+            </aside>
+        </main>
+    </div>
+
+    <input type="file" id="file-opener" style="display: none;" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.7.1/mammoth.browser.min.js"></script>
+    <script src="renderer.js" defer></script>
+</body>
+</html>

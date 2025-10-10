@@ -1,0 +1,186 @@
+/* Basic Setup and Variables */
+:root {
+    --primary-bg: #282c34;
+    --secondary-bg: #1e2127;
+    --border-color: #444;
+    --font-color: #abb2bf;
+    --button-hover: #3a3f4b;
+    --indicator-red: rgba(255, 0, 0, 0.5);
+    --indicator-green: rgba(0, 255, 0, 0.5);
+    --indicator-yellow: rgba(255, 255, 0, 0.5);
+    --highlight-green: rgba(76, 175, 80, 0.3);
+    --highlight-red: rgba(244, 67, 54, 0.3);
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: sans-serif;
+    background-color: var(--primary-bg);
+    color: var(--font-color);
+    overflow: hidden;
+}
+
+/* Main Layout */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+.content-area {
+    display: flex;
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+/* Top Ribbon Styling */
+.top-ribbon {
+    background-color: var(--secondary-bg);
+    padding: 5px;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.top-ribbon button {
+    background: none;
+    border: none;
+    color: var(--font-color);
+    font-size: 18px;
+    padding: 8px 12px;
+    margin: 0 2px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.top-ribbon button:hover {
+    background-color: var(--button-hover);
+}
+
+.divider {
+    border-left: 1px solid var(--border-color);
+    height: 25px;
+    margin: 0 8px;
+}
+
+/* Teleprompter View */
+#teleprompter-view {
+    position: relative;
+    background-color: black;
+    color: white;
+    overflow-y: scroll;
+    flex: 1 1 0%;
+}
+
+#teleprompter-text {
+    padding: 5%;
+    font-size: 48px;
+    line-height: 1.5;
+    outline: none;
+}
+
+/* Indicator Styling */
+.indicator {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    z-index: 1;
+    transition: background-color 0.3s ease;
+}
+#indicator-bar {
+    height: 100px;
+    top: 40%;
+    opacity: 0.4;
+}
+#indicator-triangle {
+    width: 0;
+    height: 0;
+    border-top: 20px solid transparent;
+    border-bottom: 20px solid transparent;
+    border-left: 30px solid;
+    top: 45%;
+    background-color: transparent !important;
+}
+
+.indicator.stopped { background-color: var(--indicator-red); border-left-color: var(--indicator-red); }
+.indicator.running { background-color: var(--indicator-green); border-left-color: var(--indicator-green); }
+.indicator.paused { background-color: var(--indicator-yellow); border-left-color: var(--indicator-yellow); }
+
+
+/* Runlist Panel */
+#runlist-panel {
+    background-color: var(--secondary-bg);
+    border-left: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    width: 350px;
+    flex-shrink: 0;
+}
+
+.runlist-ribbon {
+    padding: 5px;
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+}
+.runlist-ribbon button {
+    background: none;
+    border: none;
+    color: var(--font-color);
+    font-size: 18px;
+    padding: 8px 12px;
+    margin: 0 2px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+.runlist-ribbon button:hover { background-color: var(--button-hover); }
+
+.runlist-files {
+    flex-grow: 1;
+    overflow-y: hidden;
+    overflow-x: auto;
+    padding: 10px;
+}
+
+.birds-eye-view {
+    height: 200px;
+    background-color: #111;
+    border-top: 1px solid var(--border-color);
+    margin: 5px;
+}
+
+.runlist-item {
+    padding: 8px 10px;
+    margin-bottom: 5px; 
+    background-color: var(--primary-bg);
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    transition: background-color 0.2s;
+    white-space: nowrap; 
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+}
+
+.runlist-item:hover {
+    background-color: var(--button-hover);
+}
+
+.runlist-item::before {
+    content: '●'; 
+    color: var(--font-color);
+    margin-right: 10px;
+    font-size: 12px;
+}
+
+#resizer {
+    width: 5px;
+    background-color: var(--border-color);
+    cursor: col-resize; 
+    flex-shrink: 0;
+}
+
+/* Row Highlighting */
+.row-source-longer { background-color: var(--highlight-green); }
+.row-source-shorter { background-color: var(--highlight-red); }
