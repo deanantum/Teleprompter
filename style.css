@@ -1,1166 +1,354 @@
+/* Basic Setup and Variables */
 :root {
-  --lyric-bg-color: #ffffff;
-  --lyric-highlight-color: #fef08a;
-  --transition-speed: 0.5s;
-  --underline-glow-color: #f59e0b;
-  --dot-color: #d81b60; /* Default color for the dot */
-  /* --- Default Font Colors --- */
-  --lyric-font-color-active-English: #000000;
-  --lyric-font-color-inactive-English: #4b5563;
-  --lyric-font-color-active-Spanish: #1e88e5;
-  --lyric-font-color-inactive-Spanish: #8ab4f8;
-  --lyric-font-color-active-ASL: #d81b60;
-  --lyric-font-color-inactive-ASL: #f48fb1;
-  --lyric-font-color-active-Custom: #000000;
-  --lyric-font-color-inactive-Custom: #4b5563;
-  /* Font Sizes */
-  --lyric-font-size-English: 3rem;
-  --lyric-font-size-Spanish: 3rem;
-  --lyric-font-size-ASL: 3rem;
-  --lyric-font-size-Custom: 3rem;
+    --primary-bg: #282c34;
+    --secondary-bg: #1e2127;
+    --border-color: #444;
+    --font-color: #abb2bf;
+    --button-hover: #3a3f4b;
+    --indicator-red: rgba(255, 0, 0, 0.5);
+    --indicator-green: rgba(0, 255, 0, 0.5);
+    --indicator-yellow: rgba(255, 255, 0, 0.5);
+    --highlight-green: rgba(76, 175, 80, 0.3);
+    --highlight-red: rgba(244, 67, 54, 0.3);
 }
-* {
-  box-sizing: border-box;
-}
+
 body {
-  background-color: #f3f4f6;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  margin: 0;
-  /*height: 100vh;*/
-  overflow-y: auto;
-  /*overflow: hidden; /* Prevent the whole page from scrolling */
-  padding: 1rem;
-}
-button {
-  border: none;
-  cursor: pointer;
-  padding: 0.4rem 0.6rem;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: #f9fafb;
-  font-size: 0.9rem;
-  font-weight: 500;
-}
-button:hover {
-  opacity: 0.8;
-}
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-input {
-  color: #181028;
-  font-size: 1.1rem;
-  font-weight: 500;
-}
-input:focus {
-  outline: 2px solid #181028;
-}
-input::placeholder {
-  color: rgba(24, 16, 40, 0.6);
-}
-.page {
-  display: grid;
-  grid-template-columns: 1fr 400px;
-  gap: 1.5rem;
-  
-  /* 1. Ensure page fills the visible screen (minus body padding) */
-  min-height: calc(100vh - 2rem); 
-  height: auto;
-  
-  padding: 0;
-  box-sizing: border-box;
-}
-.page.custom-view-active {
-  grid-template-columns: 1fr;
-}
-.page.custom-view-active .controls-panel {
-  display: none;
-}
-@media (max-width: 1000px) {
-  .page {
-    display: flex;
-    flex-direction: column;
-    min-height: 100vh;
-  }
-  .lyrics-panel {
-    flex-shrink: 0;
-    height: auto; 
-    position: static; 
-    min-height: 60vh;
-  }
-  .controls-panel {
-    flex-grow: 1;
-    min-height: 0;
-    padding-bottom: 4rem;
-  }
-}
-.panel {
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 1.5rem;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-  display: flex;
-  flex-direction: column;
-}
-.lyrics-panel {
-  gap: 1rem;
-  align-self: start;
-  height: calc(100vh - 3rem);
-  position: sticky;
-  top: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-height: 0; /* Ensure it fills the grid column */
-}
-.lyrics-panel.custom-view-active {
-  align-self: stretch;
-}
-h1 { margin: 0; font-size: 1.75rem; text-align: center; border-bottom: 1px solid #e5e7eb; padding-bottom: 1rem; }
-#custom-lyrics-entry {
-  display: none;
-  flex-direction: column;
-  gap: 1rem;
-  flex-grow: 1;
-}
-#customLyricsTextarea {
-  flex-grow: 1;
-  border-radius: 8px;
-  border: 1px solid #d1d5db;
-  padding: 1rem;
-  font-size: 1.5rem;
-  line-height: 1.5;
-  resize: none;
-}
-.custom-lyrics-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-}
-.custom-lyrics-actions button {
-  padding: .8rem 1rem;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  background: #ADD8E6;
-  font-size: 1.1rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-.custom-lyrics-actions button.primary {
-  background-color: #2b6cb0;
-  color: white;
-  border-color: #2b6cb0;
-}
-#live-line-counter {
-  display: flex;
-  justify-content: space-around;
-  padding: 0.5rem;
-  background-color: #f9fafb;
-  border-radius: 6px;
-  border: 1px solid #e5e7eb;
-}
-.lyrics-viewport {
-  /* 3. This is the key: Force viewport to fill remaining space */
-  flex-grow: 1; 
-  height: 100%; /* Override JS inline styles */
-  /*min-height: 300px; /* Safety minimum */
-  
-  width: 100%;
-  overflow: hidden;
-  position: relative;
-}
-.lyrics-viewport.is-counting-down #lyrics-container {
-  visibility: hidden;
-}
-#lyrics-container {
-  padding: 0; /* CHANGED: Was padding: 0 1.5rem; */
-  width: 100%;
-  transition: transform var(--transition-speed) ease-in-out;
-}
-.lyric-line-group {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-bottom: 1rem;
-  /* Force full width */
-  width: 100% !important;
-  /* MOVE PADDING HERE: Permanent padding ensures consistent width for JS calculation */
-  padding: 0.5rem 2rem;
-  box-sizing: border-box;
-}
-.lyric-line {
-  /* Visual Styles */
-  line-height: 1.2;
-  text-align: center;
-  flex-shrink: 0;
-  font-weight: normal;
-  transition: color 0.2s ease-in-out, background-color var(--transition-speed);
-  position: relative;
- 
-  /* Layout & Width Styles (The Fixes) */
-  width: fit-content !important;
-  max-width: none !important;
-  box-sizing: border-box !important;
- 
-  /* Reset margins/padding */
-  margin: 0.1rem 0 !important;
-  padding: 0.25em 0 !important;
-}
-.lyric-line-group.is-current {
-  background-color: var(--lyric-highlight-color);
-  border-radius: 8px;
-  /* Padding is now handled by the parent class to prevent layout shifts */
-  display: flex;
-  width: 100%;
-}
-.lyric-line-English { font-size: var(--lyric-font-size-English); color: var(--lyric-font-color-inactive-English); }
-.lyric-line-group.is-current .lyric-line-English { color: var(--lyric-font-color-active-English); }
-.lyric-line-Spanish { font-size: var(--lyric-font-size-Spanish); color: var(--lyric-font-color-inactive-Spanish); }
-.lyric-line-group.is-current .lyric-line-Spanish { color: var(--lyric-font-color-active-Spanish); }
-.lyric-line-ASL { font-size: var(--lyric-font-size-ASL); color: var(--lyric-font-color-inactive-ASL); text-align: center; }
-.lyric-line-group.is-current .lyric-line-ASL { color: var(--lyric-font-color-active-ASL); }
-.lyric-line-Custom { font-size: var(--lyric-font-size-Custom); color: var(--lyric-font-color-inactive-Custom); text-align: center; }
-.lyric-line-group.is-current .lyric-line-Custom { color: var(--lyric-font-color-active-Custom); }
-.lyrics-viewport.intro-active .lyric-line-group.is-current {
-  background-color: transparent;
-}
-.spacer {
-  height: 0;
-}
-#countdown-display {
-  /* Position and Layout */
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-
-  /* Mask Styles */
-  background-color: var(--lyric-bg-color);
-  color: var(--countdown-color);
-  z-index: 100;
-
-  /* Animation State */
-  opacity: 0;
-  pointer-events: none;
-  
-  /* CRITICAL: Keep this for the fade effect */
-  transition: opacity 0.5s ease-in-out;
-}
-
-/* When active, it becomes opaque */
-#countdown-display.is-visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* Keep your existing font styling */
-#countdown-display .countdown-symbol { font-size: calc(var(--lyric-font-size-English) * 3.5); line-height: 1; }
-#countdown-display .countdown-number { font-size: calc(var(--lyric-font-size-English) * 1.5); line-height: 1; margin-top: 1rem; }
-
-.controls-panel { 
-	height: auto;
-  overflow-y: visible;
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  /*height: 100%;
-  overflow-y: auto; /* Scrollbar INSIDE this panel only */
-}
-.controls-panel h2 { margin: 0 0 1rem 0; font-size: 1.25rem; }
-.controls-panel h2:first-of-type { margin-top: 0; }
-.lyric-order-header {
-  margin-top: 1.5rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid #e5e7eb;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.lyric-order-grid {
-  display: block;
-  overflow: hidden;
-  max-height: 200px;
-  opacity: 1;
-  transition: max-height 0.4s ease-in-out, opacity 0.3s ease-in-out;
-}
-.lyric-order-grid.is-collapsed {
-  max-height: 0;
-  opacity: 0;
-}
-.view-controls {
-  margin-bottom: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-.view-toggle {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  overflow: hidden;
-}
-.toggle-btn {
-  padding: 0.6rem 0.9rem; border: none; background-color: #f9fafb; cursor: pointer;
-  font-size: 1rem; font-weight: 500; transition: background-color 0.2s, color 0.2s;
-}
-.toggle-btn.active { background-color: #374151; color: white; }
-.toggle-btn:first-of-type { border-right: 1px solid #d1d5db; }
-#resetLyricsBtn {
-  width: 100%; padding: 0.6rem 0.9rem; border: 1px solid #d1d5db; border-radius: 8px;
-  background: #ADD8E6;
-  cursor: pointer; font-size: 1rem; font-weight: 500;
-}
-/* Parent containers */
-.lyric-order-controls {
-  margin: 0;
-  padding: 0;
-}
-.lyric-order-grid {
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  max-height: 200px;
-  opacity: 1;
-  transition: max-height 0.4s ease-in-out, opacity 0.3s ease-in-out;
-}
-.language-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.language-item {
-  padding: 0.2rem 0.75rem 0.2rem 1rem; /* Left padding for border-to-checkbox */
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  margin-bottom: 0.25rem;
-  cursor: move;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-}
-.language-item .checkbox-group {
-  flex-grow: 1;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-  gap: 0.5rem; /* This adds the space */
-}
-.language-item .checkbox-group input[type="checkbox"] {
-  flex-shrink: 0;
-  padding: 0;
-  /* Conflicting margin margin removed */
-  width: 1.2em;
-  height: 1.2em;
-  cursor: pointer;
-}
-.language-item .checkbox-group label {
-  margin: 0;
-  padding: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex-grow: 1;
-  text-align: left;
-  line-height: 1.2;
-  font-weight: 600;
-}
-.language-item:hover {
-  background-color: #f3f4f6;
-}
-/* Reduce controls-panel padding to minimize visual gap */
-.controls-panel {
-  padding: 1.5rem 0.5rem;
-}
-/* Consolidated global checkbox-group styles */
-.checkbox-group {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-grow: 1;
-}
-.checkbox-group label {
-  margin-bottom: 0;
-  font-weight: 600;
-  cursor: pointer;
-}
-.checkbox-group input[type="checkbox"] {
-  margin: 0;
-  padding: 0;
-  width: 1.2em;
-  height: 1.2em;
-  cursor: pointer;
-}
-/* Add gap above Manual Control Override checkbox */
-#playback-controls .row .checkbox-group {
-  margin-top: 0.75rem; /* Keep spacing above checkbox */
-}
-/* Other relevant styles */
-.line-count-display {
-  padding: 8px 10px;
-  box-sizing: border-box;
-  text-align: right;
-  line-height: 1.4;
-  min-height: 40px;
-}
-.line-count-display strong {
-  font-weight: 700;
-}
-.count-item {
-  font-size: 0.9rem;
-  color: #4b5563;
-}
-.count-item strong {
-  color: #111827;
-}
-.count-item strong.count-mismatch {
-  color: #b91c1c;
-}
-#playback-controls {
-  display: block;
-}
-.controls-panel .row {
-  margin-bottom: 1rem;
-}
-.controls-panel label {
-  display: block;
-  font-weight: 600;
-  margin-bottom: 0.5rem;
-}
-.checkbox-group label {
-  margin-bottom: 0;
-  font-weight: 600;
-  cursor: pointer;
-}
-.checkbox-group input[type="checkbox"] {
-  width: 1.2em;
-  height: 1.2em;
-  cursor: pointer;
-}
-.manual-instruction {
-    padding-left: calc(1.2em + 0.5rem);
-    font-size: 0.9rem;
-    color: #4b5563;
-    margin-top: 0.25rem;
-}
-.controls-panel input, .controls-panel select {
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  box-sizing: border-box;
-  background-color: #fff;
-  font-size: 1rem;
-}
-.btns {
-  display: flex;
-  gap: 0.5rem;
-}
-.btns button {
-  padding: 0.6rem 1rem;
-  font-size: 1rem;
-  border-radius: 8px;
-  background-color: #ADD8E6;
-}
-.btns button:disabled, #applyWidthBtn:disabled, #resetButton:disabled {
-  background-color: #d1d5db;
-}
-#applyWidthBtn, #resetButton, .songs-link, .input-group-append .btn, .custom-lyrics-actions button {
-  background-color: #ADD8E6;
-}
-.input-group {
-  position: relative;
-  display: flex;
-  width: 100%;
-}
-.input-group .form-control {
-  border-radius: 8px;
-  padding-right: 5rem;
-}
-.input-group-append .btn {
-  position: absolute;
-  right: 0;
-  top: 0;
-  height: 100%;
-  padding: 0 0.5rem;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  border-top-right-radius: 8px;
-  border-bottom-right-radius: 8px;
-  background-color: #ADD8E6;
-  border: 1px solid #d1d5db;
-  border-left: none;
-  z-index: 1;
-}
-.input-group-append .btn:first-child {
-  border-right: none;
-  margin-right: 0.2rem;
-}
-.input-group-append .btn:last-child {
-  border-left: none;
-}
-.meta { font-size: 0.9rem; color:#4b5563; margin: 1rem 0; display: flex; gap: 0.5rem; flex-wrap: wrap;}
-.meta .pill { display:inline-block; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:999px; padding:4px 10px; }
-.warn {
-  color: #b45309;
-  background:#fffbeb;
-  border:1px solid #f59e0b;
-  border-radius:8px;
-  padding:10px;
-  margin: 0.5rem 0;
-}
-.settings-header {
-  margin-top: 1.5rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid #e5e7eb;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.settings-grid {
-  display: block;
-  /*overflow: auto;*/
-  overflow: visible;
-  max-height: none;
-  opacity: 1;
-  transition: opacity 0.3s ease-in-out;
-  margin-bottom: 1rem;
-  height: auto;
-}
-.settings-grid.is-collapsed {
-  max-height: 0;
-  opacity: 0;
-  height: 0;
-  
-  /* ADD THIS LINE: */
-  visibility: hidden; 
-  
-  /* Optional: Prevents clicks immediately, but allows opacity to fade out */
-  transition: opacity 0.3s ease-in-out, visibility 0s 0.3s;
-}
-.control-group { margin-bottom: 0.5rem; }
-.control-group label { font-size: 0.9rem; }
-.control-group input[type="range"] { width: 100%; }
-.control-group input[type="color"] { width: 100%; height: 35px; border: 1px solid #d1d5db; border-radius: 6px; padding: 0; cursor: pointer; }
-.language-control-group { grid-column: 1 / -1; }
-.control-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-  align-items: center;
-}
-.control-row.color-picker-row {
-  grid-template-columns: repeat(4, 1fr);
-  gap: 0.75rem;
-}
-.control-subgroup { display: flex; flex-direction: column; }
-.dual-color-picker { display: flex; gap: 0.5rem; }
-.dual-color-picker .control-subgroup { flex: 1; }
-.full-width-btn { width: 100%; }
-.action-buttons {
-  display: flex;
-  margin-bottom: 1.5rem;
-  position: relative;
-}
-.songs-link {
-  flex-grow: 1;
-  text-align: center;
-  padding: 0.6rem 0.9rem;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  background: #ADD8E6;
-  color: #1f2739;
-  text-decoration: none;
-  font-weight: 500;
-}
-.intro-row {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-.intro-row label {
-  margin: 0;
-  font-weight: 600;
-}
-.intro-row input {
-  width: 4rem;
-  padding: 0.4rem;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  box-sizing: border-box;
-  background-color: #fff;
-  font-size: 1rem;
-}
-.audio-language {
-  font-size: 0.9rem;
-  color: #4b5563;
-  font-weight: 600;
-  margin-left: auto;
-}
-.color-palette {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding-top: 0.5rem;
-}
-.color-swatch {
-    width: 24px;
-    height: 24px;
-    border-radius: 4px;
-    cursor: pointer;
-    border: 1px solid #d1d5db;
-    transition: transform 0.1s ease-in-out;
-}
-.color-swatch:hover {
-    transform: scale(1.1);
-    border: 2px solid #374151;
-}
-input[type="color"].active-color-input {
-    border: 2px solid #2b6cb0;
-    box-shadow: 0 0 5px rgba(43, 108, 176, 0.5);
-}
-/* --- Underline Glow Styles --- */
-#toggleDotLabel, #toggleUnderlineLabel {
-  cursor: pointer;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  padding: 2px 6px;
-  background-color: #f9fafb;
-  text-align: center;
-}
-#toggleDotLabel:hover, #toggleUnderlineLabel:hover {
-    background-color: #f3f4f6;
-}
-#toggleDotLabel.disabled span, #toggleUnderlineLabel.disabled span {
-  text-decoration: line-through;
-  opacity: 0.6;
-}
-.beat-segment {
-  position: relative;
-  display: inline-block;
-  padding-bottom: 5px;
-  padding-left: 0.25em;
-  padding-right: 0.25em;
-}
-.beat-separator {
-  position: relative;
-  top: -0.05em;
-  font-size: 1.2em;
-  font-weight: bold;
-  color: var(--dot-color);
-  opacity: 0.8;
-  display: inline-block;
-}
-.lyrics-viewport.dots-hidden .beat-separator {
-    display: none !important;
-}
-.beat-segment::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 3px;
-  background-color: var(--underline-glow-color);
-  box-shadow: 0 0 8px var(--underline-glow-color);
-  border-radius: 2px;
-  transform: scaleX(0);
-  opacity: 0;
-  transform-origin: center;
-}
-.beat-segment.is-glowing::after {
-  animation: glow-underline var(--beat-duration) ease-in-out;
-}
-.lyrics-viewport.underline-hidden .beat-segment.is-glowing::after {
-    animation: none;
-    display: none;
-}
-@keyframes glow-underline {
-  0% {
-    transform: scaleX(0.2);
-    opacity: 0;
-  }
-  10% {
-    transform: scaleX(1);
-    opacity: 1;
-    box-shadow: 0 0 12px var(--underline-glow-color);
-  }
-  90% {
-    transform: scaleX(1);
-    opacity: 1;
-    box-shadow: 0 0 12px var(--underline-glow-color);
-  }
-  100% {
-    transform: scaleX(1);
-    opacity: 0;
-  }
-}
-/* --- Styles for Runlist in song.html --- */
-#runlist-panel {
-  margin-bottom: 1.5rem; /* Add some spacing */
-}
-#runlist-display {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  margin-top: 0.5rem; /* Space below the h2 */
-  max-height: 150px; /* Adjust height as needed */
-  overflow-y: auto;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-}
-#runlist-display li {
-  padding: 0.6rem 0.7rem;
-  cursor: pointer; /* Change from 'grab' to 'pointer' */
-  border-bottom: 1px solid #e5e7eb;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-#runlist-display li:last-child {
-  border-bottom: none;
-}
-#runlist-display li:hover {
-   background-color: #f3f4f6; /* Add a hover effect */
-}
-/* Style for the currently active/selected song */
-#runlist-display li.active { /* Using .active as per song.js */
-  background: #dbeafe; /* Light blue background */
-  font-weight: 600; /* Bold text */
-}
-/* Add these new rules to your style.css file */
-/* --- Custom Color Picker Styles --- */
-/* --- Custom Color Picker Styles --- */
-.custom-color-picker {
-  position: relative; /* Required for the hidden input positioning */
-  display: flex; /* <-- THIS IS THE KEY for side-by-side layout */
-  align-items: center; /* Vertically aligns items in the flex container */
-  gap: 0.5rem; /* Space between color bar and icon */
-  height: 35px; /* Overall height */
-  border: 1px solid #d1d5db; /* Outer border for the whole component */
-  border-radius: 6px;
-  padding: 0 4px; /* A little internal padding */
-}
-.color-display {
-  flex-grow: 1; /* Makes the color bar fill available horizontal space */
-  height: 25px; /* Height of the color bar itself */
-  border-radius: 4px;
-  /* cursor: pointer; <-- Removed, click doesn't open picker */
-  border: 1px solid #000; /* Thin black border around the color */
-  transition: box-shadow 0.2s ease, outline 0.2s ease;
-}
-.edit-color-btn {
-  background: none;
-  border: none;
-  padding: 0;
-  margin: 0;
-  cursor: pointer;
-  font-size: 1.1rem;
-  color: #4b5563;
-  width: 25px; /* Explicit width for the button */
-  height: 25px; /* Explicit height for the button */
-  display: flex; /* Helps center the icon if needed */
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0; /* Prevent button from shrinking */
-}
-.edit-color-btn:hover {
-  color: #111827;
-}
-.color-input-hidden {
-  /* Hides the native input visually but keeps it functional */
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 0;
-  height: 0;
-  padding: 0;
-  margin: 0;
-  border: none;
-  opacity: 0;
-  /* Optional: Make it completely inaccessible to pointer events */
-  pointer-events: none;
-}
-/* Style for when the color bar is active (for jewel tones) */
-.color-display.active-color-input {
-  box-shadow: 0 0 5px rgba(43, 108, 176, 0.5);
-  outline: 2px solid #2b6cb0;
-  outline-offset: 1px;
-}
-/* --- Jewel Tone Palette Visibility Control --- */
-#jewel-tone-palette {
-  /* Style for when it's VISIBLE */
-  display: flex; /* Or keep your existing display style */
-  flex-wrap: wrap;
-  gap: 6px;
-  padding-top: 0.5rem; /* Your existing padding */
-  max-height: 200px; /* Adjust as needed, large enough to show all swatches */
-  opacity: 1;
-  overflow: hidden; /* Important for max-height transition */
-  transition: max-height 0.3s ease-out, opacity 0.2s ease-out, padding-top 0.3s ease-out;
-  margin-top: 0.5rem; /* Add some space above */
-}
-#jewel-tone-palette.is-hidden {
-  /* Style for when it's HIDDEN */
-  max-height: 0;
-  opacity: 0;
-  padding-top: 0; /* Remove padding when hidden */
-  margin-top: 0; /* Remove space above when hidden */
-  /* pointer-events: none; /* Optional: Prevent accidental interaction */
-}
-.intro-active .lyric-line-group.is-current .lyric-line {
-  color: var(--lyric-font-color-inactive-English) !important; /* default */
-}
-.intro-active .lyric-line-group.is-current .lyric-line-Spanish { color: var(--lyric-font-color-inactive-Spanish) !important; }
-.intro-active .lyric-line-group.is-current .lyric-line-ASL { color: var(--lyric-font-color-inactive-ASL) !important; }
-.intro-active .lyric-line-group.is-current .lyric-line-Custom { color: var(--lyric-font-color-inactive-Custom) !important; }
-/* --- Fullscreen Toggle Logic --- */
-/* Ensure the parent panel allows absolute positioning of the button */
-#main-panel {
-  position: relative;
-}
-/* Style the toggle button */
-.fullscreen-toggle {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  background: transparent;
-  border: none;
-  font-size: 2rem; /* Large chevron size */
-  line-height: 1;
-  color: #9ca3af; /* Subtle gray */
-  cursor: pointer;
-  padding: 0;
-  z-index: 50;
-  transition: color 0.2s ease, transform 0.2s ease;
-}
-.fullscreen-toggle:hover {
-  color: #111827; /* Darker on hover */
-  background: transparent; /* Remove default button bg */
-  transform: scale(1.1);
-}
-/* The Class that hides the 2nd column */
-.page.fullscreen-active {
-  grid-template-columns: 1fr; /* Only one column */
-}
-.page.fullscreen-active .controls-panel {
-  display: none; /* Completely hide the controls */
-}
-/* --- Mini Controls Styles --- */
-.mini-controls {
-  display: none; /* Hidden by default */
-  position: absolute;
-  
-  /* CHANGED: Hangs the buttons outside the right edge */
-  top: 0;
-  right: -3.5rem;
-  
-  gap: 0.5rem;
-  z-index: 50;
-  flex-direction: column;
-}
-.page.fullscreen-active .mini-controls {
-  position: fixed; /* instead of absolute */
-  right: 1rem; /* stays inside the margin space */
-  top: 3.5rem; /* below the chevron */
-  display: flex; /* keep them visible */
-  z-index: 100; /* ensure they sit above everything */
-}
-.page.fullscreen-active #main-panel {
-  /* margin-right removed so the panel stays full size */
-  overflow: visible; /* This allows the buttons to be seen outside the border */
-}
-.mini-controls button {
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #374151;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.2rem;
-  line-height: 1;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-  transition: background-color 0.2s, color 0.2s;
-}
-.mini-controls button:hover {
-  background-color: #f3f4f6;
-  color: #111827;
-  border-color: #9ca3af;
-}
-.mini-controls button:active {
-  background-color: #e5e7eb;
-}
-/* --- Runlist Indicator Styles --- */
-.runlist-indicator {
-  display: none; /* Hidden by default */
-  position: absolute;
-  top: 0.5rem;
-  left: 1.2rem;
-  font-size: 2.5rem;
-  font-weight: 800;
-  color: #d1d5db; /* Light grey, unobtrusive */
-  z-index: 40;
-  line-height: 1;
-  pointer-events: none; /* Clicks pass through */
-  font-family: system-ui, sans-serif;
-}
-/* Only show when fullscreen is active */
-.page.fullscreen-active .runlist-indicator {
-  display: block;
-}
-/* Tempo Display Style */
-#tempoDisplay {
-  background-color: #e5e7eb;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
-  padding: 0.4rem 0.5rem;
-  font-weight: 600;
-  font-size: 0.9rem;
-  min-width: 55px;
-  display: inline-block;
-  text-align: center;
-}
-/* --- Lyric Progress Bar Styles --- */
-/* Ensure the group can contain the absolute bar */
-.lyric-line-group {
-  position: relative;
-  /* existing styles... */
-}
-.line-progress-container {
-  position: absolute;
-  bottom: 0; /* Align to bottom of the text line */
-  left: 0;
-  width: 100%; /* Matches the text width exactly */
-  height: 4px;
-  z-index: 10;
-  opacity: 0;
-  transition: opacity 0.2s;
-  pointer-events: none;
-}
-.lyric-line-group.is-current .line-progress-container {
-  opacity: 1;
-}
-.line-progress-bar {
-  width: 0%;
-  height: 100%;
-  background-color: var(--underline-glow-color);
-  position: relative;
-  border-radius: 2px;
-  transition-timing-function: linear;
-}
-.line-progress-knob {
-  position: absolute;
-  right: -6px;
-  top: 50%;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 12px;
-  height: 12px;
-  background-color: var(--dot-color);
-  border-radius: 50%;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
-}
-/* --- Hide Progress Bar State --- */
-.lyrics-viewport.progress-bar-hidden .line-progress-container {
-  display: none !important;
-}
-#lyricsWidth {
-  border-right: none !important;
-  border-top-right-radius: 0 !important;
-  border-bottom-right-radius: 0 !important;
-}
-#autoWidthBtn {
-  border-radius: 0;
-}
-#applyWidthBtn {
-  border-top-left-radius: 0 !important;
-  border-bottom-left-radius: 0 !important;
-}
-.input-group .input-group-append button {
-  border-left: none !important;
-}
-.input-group .input-group-append button:first-child {
-  border-right: 1px solid #ced4da !important;
-}
-.lyrics-width-buttons .btn {
-  background-color: #ADD8E6;
-  border: 1px solid #d1d5db;
-  color: #000;
-  height: 100%;
-  padding: 0 0.6rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0; /* base, we’ll tweak corners below */
-}
-/* Left button (Auto) – middle segment */
-#autoWidthBtn {
-  border-right: none; /* so it shares a border with Apply */
-}
-/* Right button (Apply) – rounded right edge */
-#applyWidthBtn {
-  border-top-right-radius: 8px;
-  border-bottom-right-radius: 8px;
-}
-.lyrics-width-group {
-  position: relative;
-  width: 100%;
-}
-.lyrics-width-group .form-control {
-  border-radius: 8px;
-  border-right: none; /* So there isn't a double border under the buttons */
-  padding-right: 7rem; /* Space for Auto + Apply buttons */
-}
-.lyrics-width-buttons {
-  position: absolute;
-  top: 0;
-  right: 0;
-  height: 100%;
-  display: flex; /* side-by-side */
-  flex-direction: row;
-  align-items: stretch;
-}
-/* In fullscreen mode, leave space on the right for mini-controls */
-.page.fullscreen-active #main-panel {
-  margin-right: 50px; /* ← adjust to taste (80–120px works well) */
-}
-.controls-panel.is-hidden {
-    opacity: 0;
-    pointer-events: none;
-    visibility: hidden; /* <--- Forces it to be truly "gone" */
-}
-.controls-panel {
-    /* We add a delay to visibility so it waits for opacity to finish fading */
-    transition: opacity 0.25s ease, visibility 0s 0.25s;
-}
-
-/* NEW: This wrapper hugs the text tightly */
-.lyric-text-wrapper {
-  position: relative;
-  display: inline-block;
-}
-
-/* UPDATED: Anchor the progress bar to the wrapper, not the full line */
-.line-progress-container {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%; /* Now 100% of the WRAPPER, not the screen */
-  height: 4px;
-  z-index: 10;
-  opacity: 0;
-  transition: opacity 0.2s;
-  pointer-events: none;
-}
-
-/* --- Prefix Styling (1:, 2:, Ch:) --- */
-.lyric-prefix {
-  color: var(--dot-color) !important; /* Forces the color even if line is inactive gray */
-  font-weight: 800;
-  margin-right: 0.3rem;
-  display: inline-block;
-}
-
-.lyrics-viewport::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 100%;
-  height: 400px; /* Adjust height as needed */
-  background: linear-gradient(to bottom, transparent 0%, rgba(255,255,255,0) 20%, var(--lyric-bg-color) 100%);
-  pointer-events: none;
-  z-index: 10;
-}
-
-.lyrics-viewport {
-  background-color: var(--lyric-bg-color);
-}
-#countdown-display {
-  background-color: var(--lyric-bg-color);
-}
-
-/* --- Loading Spinner for Play Button --- */
-#btnPlay {
-  position: relative; /* Allows absolute positioning of spinner */
-}
-
-/* Wrap the text so we can hide it */
-#btnPlay .btn-content {
-  transition: opacity 0.2s;
-}
-
-/* The Spinner Icon */
-.btn-spinner {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%); /* Centering */
-  width: 24px;
-  height: 24px;
-  border: 3px solid rgba(0, 0, 0, 0.1);
-  border-top-color: #2c4294; /* Dark Blue for visibility */
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  display: none; /* Hidden by default */
-}
-
-/* The Animation Keyframes */
-@keyframes spin {
-  to { transform: translate(-50%, -50%) rotate(360deg); }
-}
-
-/* --- STATE: When button is loading --- */
-#btnPlay.loading {
-  pointer-events: none; /* Prevent double clicks */
-  background-color: #d1d5db; /* Gray out slightly */
-}
-
-#btnPlay.loading .btn-content {
-  opacity: 0; /* Hide the "Play" text */
-}
-
-#btnPlay.loading .btn-spinner {
-  display: block; /* Show the spinner */
-}
-
-/* Verse Selection Styles */
-#verse-selection-content {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.5rem 0;
-}
-
-.skipped-indicator {
-    color: #ef4444; /* Red color */
-    font-style: italic;
-    font-size: 0.8em;
-    font-weight: bold;
-    margin-left: 0.5rem;
-}
-
-/* Ensure the verse list behaves like the other collapsible menus */
-#verse-selection-content.is-collapsed {
-    max-height: 0;
-    opacity: 0;
-    visibility: hidden;
     margin: 0;
     padding: 0;
+    font-family: sans-serif;
+    background-color: var(--primary-bg);
+    color: var(--font-color);
+    overflow: hidden;
 }
+
+/* Main Layout */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+    box-sizing: border-box;
+}
+
+.content-area {
+    display: flex;
+    flex-grow: 1;
+    overflow: hidden;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Top Ribbon Styling */
+.top-ribbon {
+    background-color: var(--secondary-bg);
+    padding: 5px;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.top-ribbon button {
+    background: none;
+    border: none;
+    color: var(--font-color);
+    font-size: 18px;
+    padding: 8px 12px;
+    margin: 0 2px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.top-ribbon button:hover {
+    background-color: var(--button-hover);
+}
+
+.divider {
+    border-left: 1px solid var(--border-color);
+    height: 25px;
+    margin: 0 8px;
+}
+
+/* Teleprompter View */
+#teleprompter-view {
+    position: relative;
+    background-color: black;
+    color: white;
+    overflow-y: scroll;
+    flex: 1 1 0%;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    min-width: 0;
+}
+
+#teleprompter-text {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0 0 0 30px; /* Fixed 30px left padding for buffer gap */
+    min-width: calc(100% - 30px); /* Ensure content fits within padding */
+}
+
+#teleprompter-text table {
+    width: 100% !important;
+    table-layout: fixed;
+    border-collapse: collapse;
+    margin: 0;
+    min-width: 100% !important;
+    max-width: none !important;
+    box-sizing: border-box; /* Include padding in width calculation */
+}
+
+#teleprompter-text table.full-width {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: none !important;
+    box-sizing: border-box !important;
+}
+
+#teleprompter-text td {
+    box-sizing: border-box;
+    padding: 8px;
+    vertical-align: top;
+    white-space: normal;
+    word-break: keep-all;
+}
+
+/* Ensure visible columns stretch fully */
+#teleprompter-text table td:nth-child(3),
+#teleprompter-text table td:nth-child(4) {
+    width: 50% !important;
+    min-width: 50% !important;
+    max-width: none !important;
+}
+
+/* Hide first two columns */
+#teleprompter-text table td:nth-child(1),
+#teleprompter-text table td:nth-child(2) {
+    display: none !important;
+}
+
+/* Override all inline styles from docx.renderAsync */
+#teleprompter-text table,
+#teleprompter-text table * {
+    max-width: none !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-height: none !important;
+    box-sizing: border-box !important;
+}
+
+/* Indicator Styling */
+.indicator {
+    position: fixed; /* Fixed to stay static on scroll */
+    left: 0;
+    width: 100%; /* Reset to full width temporarily */
+    z-index: 1;
+    transition: background-color 0.3s ease;
+}
+
+#indicator-bar {
+    height: 100px;
+    top: 40vh; /* Viewport height for fixed positioning */
+    opacity: 0.4;
+    padding-left: 30px; /* Match arrow width for buffer gap */
+    width: inherit; /* Inherit from parent */
+    box-sizing: border-box;
+    max-width: inherit; /* Match teleprompter-view width */
+    /* Constrain to teleprompter-view by using JavaScript to set width dynamically */
+}
+
+#indicator-triangle {
+    width: 0;
+    height: 0;
+    border-top: 20px solid transparent;
+    border-bottom: 20px solid transparent;
+    border-left: 30px solid; /* Arrow width */
+    top: 45vh; /* Viewport height for fixed positioning */
+    background-color: transparent !important;
+    position: fixed; /* Fixed to stay static on scroll */
+    left: 0;
+}
+
+.indicator.stopped { background-color: var(--indicator-red); border-left-color: var(--indicator-red); }
+.indicator.running { background-color: var(--indicator-green); border-left-color: var(--indicator-green); }
+.indicator.paused { background-color: var(--indicator-yellow); border-left-color: var(--indicator-yellow); }
+
+/* Runlist Panel */
+#runlist-panel {
+    background-color: var(--secondary-bg);
+    border-left: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    width: 350px;
+    flex-shrink: 0;
+}
+
+.runlist-ribbon {
+    padding: 5px;
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.runlist-ribbon button {
+    background: none;
+    border: none;
+    color: var(--font-color);
+    font-size: 18px;
+    padding: 8px 12px;
+    margin: 0 2px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.runlist-ribbon button:hover { background-color: var(--button-hover); }
+
+.runlist-files {
+    flex-grow: 1;
+    overflow-y: hidden;
+    overflow-x: auto;
+    padding: 10px;
+}
+
+.birds-eye-view {
+    height: 200px;
+    background-color: #111;
+    border-top: 1px solid var(--border-color);
+    margin: 5px;
+}
+
+.runlist-item {
+    padding: 8px 10px;
+    margin-bottom: 5px;
+    background-color: var(--primary-bg);
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    transition: background-color 0.2s;
+    white-space: nowrap;
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+}
+
+.runlist-item:hover {
+    background-color: var(--button-hover);
+}
+
+.runlist-item::before {
+    content: '●';
+    color: var(--font-color);
+    margin-right: 10px;
+    font-size: 12px;
+}
+
+#resizer {
+    width: 5px;
+    background-color: var(--border-color);
+    cursor: col-resize;
+    flex-shrink: 0;
+}
+
+.color-options {
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.color-box {
+    width: 30px;
+    height: 30px;
+    margin: 5px;
+    cursor: pointer;
+    border: 1px solid #ccc;
+}
+
+.bookmark-list {
+    height: 200px;
+    background-color: #111;
+    border-top: 1px solid var(--border-color);
+    margin: 5px;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.bookmark-item {
+    padding: 8px 10px;
+    margin-bottom: 5px;
+    background-color: var(--primary-bg);
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    transition: background-color 0.2s;
+    white-space: nowrap;
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+}
+
+.bookmark-item:hover {
+    background-color: var(--button-hover);
+}
+
+.bookmark-item::before {
+    content: '★';
+    color: var(--font-color);
+    margin-right: 10px;
+    font-size: 12px;
+}
+
+.bookmark-hue {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 0, 0.3);
+    pointer-events: none;
+    animation: fadeOut 1s forwards;
+}
+
+@keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+.hidden {
+    display: none !important;
+}
+
+#settings-panel {
+    padding: 15px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+#settings-panel h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+#settings-panel label {
+    display: block;
+    margin-bottom: 5px;
+}
+
+#f2-prompt {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #ffc107;
+    color: black;
+    padding: 10px 20px;
+    border-radius: 5px;
+    z-index: 9999;
+    font-size: 16px;
+    font-family: sans-serif;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+}
+
+.runlist-item.selected { background-color: var(--button-hover); }
+
+/* Row Highlighting */
+.row-source-longer { background-color: var(--highlight-green); }
+.row-source-shorter { background-color: var(--highlight-red); }
