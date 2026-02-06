@@ -1,4 +1,6 @@
-/* Basic Setup and Variables */
+/* ========================================= */
+/* 1. CORE VARIABLES & RESET                 */
+/* ========================================= */
 :root {
     --primary-bg: #282c34;
     --secondary-bg: #1e2127;
@@ -10,7 +12,11 @@
     --indicator-yellow: rgba(255, 255, 0, 0.5);
     --highlight-green: rgba(76, 175, 80, 0.3);
     --highlight-red: rgba(244, 67, 54, 0.3);
+    --lyric-bg-color: #ffffff;
+    --lyric-highlight-color: #fef08a;
 }
+
+* { box-sizing: border-box; }
 
 body {
     margin: 0;
@@ -18,16 +24,17 @@ body {
     font-family: sans-serif;
     background-color: var(--primary-bg);
     color: var(--font-color);
-    overflow: hidden;
+    overflow: hidden; /* Prevents double scrollbars */
 }
 
-/* Main Layout */
+/* ========================================= */
+/* 2. LAYOUT CONTAINERS                      */
+/* ========================================= */
 .app-container {
     display: flex;
     flex-direction: column;
     height: 100vh;
     width: 100vw;
-    box-sizing: border-box;
 }
 
 .content-area {
@@ -35,42 +42,10 @@ body {
     flex-grow: 1;
     overflow: hidden;
     width: 100%;
-    box-sizing: border-box;
+    position: relative;
 }
 
-/* Top Ribbon Styling */
-.top-ribbon {
-    background-color: var(--secondary-bg);
-    padding: 5px;
-    display: flex;
-    align-items: center;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.top-ribbon button {
-    background: none;
-    border: none;
-    color: var(--font-color);
-    font-size: 18px;
-    padding: 8px 12px;
-    margin: 0 2px;
-    cursor: pointer;
-    border-radius: 4px;
-}
-
-.top-ribbon button:hover {
-    background-color: var(--button-hover);
-}
-
-.divider {
-    border-left: 1px solid var(--border-color);
-    height: 25px;
-    margin: 0 8px;
-}
-
-/* ========================================= */
-/* TELEPROMPTER SYNC CORE (DO NOT MODIFY)    */
-/* ========================================= */
+/* Teleprompter Stage (The Black Screen) */
 .teleprompter-stage {
     position: relative;
     flex: 1;
@@ -82,6 +57,11 @@ body {
     z-index: 0;
 }
 
+/* ... [Keep Sections 1 & 2 as they are] ... */
+
+/* ========================================= */
+/* 3. TELEPROMPTER VIEW                      */
+/* ========================================= */
 #teleprompter-view {
     position: absolute; 
     top: 0;
@@ -90,64 +70,47 @@ body {
     height: 100%;
     background-color: transparent;
     color: white;
-    overflow-y: scroll;
-    box-sizing: border-box;
+    overflow-y: scroll !important; 
+    scrollbar-gutter: stable;
     z-index: 3;
     outline: none;
-    cursor: text;
-    padding: 0 !important;
-    margin: 0 !important;
+    padding: 0;
 }
 
 #teleprompter-text {
     width: 100%;
-    box-sizing: border-box;
     margin: 0;
-    padding: 0 0 0 30px; /* Space for indicator triangle */
-    min-width: calc(100% - 30px);
-    position: relative;
-    z-index: 2;
-    min-height: 100%;
-    color: white;
+    padding: 0; 
+    font-size: 2.5rem;
+    line-height: 1.4 !important; /* Explicitly set the line height */
 }
 
-/* Table Sync Rules */
-#teleprompter-text table, 
-#mirror-text table {
-    width: 100% !important;
-    table-layout: fixed !important; /* Prevents column drift */
-    border-collapse: collapse !important;
-    border-spacing: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-}
 
-#teleprompter-text td, 
-#mirror-text td {
-    box-sizing: border-box;
-    padding: 0 10px 20px 10px !important; /* Flush top, 20px gap at bottom */
-    vertical-align: top !important;
-    line-height: 1.1 !important;
-    word-break: keep-all;
-    white-space: normal;
-}
 
-#teleprompter-text tr:first-child td, 
-#mirror-text tr:first-child td {
-    padding-top: 0 !important;
-}
-
-/* Specific Column Handling */
-#teleprompter-text table td:nth-child(3),
-#teleprompter-text table td:nth-child(4) {
-    width: 50% !important;
-    min-width: 50% !important;
-    display: table-cell !important;
-}
+/* ... [Keep Sections 4, 5, 6, and Layout Fixes] ... */
 
 /* ========================================= */
-/* UI COMPONENTS & PANELS                    */
+/* 4. UI COMPONENTS (RIBBONS & SIDEBAR)      */
 /* ========================================= */
+.top-ribbon {
+    background-color: var(--secondary-bg);
+    padding: 5px;
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    z-index: 10;
+}
+
+.top-ribbon button {
+    background: none;
+    border: none;
+    color: var(--font-color);
+    font-size: 18px;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
 #runlist-panel {
     background-color: var(--secondary-bg);
     border-left: 1px solid var(--border-color);
@@ -157,46 +120,24 @@ body {
     flex-shrink: 0;
 }
 
-.runlist-ribbon {
-    padding: 5px;
-    display: flex;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.runlist-files {
-    flex-grow: 1;
-    overflow-y: auto;
-    padding: 10px;
-}
-
 .runlist-item {
-    padding: 8px;
-    cursor: pointer;
+    padding: 8px 10px;
+    background-color: var(--primary-bg);
+    border-radius: 4px;
+    margin-bottom: 5px;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    cursor: pointer;
 }
 
 .runlist-item:hover, .runlist-item.selected {
     background-color: var(--button-hover);
 }
 
-.btn-rename {
-    background: none;
-    border: none;
-    color: #666;
-    cursor: pointer;
-    font-size: 12px;
-    padding: 4px;
-    opacity: 0;
-    transition: opacity 0.2s;
-}
-
-.runlist-item:hover .btn-rename {
-    opacity: 1;
-}
-
-/* Indicators */
+/* ========================================= */
+/* 5. INDICATORS                             */
+/* ========================================= */
 .indicator {
     position: absolute; 
     left: 0;
@@ -210,7 +151,6 @@ body {
     top: 40%; 
     opacity: 0.4;
     padding-left: 30px;
-    box-sizing: border-box;
 }
 
 #indicator-triangle {
@@ -225,41 +165,161 @@ body {
 .indicator.running { background-color: var(--indicator-green); border-left-color: var(--indicator-green); }
 .indicator.paused { background-color: var(--indicator-yellow); border-left-color: var(--indicator-yellow); }
 
-/* Modals & Bookmarks */
-.modal-overlay {
-    position: fixed;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    background-color: rgba(0, 0, 0, 0.8);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-}
-
-.modal-content {
-    background-color: var(--secondary-bg);
-    padding: 20px;
-    border-radius: 8px;
-    width: 400px;
-}
-
-.bookmark-item.active {
-    background-color: var(--indicator-yellow);
-    color: black;
-    font-weight: bold;
-    border-left: 4px solid #FFD700;
-}
-
+/* ========================================= */
+/* 6. UTILITIES                              */
+/* ========================================= */
 .hidden { display: none !important; }
 
-/* DOCX Import Flattening */
-#teleprompter-text.docx-import .docx-wrapper,
-#teleprompter-text.docx-import section {
+#column-modal {
+    position: fixed;
+    z-index: 10000; /* Higher than everything else */
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    background: #ffffff; /* White background for the popup */
+    color: #000000;      /* Force black text so it's readable */
+    padding: 25px;
+    border-radius: 8px;
+    box-shadow: 0 0 30px rgba(0,0,0,0.7);
+    min-width: 300px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+/* Make sure the list inside the modal is readable */
+#column-list label {
+    display: block;
+    margin: 10px 0;
+    cursor: pointer;
+    font-size: 16px;
+    color: #333; /* Dark gray text */
+}
+
+#column-modal h3 {
+    margin-top: 0;
+    color: #000;
+}
+
+#resizer {
+    width: 5px;
+    background-color: var(--border-color);
+    cursor: col-resize;
+}
+/* --- Fix for the Top Ribbon & Runlist Dividers --- */
+.divider {
+    display: inline-block;
+    border-left: 1px solid var(--border-color);
+    height: 24px;
+    margin: 0 10px;
+    vertical-align: middle;
+}
+
+/* --- Layout Fix: Ensuring the View is visible --- */
+.content-area {
+    display: flex;
+    flex-grow: 1;
+    overflow: hidden;
+    position: relative;
+    background-color: #000; /* Ensure background is dark */
+}
+
+/* --- Indicator Fixes --- */
+.indicator {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    pointer-events: none;
+    z-index: 10;
+}
+
+#indicator-triangle {
+    top: calc(40% + 30px);
+    width: 0; 
+    height: 0; 
+    border-top: 20px solid transparent;
+    border-bottom: 20px solid transparent;
+    border-left: 30px solid; /* Removed the 'var(--indicator-red)' */
+}
+
+/* --- Sidebar Resizer Visibility --- */
+#resizer {
+    width: 6px;
+    cursor: col-resize;
+    background-color: var(--secondary-bg);
+    border-left: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+    transition: background 0.2s;
+}
+
+#resizer:hover {
+    background-color: #555;
+}
+
+.script-row {
+    height: 250px !important; /* This must be the same as the div height */
+}
+
+/* Optional: Hide scrollbars inside cells for a cleaner teleprompter look */
+.cell-locker::-webkit-scrollbar {
+    display: none;
+}
+/* ========================================= */
+/* 7. DIV-BASED GRID (REPLACES TABLE)        */
+/* ========================================= */
+
+.script-container {
+    width: 100%;
+    background-color: black;
+}
+
+/* Acts like <tr> */
+.script-row-wrapper {
+    display: flex !important;   
     width: 100% !important;
-    max-width: none !important;
-    background: transparent !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    box-shadow: none !important;
+    border-bottom: 1px solid #444;
+    align-items: stretch; /* Forces all columns in a row to the same height */
+}
+
+/* Acts like <td> */
+.script-column {
+    flex: 1; 
+    border-right: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    min-width: 0; /* Critical for text-wrapping in flexbox */
+}
+
+/* Optional: If you want the first column (IDs/Cues) to stay narrow */
+/* .script-row-wrapper .script-column:first-child { flex: 0 0 100px; } */
+
+/* Extender Logic: Hides the last column on main screen so you see cues */
+#teleprompter-text.extending-mode .script-row-wrapper .script-column:last-child {
+    display: none !important;
+}
+
+/* The actual text content */
+.cell-locker {
+    padding: 10px 20px !important; /* Added 10px vertical padding for readability */
+    line-height: 1.4 !important;
+    font-size: inherit;
+    word-wrap: break-word;
+    color: white;
+    flex-grow: 1;
+    display: flex;
+    align-items: center; /* Centers text vertically if one col is longer */
+}
+
+/* Ensure the modal stays on top of the black stage */
+#column-modal {
+    z-index: 10001; 
+}
+/* UPDATED: Hide the Script Column on the Main Screen when Broadcasting */
+body.broadcasting #teleprompter-text .script-row-wrapper .script-column:nth-child(3) {
+    display: none !important;
+}
+
+/* Ensure the cue columns take up reasonable space when the script is hidden */
+body.broadcasting #teleprompter-text .script-row-wrapper .script-column:nth-child(1),
+body.broadcasting #teleprompter-text .script-row-wrapper .script-column:nth-child(2) {
+    flex: 1;
 }
