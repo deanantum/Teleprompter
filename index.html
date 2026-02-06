@@ -3,8 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com;">
     <title>Teleprompter</title>
+    <meta http-equiv="Content-Security-Policy"
+      content="script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self';">
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.7.1/mammoth.browser.min.js"></script>
+
+    
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="style.css">
 </head>
@@ -17,7 +22,9 @@
             <button id="btn-open-file" title="Open File"><i class="fa-solid fa-folder-open"></i></button>
             <button id="btn-save" title="Save"><i class="fa-solid fa-save"></i></button>
             <span class="divider"></span>
-            <button id="btn-start" title="Start Teleprompting"><i class="fa-solid fa-play"></i></button>
+            <button id="btn-start" title="Play / Pause"><i class="fa-solid fa-play"></i></button>
+            <button id="btn-stop" title="Stop & Reset"><i class="fa-solid fa-stop"></i></button>
+            <button id="btn-settings-gear" title="Settings"><i class="fa-solid fa-gear"></i></button>
             <button id="btn-extend-monitor" title="Extend Monitor"><i class="fa-solid fa-display"></i></button>
             <span class="divider"></span>
             <button id="btn-prev-bookmark" title="Previous Bookmark"><i class="fa-solid fa-backward"></i></button>
@@ -33,37 +40,149 @@
             <span class="divider"></span>
             <button id="btn-toggle-runlist" title="Show/Hide Runlist"><i class="fa-solid fa-list-alt"></i></button>
         </header>
+        
+        <div id="font-settings-panel" style="display:none; position:absolute; z-index:100; background:var(--secondary-bg); color:var(--font-color); padding:10px; border:1px solid var(--border-color); border-radius:4px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
+            <label>Font Family:</label>
+            <select id="font-family-select">
+                <option value="Verdana">Verdana</option>
+                <option value="Arial">Arial</option>
+                <option value="Helvetica">Helvetica</option>
+                <option value="Times New Roman">Times New Roman</option>
+                <option value="Courier New">Courier New</option>
+            </select>
+            <br>
+            <label>Font Size (px):</label>
+            <select id="font-size-select">
+                <option value="12">12</option>
+                <option value="16">16</option>
+                <option value="20">20</option>
+                <option value="24">24</option>
+                <option value="28">28</option>
+                <option value="32">32</option>
+                <option value="36">36</option>
+                <option value="40">40</option>
+                <option value="44">44</option>
+                <option value="48" selected>48</option>
+                <option value="52">52</option>
+                <option value="56">56</option>
+                <option value="60">60</option>
+                <option value="64">64</option>
+                <option value="68">68</option>
+                <option value="72">72</option>
+                <option value="76">76</option>
+                <option value="80">80</option>
+                <option value="84">84</option>
+                <option value="86">86</option>
+                <option value="90">90</option>
+                <option value="100">100</option>
+                <option value="120">120</option>
+            </select>
+            <button id="font-size-inc">+</button>
+            <button id="font-size-dec">-</button>
+        </div>
+
+        <div id="bg-color-panel" style="display:none; position:absolute; z-index:100; background:var(--secondary-bg); color:var(--font-color); padding:10px; border:1px solid var(--border-color); border-radius:4px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
+            <label>Background Color:</label><br>
+            <div class="color-options">
+                <div class="color-box" style="background:#FFFFFF" data-color="#FFFFFF" title="White"></div>
+                <div class="color-box" style="background:#FFFF00" data-color="#FFFF00" title="Yellow"></div>
+                <div class="color-box" style="background:#00FFFF" data-color="#00FFFF" title="Cyan"></div>
+                <div class="color-box" style="background:#00FF00" data-color="#00FF00" title="Lime"></div>
+                <div class="color-box" style="background:#FF00FF" data-color="#FF00FF" title="Magenta"></div>
+                <div class="color-box" style="background:#87CEFA" data-color="#87CEFA" title="Sky Blue"></div>
+                <div class="color-box" style="background:#EEE8AA" data-color="#EEE8AA" title="Pale Goldenrod"></div>
+                <div class="color-box" style="background:#F08080" data-color="#F08080" title="Light Coral"></div>
+                <div class="color-box" style="background:#D3D3D3" data-color="#D3D3D3" title="Light Gray"></div>
+                <div class="color-box" style="background:#A9A9A9" data-color="#A9A9A9" title="Dark Gray"></div>
+                <div class="color-box" style="background:#808080" data-color="#808080" title="Gray"></div>
+                <div class="color-box" style="background:#000000" data-color="#000000" title="Black"></div>
+            </div>
+        </div>
+
+        <div id="font-color-panel" style="display:none; position:absolute; z-index:100; background:var(--secondary-bg); color:var(--font-color); padding:10px; border:1px solid var(--border-color); border-radius:4px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
+            <label>Font Color:</label><br>
+            <div class="color-options">
+                <div class="color-box" style="background:#FFFFFF" data-color="#FFFFFF" title="White"></div>
+                <div class="color-box" style="background:#FFFF00" data-color="#FFFF00" title="Yellow"></div>
+                <div class="color-box" style="background:#00FFFF" data-color="#00FFFF" title="Cyan"></div>
+                <div class="color-box" style="background:#00FF00" data-color="#00FF00" title="Lime"></div>
+                <div class="color-box" style="background:#FF00FF" data-color="#FF00FF" title="Magenta"></div>
+                <div class="color-box" style="background:#87CEFA" data-color="#87CEFA" title="Sky Blue"></div>
+                <div class="color-box" style="background:#EEE8AA" data-color="#EEE8AA" title="Pale Goldenrod"></div>
+                <div class="color-box" style="background:#F08080" data-color="#F08080" title="Light Coral"></div>
+                <div class="color-box" style="background:#D3D3D3" data-color="#D3D3D3" title="Light Gray"></div>
+                <div class="color-box" style="background:#A9A9A9" data-color="#A9A9A9" title="Dark Gray"></div>
+                <div class="color-box" style="background:#808080" data-color="#808080" title="Gray"></div>
+                <div class="color-box" style="background:#000000" data-color="#000000" title="Black"></div>
+            </div>
+        </div>
 
         <main class="content-area">
-            <div id="teleprompter-view">
-                <div id="indicator-bar" class="indicator stopped"></div>
-                <div id="indicator-triangle" class="indicator stopped"></div>
-                <div id="teleprompter-text" contenteditable="true">
-                    Welcome to your new teleprompter. Start typing, paste your script, or open a file to begin...
-                </div>
-            </div>
+            <div class="teleprompter-stage">
+								<div id="indicator-bar" class="indicator stopped"></div>
+								<div id="indicator-triangle" class="indicator stopped"></div>
+								
+								<div id="teleprompter-view">
+										<div id="teleprompter-text" contenteditable="true">
+												Welcome to your new teleprompter. Start typing, paste your script, or open a file to begin...
+										</div>
+								</div>
+						</div>
+            
             <div id="resizer"></div>
+            
             <aside id="runlist-panel">
                 <div class="runlist-ribbon">
-                    <button title="New Runlist"><i class="fa-solid fa-file-circle-plus"></i></button>
-                    <button title="Load Runlist"><i class="fa-solid fa-folder-open"></i></button>
-                    <button title="Save Runlist"><i class="fa-solid fa-save"></i></button>
-                    <span class="divider"></span>
-                    <button title="Add File(s)"><i class="fa-solid fa-plus"></i></button>
                     <button title="Remove File"><i class="fa-solid fa-trash"></i></button>
                     <span class="divider"></span>
                     <button title="Move Up"><i class="fa-solid fa-arrow-up"></i></button>
                     <button title="Move Down"><i class="fa-solid fa-arrow-down"></i></button>
                 </div>
+
+                <div id="settings-panel" class="hidden">
+                    <h4>Control Mode</h4>
+                    <label><input type="radio" name="controlMode" value="off" checked> Off</label>
+                    <label><input type="radio" name="controlMode" value="mouse"> Mouse</label>
+                    <label><input type="checkbox" id="invert-scroll-checkbox"> Invert Scroll</label>
+                </div>
+
                 <div class="runlist-files"></div>
                 <div class="birds-eye-view"></div>
+                <div class="bookmark-list">
+                    <h3>Bookmarks</h3>
+                </div>
             </aside>
         </main>
     </div>
 
+    <div id="f2-prompt" class="hidden">Press F2 to use the mouse</div>
+
     <input type="file" id="file-opener" style="display: none;" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.7.1/mammoth.browser.min.js"></script>
+    <div id="column-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h3>Select Columns to Import</h3>
+            <p>Check the columns you want to display on the teleprompter.</p>
+            <div id="column-list" class="column-grid">
+                </div>
+            <div class="modal-actions">
+                <button id="btn-cancel-import">Cancel</button>
+                <button id="btn-confirm-import" class="primary-btn">Import Selected</button>
+            </div>
+        </div>
+    </div>
+    <div id="sync-guide" style="position: fixed; top: 50%; left: 0; width: 100%; height: 2px; background: rgba(255, 0, 0, 0.5); z-index: 10000; pointer-events: none;"></div>
+
+    <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://unpkg.com/docx-preview@0.3.7/dist/docx-preview.js"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <script>
+			console.log("ExcelJS loaded?", typeof ExcelJS !== "undefined");
+		</script>
+    <script src="https://unpkg.com/rtf.js@3.0.7/dist/WMFJS.bundle.js"></script>
+    <script src="https://unpkg.com/rtf.js@3.0.7/dist/EMFJS.bundle.js"></script>
+    <script src="https://unpkg.com/rtf.js@3.0.7/dist/RTFJS.bundle.js"></script>
+		<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="renderer.js" defer></script>
 </body>
 </html>
