@@ -80,7 +80,7 @@ body {
 #teleprompter-text {
     width: 100%;
     margin: 0;
-    padding: 0; 
+    padding: 0 0 0 var(--indicator-gutter, 40px); 
     font-size: 2.5rem;
     line-height: 1.4 !important; /* Explicitly set the line height */
 }
@@ -111,6 +111,21 @@ body {
     border-radius: 4px;
 }
 
+.top-ribbon select {
+    background: var(--primary-bg);
+    border: 1px solid var(--border-color);
+    color: var(--font-color);
+    font-size: 14px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin: 0 4px;
+}
+
+.top-ribbon select:hover {
+    border-color: var(--button-hover);
+}
+
 #runlist-panel {
     background-color: var(--secondary-bg);
     border-left: 1px solid var(--border-color);
@@ -120,19 +135,124 @@ body {
     flex-shrink: 0;
 }
 
-.runlist-item {
-    padding: 8px 10px;
-    background-color: var(--primary-bg);
-    border-radius: 4px;
-    margin-bottom: 5px;
+.runlist-section {
+    flex: 1;
+    min-height: 0;
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    cursor: pointer;
+    flex-direction: column;
+    border-bottom: 1px solid var(--border-color);
 }
 
-.runlist-item:hover, .runlist-item.selected {
+.runlist-ribbon {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background-color: var(--primary-bg);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.runlist-ribbon button {
+    background: none;
+    border: none;
+    color: var(--font-color);
+    font-size: 14px;
+    padding: 6px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.runlist-ribbon button:hover {
     background-color: var(--button-hover);
+}
+
+.section-label {
+    flex: 1;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--font-color);
+    opacity: 0.8;
+}
+
+.runlist-files {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 8px;
+}
+
+.runlist-row {
+    padding: 10px 12px;
+    background-color: var(--primary-bg);
+    border-radius: 4px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background-color 0.15s;
+}
+
+.runlist-row:hover {
+    background-color: var(--button-hover);
+}
+
+.runlist-row.active {
+    background-color: var(--button-hover);
+    font-weight: 500;
+}
+
+.bookmark-section {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    max-height: 40%;
+}
+
+.bookmark-list-header {
+    display: flex;
+    align-items: center;
+    padding: 8px 10px;
+    background-color: var(--primary-bg);
+    border-top: 1px solid var(--border-color);
+}
+
+.bookmark-list-header .section-label {
+    flex: none;
+}
+
+.bookmark-list {
+    overflow-y: auto;
+    padding: 8px;
+    min-height: 80px;
+}
+
+.bookmark-item {
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    background-color: var(--primary-bg);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background-color 0.15s;
+}
+
+.bookmark-item:hover {
+    background-color: var(--button-hover);
+}
+
+.bookmark-item::before {
+    content: '★';
+    color: var(--font-color);
+    margin-right: 8px;
+    font-size: 11px;
+    opacity: 0.8;
 }
 
 /* ========================================= */
@@ -146,24 +266,41 @@ body {
     pointer-events: none;
 }
 
-#indicator-bar {
-    height: 100px;
-    top: 40%; 
-    opacity: 0.4;
-    padding-left: 30px;
+#indicator-wrapper {
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    position: relative;
 }
 
 #indicator-triangle {
     width: 0; height: 0;
     border-top: 20px solid transparent;
     border-bottom: 20px solid transparent;
-    border-left: 30px solid;
-    top: calc(40% + 30px);
+    border-left: 30px solid #ffffff;
+    flex-shrink: 0;
 }
 
-.indicator.stopped { background-color: var(--indicator-red); border-left-color: var(--indicator-red); }
-.indicator.running { background-color: var(--indicator-green); border-left-color: var(--indicator-green); }
-.indicator.paused { background-color: var(--indicator-yellow); border-left-color: var(--indicator-yellow); }
+.indicator-drag-handle {
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+#sync-guide {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    transform: translateY(-50%);
+    background: transparent;
+    backdrop-filter: invert(1);
+    -webkit-backdrop-filter: invert(1);
+}
+
+.indicator.stopped #indicator-triangle { border-left-color: #ffffff; }
+.indicator.running #indicator-triangle { border-left-color: #ffffff; }
+.indicator.paused #indicator-triangle { border-left-color: #ffffff; }
 
 /* ========================================= */
 /* 6. UTILITIES                              */
@@ -232,15 +369,6 @@ body {
     z-index: 10;
 }
 
-#indicator-triangle {
-    top: calc(40% + 30px);
-    width: 0; 
-    height: 0; 
-    border-top: 20px solid transparent;
-    border-bottom: 20px solid transparent;
-    border-left: 30px solid; /* Removed the 'var(--indicator-red)' */
-}
-
 /* --- Sidebar Resizer Visibility --- */
 #resizer {
     width: 6px;
@@ -289,6 +417,12 @@ body {
     min-width: 0; /* Critical for text-wrapping in flexbox */
 }
 
+/* Column widths are synced in JS; keep a sane default */
+#teleprompter-text .script-row-wrapper .script-column {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 /* Optional: If you want the first column (IDs/Cues) to stay narrow */
 /* .script-row-wrapper .script-column:first-child { flex: 0 0 100px; } */
 
@@ -313,13 +447,37 @@ body {
 #column-modal {
     z-index: 10001; 
 }
-/* UPDATED: Hide the Script Column on the Main Screen when Broadcasting */
-body.broadcasting #teleprompter-text .script-row-wrapper .script-column:nth-child(3) {
+/* Hide the last column (script) on main screen when broadcasting; mirror shows it */
+.broadcast-hidden {
     display: none !important;
 }
 
-/* Ensure the cue columns take up reasonable space when the script is hidden */
-body.broadcasting #teleprompter-text .script-row-wrapper .script-column:nth-child(1),
-body.broadcasting #teleprompter-text .script-row-wrapper .script-column:nth-child(2) {
+/* Remaining columns take up space when last is hidden */
+body.broadcasting #teleprompter-text .script-row-wrapper .script-column:not(:last-child) {
     flex: 1;
 }
+
+/* Trim padding when broadcasting for tighter rows - minimal padding for auto-fit */
+body.broadcasting #teleprompter-text .script-column .cell-locker,
+body.broadcasting #teleprompter-text .script-column {
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
+}
+body.broadcasting #teleprompter-text .script-column .cell-locker {
+    align-items: flex-start !important;
+}
+
+/* First column always black background */
+#teleprompter-text .script-row-wrapper .script-column:first-child { background-color: #000000 !important; }
+
+/* Row background colors by col2 vs col3 comparison (3-column table only) */
+#teleprompter-text .script-row-wrapper.row-lines-same { background-color: #000000 !important; }
+#teleprompter-text .script-row-wrapper.row-col2-more { background-color: #002D04 !important; }
+#teleprompter-text .script-row-wrapper.row-col2-more .script-column,
+#teleprompter-text .script-row-wrapper.row-col2-more .cell-locker { color: #ffffff !important; }
+#teleprompter-text .script-row-wrapper.row-col3-more { background-color: #531516 !important; }
+#teleprompter-text .script-row-wrapper.row-col3-more .script-column,
+#teleprompter-text .script-row-wrapper.row-col3-more .cell-locker { color: #ffffff !important; }
+#teleprompter-text .script-row-wrapper.row-col3-much-more { background-color: #531516 !important; }
+#teleprompter-text .script-row-wrapper.row-col3-much-more .script-column,
+#teleprompter-text .script-row-wrapper.row-col3-much-more .cell-locker { color: #ffffff !important; }
