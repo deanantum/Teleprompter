@@ -8,6 +8,7 @@
       content="script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self';">
       <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.7.1/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
@@ -18,7 +19,6 @@
     <div class="app-container">
 
         <header class="top-ribbon">
-            <button id="btn-new-script" title="New Script"><i class="fa-solid fa-file"></i></button>
             <button id="btn-open-file" title="Open File"><i class="fa-solid fa-folder-open"></i></button>
             <button id="btn-save" title="Save"><i class="fa-solid fa-save"></i></button>
             <span class="divider"></span>
@@ -31,28 +31,14 @@
             <button id="btn-next-bookmark" title="Next Bookmark"><i class="fa-solid fa-forward"></i></button>
             <button id="btn-new-bookmark" title="New Bookmark"><i class="fa-solid fa-bookmark"></i></button>
             <span class="divider"></span>
-            <button id="btn-font-settings" title="Font Settings"><i class="fa-solid fa-font"></i></button>
-            <button id="btn-bg-color" title="Background Color"><i class="fa-solid fa-fill-drip"></i></button>
-            <button id="btn-font-color" title="Font Color"><i class="fa-solid fa-palette"></i></button>
-            <button id="btn-bold" title="Bold"><i class="fa-solid fa-bold"></i></button>
-            <button id="btn-italic" title="Italic"><i class="fa-solid fa-italic"></i></button>
-            <button id="btn-underline" title="Underline"><i class="fa-solid fa-underline"></i></button>
-            <span class="divider"></span>
-            <button id="btn-toggle-runlist" title="Show/Hide Runlist"><i class="fa-solid fa-list-alt"></i></button>
-        </header>
-        
-        <div id="font-settings-panel" style="display:none; position:absolute; z-index:100; background:var(--secondary-bg); color:var(--font-color); padding:10px; border:1px solid var(--border-color); border-radius:4px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
-            <label>Font Family:</label>
-            <select id="font-family-select">
-                <option value="Verdana">Verdana</option>
+            <select id="font-family-select" title="Font">
                 <option value="Arial">Arial</option>
                 <option value="Helvetica">Helvetica</option>
                 <option value="Times New Roman">Times New Roman</option>
                 <option value="Courier New">Courier New</option>
+                <option value="Verdana">Verdana</option>
             </select>
-            <br>
-            <label>Font Size (px):</label>
-            <select id="font-size-select">
+            <select id="font-size-select" title="Font Size">
                 <option value="12">12</option>
                 <option value="16">16</option>
                 <option value="20">20</option>
@@ -62,7 +48,7 @@
                 <option value="36">36</option>
                 <option value="40">40</option>
                 <option value="44">44</option>
-                <option value="48" selected>48</option>
+                <option value="48">48</option>
                 <option value="52">52</option>
                 <option value="56">56</option>
                 <option value="60">60</option>
@@ -70,16 +56,26 @@
                 <option value="68">68</option>
                 <option value="72">72</option>
                 <option value="76">76</option>
-                <option value="80">80</option>
+                <option value="80" selected>80</option>
                 <option value="84">84</option>
                 <option value="86">86</option>
                 <option value="90">90</option>
                 <option value="100">100</option>
                 <option value="120">120</option>
             </select>
-            <button id="font-size-inc">+</button>
-            <button id="font-size-dec">-</button>
-        </div>
+            <span class="divider"></span>
+            <select id="select-font-target" title="Select font to format">
+                <option value="">Select</option>
+            </select>
+            <span class="divider"></span>
+            <button id="btn-bg-color" title="Background Color"><i class="fa-solid fa-fill-drip"></i></button>
+            <button id="btn-font-color" title="Font Color"><i class="fa-solid fa-palette"></i></button>
+            <button id="btn-bold" title="Bold"><i class="fa-solid fa-bold"></i></button>
+            <button id="btn-italic" title="Italic"><i class="fa-solid fa-italic"></i></button>
+            <button id="btn-underline" title="Underline"><i class="fa-solid fa-underline"></i></button>
+            <span class="divider"></span>
+            <button id="btn-toggle-runlist" title="Show/Hide Runlist"><i class="fa-solid fa-list-alt"></i></button>
+        </header>
 
         <div id="bg-color-panel" style="display:none; position:absolute; z-index:100; background:var(--secondary-bg); color:var(--font-color); padding:10px; border:1px solid var(--border-color); border-radius:4px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
             <label>Background Color:</label><br>
@@ -119,8 +115,10 @@
 
         <main class="content-area">
             <div class="teleprompter-stage">
-								<div id="indicator-bar" class="indicator stopped"></div>
-								<div id="indicator-triangle" class="indicator stopped"></div>
+								<div id="indicator-wrapper" class="indicator stopped">
+									<div id="indicator-triangle" class="indicator-drag-handle"></div>
+									<div id="sync-guide"></div>
+								</div>
 								
 								<div id="teleprompter-view">
 										<div id="teleprompter-text" contenteditable="true">
@@ -132,11 +130,13 @@
             <div id="resizer"></div>
             
             <aside id="runlist-panel">
-                <div class="runlist-ribbon">
-                    <button title="Remove File"><i class="fa-solid fa-trash"></i></button>
-                    <span class="divider"></span>
-                    <button title="Move Up"><i class="fa-solid fa-arrow-up"></i></button>
-                    <button title="Move Down"><i class="fa-solid fa-arrow-down"></i></button>
+                <div class="runlist-section">
+                    <div class="runlist-ribbon">
+                        <span class="section-label">Files</span>
+                        <button id="btn-move-file-up" title="Move Up"><i class="fa-solid fa-arrow-up"></i></button>
+                        <button id="btn-move-file-down" title="Move Down"><i class="fa-solid fa-arrow-down"></i></button>
+                    </div>
+                    <div class="runlist-files"></div>
                 </div>
 
                 <div id="settings-panel" class="hidden">
@@ -146,10 +146,11 @@
                     <label><input type="checkbox" id="invert-scroll-checkbox"> Invert Scroll</label>
                 </div>
 
-                <div class="runlist-files"></div>
-                <div class="birds-eye-view"></div>
-                <div class="bookmark-list">
-                    <h3>Bookmarks</h3>
+                <div class="bookmark-section">
+                    <div class="bookmark-list-header">
+                        <span class="section-label">Bookmarks</span>
+                    </div>
+                    <div class="bookmark-list"></div>
                 </div>
             </aside>
         </main>
@@ -170,8 +171,6 @@
             </div>
         </div>
     </div>
-    <div id="sync-guide" style="position: fixed; top: 50%; left: 0; width: 100%; height: 2px; background: rgba(255, 0, 0, 0.5); z-index: 10000; pointer-events: none;"></div>
-
     <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://unpkg.com/docx-preview@0.3.7/dist/docx-preview.js"></script>
     
