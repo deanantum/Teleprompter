@@ -1219,22 +1219,38 @@ window.onload = function() {
         const btn = document.getElementById('btn-connect-shuttle');
         if (!btn) return;
         if (connected) {
-            btn.title = 'ShuttleXPress connected';
+            btn.title = 'Disconnect Shuttle (click to release device)';
             btn.classList.add('shuttle-connected');
         } else {
-            btn.title = 'Connect ShuttleXPress (Chrome)';
+            btn.title = 'Connect ShuttleXPress (Chrome). Option+click: show all HID devices.';
             btn.classList.remove('shuttle-connected');
         }
     }
 
-    async function connectShuttle() {
+    async function disconnectShuttle() {
+        if (!shuttleDevice) return;
+        try {
+            shuttleDevice.removeEventListener('inputreport', onShuttleInput);
+            await shuttleDevice.close();
+        } catch (_) {}
+        shuttleDevice = null;
+        shuttlePrevButtons = 0;
+        shuttleHoldStart = 0;
+        setShuttleConnected(false);
+    }
+
+    async function connectShuttle(e) {
+        if (shuttleDevice) {
+            await disconnectShuttle();
+            return;
+        }
         if (!navigator.hid) {
             alert('WebHID is not supported in this browser. Use Chrome.');
             return;
         }
         try {
             /* Option/Alt: show all HID devices (to find Shuttle if it doesn't match Contour vendor, and log its ids) */
-            const showAll = navigator.platform?.toLowerCase().includes('mac') ? event?.altKey : false;
+            const showAll = navigator.platform?.toLowerCase().includes('mac') ? e?.altKey : false;
             const devices = await navigator.hid.requestDevice({
                 filters: showAll ? [] : [{ vendorId: SHUTTLE_VENDOR_ID }]
             });
@@ -1242,10 +1258,7 @@ window.onload = function() {
             if (showAll && devices[0]) {
                 console.log('Selected HID device:', devices[0].productName, 'vendorId:', '0x' + devices[0].vendorId.toString(16), 'productId:', '0x' + devices[0].productId.toString(16));
             }
-            if (shuttleDevice) {
-                try { shuttleDevice.removeEventListener('inputreport', onShuttleInput); } catch (_) {}
-                try { await shuttleDevice.close(); } catch (_) {}
-            }
+            /* Use only the first selected device to avoid holding multiple */
             shuttleDevice = devices[0];
             await shuttleDevice.open();
             shuttleDevice.addEventListener('inputreport', onShuttleInput);
@@ -1253,6 +1266,8 @@ window.onload = function() {
             if (navigator.hid) navigator.hid.addEventListener('disconnect', function onDisconnect(ev) {
                 if (ev.device === shuttleDevice) {
                     shuttleDevice = null;
+                    shuttlePrevButtons = 0;
+                    shuttleHoldStart = 0;
                     setShuttleConnected(false);
                     navigator.hid.removeEventListener('disconnect', onDisconnect);
                 }
