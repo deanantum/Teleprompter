@@ -1233,8 +1233,15 @@ window.onload = function() {
             return;
         }
         try {
-            const devices = await navigator.hid.requestDevice({ filters: [{ vendorId: SHUTTLE_VENDOR_ID, productId: SHUTTLE_PRODUCT_ID }] });
+            /* Option/Alt: show all HID devices (to find Shuttle if it doesn't match Contour vendor, and log its ids) */
+            const showAll = navigator.platform?.toLowerCase().includes('mac') ? event?.altKey : false;
+            const devices = await navigator.hid.requestDevice({
+                filters: showAll ? [] : [{ vendorId: SHUTTLE_VENDOR_ID }]
+            });
             if (!devices.length) return;
+            if (showAll && devices[0]) {
+                console.log('Selected HID device:', devices[0].productName, 'vendorId:', '0x' + devices[0].vendorId.toString(16), 'productId:', '0x' + devices[0].productId.toString(16));
+            }
             if (shuttleDevice) {
                 try { shuttleDevice.removeEventListener('inputreport', onShuttleInput); } catch (_) {}
                 try { await shuttleDevice.close(); } catch (_) {}
@@ -1258,7 +1265,7 @@ window.onload = function() {
 
     const btnConnectShuttle = document.getElementById('btn-connect-shuttle');
     if (btnConnectShuttle) {
-        btnConnectShuttle.onclick = () => connectShuttle();
+        btnConnectShuttle.onclick = (e) => connectShuttle(e);
     }
 
     console.log("🚀 Teleprompter Engine Initialized");
