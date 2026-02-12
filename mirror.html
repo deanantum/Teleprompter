@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teleprompter Mirror</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { background: #000; margin: 0; padding: 0; overflow: hidden; color: #fff; font-family: sans-serif; }
+        #scroll-container { height: 100vh; width: 100vw; overflow-y: scroll; scrollbar-width: none; padding-left: 32px; box-sizing: border-box; }
+        #scroll-container::-webkit-scrollbar { display: none; }
+        #mirror-content {
+            width: 100%;
+            padding: 0;
+            margin: 0;
+        }
+        /* Same structure as main; visible column uses same width as main so wrapping and row height match */
+        .mirror-table .script-row-wrapper {
+            display: flex !important;
+            width: 100% !important;
+            border-bottom: 1px solid #444;
+            align-items: stretch;
+            padding: 0 !important;
+            margin: 0 !important;
+            line-height: 1.1 !important;
+        }
+        .mirror-table .script-column {
+            flex: 0 0 auto;
+            display: none;
+            flex-direction: column;
+            min-width: 0;
+            padding: 0;
+            margin: 0;
+            border: none;
+        }
+        .mirror-table .script-column.mirror-visible {
+            display: flex !important;
+            width: var(--mirror-content-width, 100%);
+            max-width: var(--mirror-content-width, 100%);
+            min-width: 0;
+        }
+        .mirror-table .cell-content {
+            flex: 1;
+            display: block;
+            line-height: 1.1 !important;
+            font-size: inherit;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+            color: inherit;
+            padding: 0;
+            margin: 0;
+        }
+        .mirror-table .script-row-wrapper.row-lines-same { background-color: #000000 !important; }
+        .mirror-table .script-row-wrapper.row-col2-one-more { background: #000000 !important; }
+        .mirror-table .script-row-wrapper.row-col2-one-more .script-column:nth-child(2) { background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%), transparent !important; }
+        .mirror-table .script-row-wrapper.row-col2-one-more .script-column:last-child { background: linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%), transparent !important; }
+        .mirror-table .script-row-wrapper.row-col3-one-more { background: #000000 !important; }
+        .mirror-table .script-row-wrapper.row-col3-one-more .script-column:nth-child(2) { background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), transparent !important; }
+        .mirror-table .script-row-wrapper.row-col3-one-more .script-column:last-child { background: linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), transparent !important; }
+        .mirror-table .script-row-wrapper.row-col2-more { background-color: #002D04 !important; color: #ffffff !important; }
+        .mirror-table .script-row-wrapper.row-col3-more,
+        .mirror-table .script-row-wrapper.row-col3-much-more { background-color: #531516 !important; color: #ffffff !important; }
+        .mirror-table .script-row-wrapper.mirror-row-font-12 .script-column .cell-content {
+            font-size: 12px !important;
+            line-height: 1.2 !important;
+        }
+        #mirror-sync-guide {
+            position: fixed;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            top: var(--mirror-indicator-position, 50%);
+            transform: translateY(-50%);
+            background: transparent;
+            backdrop-filter: invert(1);
+            -webkit-backdrop-filter: invert(1);
+            z-index: 100;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="scroll-container">
+        <div id="mirror-content" class="mirror-table"></div>
+    </div>
+    <div id="mirror-sync-guide"></div>
+    <script>
+        (function() {
+            const container = document.getElementById('scroll-container');
+            const display = document.getElementById('mirror-content');
+            let skipNextScrollPost = false;
+            const mirrorChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('teleprompter-mirror-sync') : null;
+
+            function postToMain(payload) {
+                if (mirrorChannel) mirrorChannel.postMessage(payload);
+                if (window.opener && !window.opener.closed) {
+                    try { window.opener.postMessage(payload, '*'); } catch (e) {}
+                }
+            }
+
+            function escapeHtml(text) {
+                if (text == null) return '';
+                var div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            function handleMessage(e) {
+                const data = e.data || {};
+                const type = data.type;
+                if (type === 'loadContent') {
+                    if (data.table && Array.isArray(data.table)) {
+                        var visibleColumnIndex = typeof data.visibleColumnIndex === 'number' ? data.visibleColumnIndex : 0;
+                        if (data.contentWidth) {
+                            document.documentElement.style.setProperty('--mirror-content-width', data.contentWidth);
+                        }
+                        var html = '';
+                        data.table.forEach(function(row) {
+                            var cells = row.cells || [];
+                            var rowClass = (row.rowClass || '') + (row.font12 ? ' mirror-row-font-12' : '');
+                            html += '<div class="script-row-wrapper' + (rowClass ? ' ' + rowClass.trim() : '') + '">';
+                            cells.forEach(function(cellText, ci) {
+                                var visible = (ci === visibleColumnIndex) ? ' mirror-visible' : '';
+                                var safe = escapeHtml(cellText != null ? String(cellText) : '');
+                                safe = safe.replace(/\n/g, '<br>');
+                                html += '<div class="script-column' + visible + '"><div class="cell-content">' + (safe || '\u00A0') + '</div></div>';
+                            });
+                            html += '</div>';
+                        });
+                        display.innerHTML = html;
+                        if (data.rowHeights && Array.isArray(data.rowHeights)) {
+                            var mirrorRows = display.querySelectorAll('.script-row-wrapper');
+                            if (mirrorRows.length === data.rowHeights.length) {
+                                data.rowHeights.forEach(function(h, i) {
+                                    if (mirrorRows[i] && typeof h === 'number' && h > 0) {
+                                        mirrorRows[i].style.minHeight = h + 'px';
+                                        mirrorRows[i].style.height = h + 'px';
+                                    }
+                                });
+                            }
+                        }
+                    }
+                }
+                if (type === 'syncStyleLite' && data.style) {
+                    const s = data.style;
+                    display.style.fontSize = s.fontSize || '';
+                    display.style.fontFamily = s.fontFamily || '';
+                    display.style.lineHeight = s.lineHeight || '';
+                    const pad = [s.paddingTop || '10px', s.paddingRight || '40px', s.paddingBottom || '10px', s.paddingLeft || '40px'].join(' ');
+                    document.documentElement.style.setProperty('--mirror-pad', pad);
+                    document.documentElement.style.setProperty('--mirror-line-height', s.lineHeight || '1.4');
+                    document.documentElement.style.setProperty('--mirror-content-width', s.contentWidth || '100%');
+                }
+                if (type === 'pixelSync') {
+                    skipNextScrollPost = true;
+                    container.scrollTo({ top: data.scrollTop || 0, behavior: 'instant' });
+                    const pct = data.indicatorPosition;
+                    if (typeof pct === 'number') {
+                        document.documentElement.style.setProperty('--mirror-indicator-position', pct + '%');
+                    }
+                }
+                if (type === 'setPosition') {
+                    try {
+                        var left = parseInt(data.left, 10), top = parseInt(data.top, 10);
+                        var w = parseInt(data.width, 10), h = parseInt(data.height, 10);
+                        if (!isNaN(left) && !isNaN(top)) window.moveTo(left, top);
+                        if (!isNaN(w) && w > 0 && !isNaN(h) && h > 0) window.resizeTo(w, h);
+                    } catch (err) {}
+                }
+            }
+
+            container.addEventListener('scroll', function() {
+                if (skipNextScrollPost) {
+                    skipNextScrollPost = false;
+                    return;
+                }
+                postToMain({
+                    type: 'mirrorScroll',
+                    scrollTop: container.scrollTop,
+                    scrollHeight: container.scrollHeight,
+                    clientHeight: container.clientHeight
+                });
+            });
+
+            window.addEventListener('message', handleMessage);
+
+            /* Position and size are set by the opener (main window). Do not move/resize here – on PC, screen reports the primary monitor and would pull the window off the intended monitor. */
+
+            postToMain({ type: 'mirrorReady' });
+        })();
+    </script>
+</body>
+</html>
