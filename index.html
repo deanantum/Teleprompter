@@ -19,17 +19,11 @@
     <div class="app-container">
 
         <header class="top-ribbon">
+            <div class="top-ribbon-row top-ribbon-row-1">
             <button id="btn-open-file" title="Open File"><i class="fa-solid fa-folder-open"></i></button>
             <button id="btn-save" title="Save"><i class="fa-solid fa-save"></i></button>
-            <span class="divider"></span>
-            <button id="btn-start" title="Play / Pause"><i class="fa-solid fa-play"></i></button>
-            <button id="btn-stop" title="Stop & Reset"><i class="fa-solid fa-stop"></i></button>
-            <button id="btn-settings-gear" title="Settings"><i class="fa-solid fa-gear"></i></button>
-            <button id="btn-extend-monitor" title="Extend Monitor"><i class="fa-solid fa-display"></i></button>
-            <span class="divider"></span>
-            <button id="btn-prev-bookmark" title="Previous Bookmark"><i class="fa-solid fa-backward"></i></button>
-            <button id="btn-next-bookmark" title="Next Bookmark"><i class="fa-solid fa-forward"></i></button>
-            <button id="btn-new-bookmark" title="New Bookmark"><i class="fa-solid fa-bookmark"></i></button>
+            <button id="btn-undo" title="Undo (Cmd+Z)"><i class="fa-solid fa-undo"></i></button>
+            <button id="btn-redo" title="Redo (Cmd+Y)"><i class="fa-solid fa-rotate-right"></i></button>
             <span class="divider"></span>
             <select id="font-family-select" title="Font">
                 <option value="Arial">Arial</option>
@@ -64,20 +58,70 @@
                 <option value="120">120</option>
             </select>
             <span class="divider"></span>
-            <select id="select-font-target" title="Select font to format">
-                <option value="">Select</option>
-            </select>
-            <span class="divider"></span>
             <button id="btn-bg-color" title="Background Color"><i class="fa-solid fa-fill-drip"></i></button>
             <button id="btn-font-color" title="Font Color"><i class="fa-solid fa-palette"></i></button>
             <button id="btn-bold" title="Bold"><i class="fa-solid fa-bold"></i></button>
             <button id="btn-italic" title="Italic"><i class="fa-solid fa-italic"></i></button>
             <button id="btn-underline" title="Underline"><i class="fa-solid fa-underline"></i></button>
             <span class="divider"></span>
+            <button id="btn-overview-toggle" class="overview-btn" title="Toggle overview (size 12) / restore size">Aa</button>
+            <div class="font-target-dropdown" id="font-target-dropdown" title="Select font to format">
+                <button type="button" class="font-target-trigger" id="font-target-trigger">Select</button>
+                <div class="font-target-list" id="font-target-list"></div>
+            </div>
+            <select id="select-font-target" style="display:none" aria-hidden="true"><option value="">Select</option></select>
+            <button id="btn-remove-font-target" type="button" class="remove-font-btn" title="Remove formatting and match most text">×</button>
+            <span class="divider"></span>
             <button id="btn-toggle-runlist" title="Show/Hide Runlist"><i class="fa-solid fa-list-alt"></i></button>
+            <span class="divider"></span>
+            <button id="btn-settings-gear" title="Settings"><i class="fa-solid fa-gear"></i></button>
+            </div>
+            <div class="top-ribbon-row top-ribbon-row-2">
+                <button id="btn-start" title="Play / Pause"><i class="fa-solid fa-play"></i></button>
+                <button id="btn-stop" title="Stop & Reset"><i class="fa-solid fa-stop"></i></button>
+                <button id="btn-extend-monitor" title="Extend Monitor"><i class="fa-solid fa-display"></i></button>
+                <span class="divider"></span>
+                <div class="speed-slider-wrap">
+                    <span class="speed-slider-label">Speed:</span>
+                    <div class="speed-slider-container">
+                        <div class="speed-slider-track">
+                            <div class="speed-slider-fill" id="speed-slider-fill"></div>
+                            <div class="speed-slider-center-marker"></div>
+                        </div>
+                        <input type="range" id="speed-slider" min="-10" max="10" step="0.1" value="0" title="Scroll speed (-10 to 10)">
+                        <div class="speed-slider-scale">
+                            <span class="speed-scale-left">-10</span>
+                            <span class="speed-scale-left-mid">-5</span>
+                            <span class="speed-scale-mid">0</span>
+                            <span class="speed-scale-right-mid">5</span>
+                            <span class="speed-scale-right">10</span>
+                        </div>
+                    </div>
+                    <span id="speed-value">0</span>
+                    <button id="btn-keyboard-shortcuts" class="keyboard-btn" title="Keyboard shortcuts"><i class="fa-solid fa-keyboard"></i></button>
+                    <button id="btn-connect-shuttle" class="keyboard-btn" title="Connect ShuttleXPress (Chrome)"><i class="fa-solid fa-gamepad"></i> Shuttle</button>
+                </div>
+            </div>
         </header>
 
-        <div id="bg-color-panel" style="display:none; position:absolute; z-index:100; background:var(--secondary-bg); color:var(--font-color); padding:10px; border:1px solid var(--border-color); border-radius:4px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
+        <div id="shortcuts-overlay" class="shortcuts-overlay hidden">
+            <div class="shortcuts-panel">
+                <h3>Keyboard Shortcuts</h3>
+                <dl class="shortcuts-list">
+                    <dt>⌥ A</dt><dd>Start / Pause</dd>
+                    <dt>⌥ S</dt><dd>Stop (when playing)</dd>
+                    <dt>← ↓</dt><dd>Slower / Reverse</dd>
+                    <dt>→ ↑</dt><dd>Faster / Forward</dd>
+                    <dt>⌥ B</dt><dd>Add bookmark at cursor</dd>
+                    <dt>⌥ ↑</dt><dd>Previous segment</dd>
+                    <dt>⌥ ↓</dt><dd>Next segment</dd>
+                    <dt>Esc</dt><dd>Exit editing (then use shortcuts)</dd>
+                </dl>
+                <button id="btn-close-shortcuts" class="shortcuts-close">Close</button>
+            </div>
+        </div>
+
+        <div id="bg-color-panel" style="display:none; position:fixed; z-index:1000; background:var(--secondary-bg); color:var(--font-color); padding:10px; border:1px solid var(--border-color); border-radius:4px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
             <label>Background Color:</label><br>
             <div class="color-options">
                 <div class="color-box" style="background:#FFFFFF" data-color="#FFFFFF" title="White"></div>
@@ -95,7 +139,7 @@
             </div>
         </div>
 
-        <div id="font-color-panel" style="display:none; position:absolute; z-index:100; background:var(--secondary-bg); color:var(--font-color); padding:10px; border:1px solid var(--border-color); border-radius:4px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
+        <div id="font-color-panel" style="display:none; position:fixed; z-index:1000; background:var(--secondary-bg); color:var(--font-color); padding:10px; border:1px solid var(--border-color); border-radius:4px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);">
             <label>Font Color:</label><br>
             <div class="color-options">
                 <div class="color-box" style="background:#FFFFFF" data-color="#FFFFFF" title="White"></div>
@@ -120,9 +164,9 @@
 									<div id="sync-guide"></div>
 								</div>
 								
-								<div id="teleprompter-view">
-										<div id="teleprompter-text" contenteditable="true">
-												Welcome to your new teleprompter. Start typing, paste your script, or open a file to begin...
+								<div id="teleprompter-view" tabindex="-1">
+										<div id="teleprompter-text" contenteditable="true" data-placeholder="true">
+												Welcome to your new teleprompter.<br>Start typing, paste your script, or open a file to begin...
 										</div>
 								</div>
 						</div>
@@ -138,17 +182,33 @@
                     </div>
                     <div class="runlist-files"></div>
                 </div>
-
                 <div id="settings-panel" class="hidden">
                     <h4>Control Mode</h4>
                     <label><input type="radio" name="controlMode" value="off" checked> Off</label>
                     <label><input type="radio" name="controlMode" value="mouse"> Mouse</label>
                     <label><input type="checkbox" id="invert-scroll-checkbox"> Invert Scroll</label>
+                    <h4>Second monitor (mirror window)</h4>
+                    <p class="settings-hint">If you work on the 2nd monitor and want the mirror on the main one, choose Left. Otherwise choose Right, Above, or Below.</p>
+                    <div class="monitor-position-options">
+                        <label><input type="radio" name="secondMonitorPosition" value="right" checked> Right</label>
+                        <label><input type="radio" name="secondMonitorPosition" value="left"> Left</label>
+                        <label><input type="radio" name="secondMonitorPosition" value="above"> Above</label>
+                        <label><input type="radio" name="secondMonitorPosition" value="below"> Below</label>
+                    </div>
+                    <p class="settings-hint">If the mirror window doesn’t move to the other monitor by itself, drag it there. On Mac and in some setups the browser blocks automatic placement.</p>
+                    <p class="settings-hint">For automatic placement when supported, allow multi-screen access when your browser asks. If the button below says &quot;Not available&quot;, use Left/Right above and drag the mirror if needed. From file (file://), run <code>npx serve</code> then open <code>http://localhost:3000</code>.</p>
+                    <button type="button" id="btn-request-multiscreen" class="settings-action-btn">Request multi-screen access</button>
+                    <span id="multiscreen-status" class="settings-status" aria-live="polite"></span>
                 </div>
-
+                <div id="runlist-bookmark-resizer" class="panel-resizer" title="Drag to resize"></div>
                 <div class="bookmark-section">
                     <div class="bookmark-list-header">
                         <span class="section-label">Bookmarks</span>
+                        <div class="bookmark-buttons">
+                            <button id="btn-new-bookmark" title="New Bookmark"><i class="fa-solid fa-bookmark"></i></button>
+                            <button id="btn-prev-bookmark" title="Previous Bookmark"><i class="fa-solid fa-backward"></i></button>
+                            <button id="btn-next-bookmark" title="Next Bookmark"><i class="fa-solid fa-forward"></i></button>
+                        </div>
                     </div>
                     <div class="bookmark-list"></div>
                 </div>
@@ -157,8 +217,9 @@
     </div>
 
     <div id="f2-prompt" class="hidden">Press F2 to use the mouse</div>
+    <div id="mirror-placement-toast" class="mirror-placement-toast hidden" aria-live="polite"></div>
 
-    <input type="file" id="file-opener" style="display: none;" />
+    <input type="file" id="file-opener" multiple style="display: none;" accept=".txt,.html,.htm,.xlsx,.xls,.docx,.doc" />
     <div id="column-modal" class="modal-overlay hidden">
         <div class="modal-content">
             <h3>Select Columns to Import</h3>
