@@ -1,4 +1,4 @@
-window.onload = function() {
+document.addEventListener('DOMContentLoaded', function() {
     // =========================================
     // 1. ELEMENT SELECTORS
     // =========================================
@@ -6,6 +6,61 @@ window.onload = function() {
     const toggleRunlistButton = document.getElementById('btn-toggle-runlist');
     const fileOpener = document.getElementById('file-opener');
     const runlistContainer = document.querySelector('.runlist-files');
+    let runlistDropIndicator = null;
+    function getRunlistDropIndicator() {
+        if (!runlistDropIndicator && runlistContainer) {
+            runlistDropIndicator = document.createElement('div');
+            runlistDropIndicator.className = 'runlist-drop-indicator';
+            runlistDropIndicator.setAttribute('aria-hidden', 'true');
+        }
+        return runlistDropIndicator;
+    }
+    function hideRunlistDropIndicator() {
+        if (runlistDropIndicator && runlistDropIndicator.parentNode) runlistDropIndicator.remove();
+        runlistContainer.querySelectorAll('.runlist-row').forEach(r => r.classList.remove('runlist-drop-target'));
+    }
+    let runlistDraggingIndex = null;
+    let runlistDraggingRow = null;
+    let runlistJustDragged = false;
+    function onRunlistMouseMove(e) {
+        if (runlistDraggingIndex == null || !runlistContainer) return;
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        const row = el && el.closest ? el.closest('.runlist-row') : null;
+        if (!row || !runlistContainer.contains(row)) {
+            hideRunlistDropIndicator();
+            return;
+        }
+        const rowIndex = parseInt(row.dataset.index, 10);
+        const rect = row.getBoundingClientRect();
+        const topHalf = rect.height > 0 && (e.clientY - rect.top) < rect.height / 2;
+        const insertIndex = topHalf ? rowIndex : rowIndex + 1;
+        const indicator = getRunlistDropIndicator();
+        indicator.dataset.insertIndex = String(insertIndex);
+        const rows = runlistContainer.querySelectorAll('.runlist-row');
+        if (insertIndex >= rows.length) runlistContainer.appendChild(indicator);
+        else runlistContainer.insertBefore(indicator, rows[insertIndex]);
+    }
+    function onRunlistMouseUp(e) {
+        if (runlistDraggingIndex == null) return;
+        const indicator = getRunlistDropIndicator();
+        const toIndex = parseInt(indicator.dataset.insertIndex, 10);
+        hideRunlistDropIndicator();
+        if (!isNaN(toIndex) && toIndex !== runlistDraggingIndex) {
+            moveRunlistRow(runlistDraggingIndex, toIndex);
+            runlistJustDragged = true;
+            setTimeout(() => { runlistJustDragged = false; }, 100);
+        }
+        if (runlistDraggingRow) runlistDraggingRow.classList.remove('runlist-dragging');
+        runlistDraggingIndex = null;
+        runlistDraggingRow = null;
+        document.removeEventListener('mousemove', onRunlistMouseMove, true);
+        document.removeEventListener('mouseup', onRunlistMouseUp, true);
+    }
+    if (runlistContainer) {
+        runlistContainer.addEventListener('dragleave', (e) => {
+            if (!runlistContainer.contains(e.relatedTarget)) hideRunlistDropIndicator();
+        });
+    }
     const teleprompterText = document.getElementById('teleprompter-text');
     const runlistPanel = document.getElementById('runlist-panel');
     const resizer = document.getElementById('resizer');
@@ -31,7 +86,7 @@ window.onload = function() {
     const startButton = document.getElementById('btn-start');
     const stopButton = document.getElementById('btn-stop');
     const settingsGearButton = document.getElementById('btn-settings-gear');
-    const settingsPanel = document.getElementById('settings-panel');
+    const settingsOverlay = document.getElementById('settings-overlay');
     const f2Prompt = document.getElementById('f2-prompt');
     const newBookmarkButton = document.getElementById('btn-new-bookmark');
     const prevBookmarkButton = document.getElementById('btn-prev-bookmark');
@@ -40,14 +95,23 @@ window.onload = function() {
     const secondMonitorPositionRadios = document.querySelectorAll('input[name="secondMonitorPosition"]');
 
     // Modal Elements
-    const columnModal = document.getElementById('column-modal');
-    const columnList = document.getElementById('column-list');
-    const btnConfirmImport = document.getElementById('btn-confirm-import');
-    const btnCancelImport = document.getElementById('btn-cancel-import');
     const btnMoveFileUp = document.getElementById('btn-move-file-up');
     const btnMoveFileDown = document.getElementById('btn-move-file-down');
     const speedSlider = document.getElementById('speed-slider');
     const speedValueEl = document.getElementById('speed-value');
+
+    const FONT_FAMILY_STORAGE_KEY = 'teleprompter_fontFamily';
+    const FONT_SIZE_STORAGE_KEY = 'teleprompter_fontSize';
+    try {
+        const savedFamily = localStorage.getItem(FONT_FAMILY_STORAGE_KEY);
+        if (savedFamily && fontFamilySelect && Array.from(fontFamilySelect.options).some(o => o.value === savedFamily)) {
+            fontFamilySelect.value = savedFamily;
+        }
+        const savedSize = localStorage.getItem(FONT_SIZE_STORAGE_KEY);
+        if (savedSize && fontSizeSelect && Array.from(fontSizeSelect.options).some(o => o.value === savedSize)) {
+            fontSizeSelect.value = savedSize;
+        }
+    } catch (_) {}
 
     // =========================================
     // 2. IMMEDIATE UI SETUP (CRITICAL: Must be AFTER selectors)
@@ -101,6 +165,7 @@ window.onload = function() {
     let scrollInterval = null;
     let lastActiveSpeed = 1;
     let isInvertScroll = false;
+    let scrollSensitivity = 1;
     let isMirrorActive = false;
     let mirrorScrollOffset = -150;
     let animationFrameId = null;
@@ -108,6 +173,12 @@ window.onload = function() {
     // Excel Import Temp State
     let pendingWorkbook = null;
     let pendingFileIndex = -1;
+    /** Per-file: number of script columns (0 = non-table or not yet set). */
+    let fileColumnCount = [];
+    /** Per-file: which columns are visible; fileColumnVisibility[i][j] = true to show column j. */
+    let fileColumnVisibility = [];
+    /** Per-file: true if first column is numeric (show as "ID" in runlist). */
+    let fileFirstColIsId = [];
 
     let lastColumnWidthPx = null;
     let col2WidthPx = null;
@@ -513,6 +584,22 @@ window.onload = function() {
         return true;
     }
 
+    /** Get format (fontFamily, fontSize, color, backgroundColor) at current selection or caret for Select menu sync. */
+    function getFormatAtCaretOrSelection() {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return null;
+        const range = sel.getRangeAt(0);
+        if (!teleprompterText.contains(range.startContainer)) return null;
+        let node = range.startContainer;
+        if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+        if (!node) return null;
+        const style = window.getComputedStyle(node);
+        const fontFamily = (style.fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
+        const fontSize = style.fontSize || '';
+        const { color, backgroundColor } = getEffectiveColorsFromElement(node);
+        return { fontFamily, fontSize, color: (color || '').trim(), backgroundColor: (backgroundColor || '').trim() };
+    }
+
     function refreshSelectFontTarget() {
         if (!selectFontTarget) return;
         const trigger = document.getElementById('font-target-trigger');
@@ -623,7 +710,57 @@ window.onload = function() {
             listEl.appendChild(item);
         });
         if (!selectFontTarget.value) {
-            trigger.textContent = 'Select';
+            const atCaret = getFormatAtCaretOrSelection();
+            if (atCaret && opts.length > 0) {
+                const hasFontColor = isOpaqueColor(atCaret.color);
+                const hasBgColor = isOpaqueColor(atCaret.backgroundColor);
+                const wantVal = JSON.stringify({ fontFamily: atCaret.fontFamily, fontSize: atCaret.fontSize, color: hasFontColor ? atCaret.color : null, backgroundColor: hasBgColor ? atCaret.backgroundColor : null });
+                let match = opts.find(({ fontFamily, fontSize, color, backgroundColor }) => {
+                    const hasC = isOpaqueColor(color);
+                    const hasB = isOpaqueColor(backgroundColor);
+                    const v = JSON.stringify({ fontFamily, fontSize, color: hasC ? color : null, backgroundColor: hasB ? backgroundColor : null });
+                    return v === wantVal;
+                });
+                if (!match && normalizeColorForKey) {
+                    match = opts.find(({ fontFamily, fontSize, color, backgroundColor }) => {
+                        return fontFamily === atCaret.fontFamily && fontSize === atCaret.fontSize &&
+                            normalizeColorForKey(color || '') === normalizeColorForKey(atCaret.color || '') &&
+                            normalizeColorForKey(backgroundColor || '') === normalizeColorForKey(atCaret.backgroundColor || '');
+                    });
+                }
+                if (match) {
+                    const { fontFamily, fontSize, color, backgroundColor } = match;
+                    const sizeNum = parseInt(fontSize, 10) || fontSize;
+                    const label = `${fontFamily} ${sizeNum}`;
+                    const val = JSON.stringify({ fontFamily, fontSize, color: isOpaqueColor(color) ? color : null, backgroundColor: isOpaqueColor(backgroundColor) ? backgroundColor : null });
+                    selectFontTarget.value = val;
+                    trigger.innerHTML = '';
+                    const tLabel = document.createElement('span');
+                    tLabel.textContent = label;
+                    trigger.appendChild(tLabel);
+                    if (isOpaqueColor(color) || isOpaqueColor(backgroundColor)) {
+                        const sw = document.createElement('span');
+                        sw.className = 'font-target-swatches';
+                        if (isOpaqueColor(backgroundColor)) {
+                            const s = document.createElement('span');
+                            s.className = 'font-target-swatch font-target-swatch-bg';
+                            s.style.backgroundColor = backgroundColor;
+                            sw.appendChild(s);
+                        }
+                        if (isOpaqueColor(color)) {
+                            const s = document.createElement('span');
+                            s.className = 'font-target-swatch font-target-swatch-text';
+                            s.style.backgroundColor = color;
+                            sw.appendChild(s);
+                        }
+                        trigger.appendChild(sw);
+                    }
+                } else {
+                    trigger.textContent = 'Select';
+                }
+            } else {
+                trigger.textContent = 'Select';
+            }
         }
         try {
             selectedFontTarget = selectFontTarget.value ? JSON.parse(selectFontTarget.value) : null;
@@ -975,7 +1112,18 @@ window.onload = function() {
             }
         };
         speedSlider.addEventListener('input', updateSpeedFromSlider);
+        speedSlider._updateSpeedFromSlider = updateSpeedFromSlider;
         updateSpeedFromSlider();
+        speedSlider.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            let v = parseFloat(speedSlider.value) || 0;
+            const step = 0.1 * scrollSensitivity;
+            v += e.deltaY < 0 ? step : -step;
+            v = Math.max(0, Math.min(10, v));
+            speedSlider.value = v;
+            speedSlider.dispatchEvent(new Event('input'));
+        }, { passive: false, capture: true });
     }
 
     function startScrolling() {
@@ -983,14 +1131,15 @@ window.onload = function() {
         isTeleprompting = true;
         const move = () => {
             if (!isTeleprompting) return;
-            const direction = isInvertScroll ? -1 : 1;
-            scrollAccum += scrollSpeed * direction;
+            scrollAccum += scrollSpeed;
             const delta = Math.trunc(scrollAccum);
             if (delta !== 0) {
                 teleprompterView.scrollTop += delta;
                 scrollAccum -= delta;
             }
             syncMirrorByPixels();
+            if (typeof checkTopPillAndGoToPreviousFile === 'function') checkTopPillAndGoToPreviousFile();
+            if (typeof checkBottomPillAndAdvanceToNextFile === 'function') checkBottomPillAndAdvanceToNextFile();
             animationFrameId = requestAnimationFrame(move);
         };
         animationFrameId = requestAnimationFrame(move);
@@ -1098,32 +1247,52 @@ window.onload = function() {
             e.preventDefault();
             e.stopPropagation();
             stopButton.click();
-        } else if ((e.code === 'Space' || e.key === ' ') && spacebarControlsPlay && (isTeleprompting || isPaused)) {
-            e.preventDefault();
-            e.stopPropagation();
-            startButton.click();
+        } else if (e.code === 'Space' || e.key === ' ') {
+            const canToggle = isTeleprompting || isPaused;
+            const canStart = spacebarControlsPlay && !canToggle;
+            if (canToggle || canStart) {
+                e.preventDefault();
+                e.stopPropagation();
+                startButton.click();
+            }
         }
     }, true);
 
     document.addEventListener('mousedown', () => { spacebarControlsPlay = false; }, true);
 
     let heldKeyInterval = null;
-    /** isRepeat: true when called from the hold interval – on Down only, prevents crossing zero into reverse while holding (stop at 0 until key pressed again). */
+    /** isRepeat: true when called from the hold interval. When !isInvertScroll, Down/Left stops at 0. When isInvertScroll, Up/Right stops at 0 (opposite direction). */
     const applyArrowStep = (key, step, isRepeat = false) => {
         let v = parseFloat(speedSlider.value) || 0;
-        if (key === 'ArrowLeft' || key === 'ArrowDown') {
-            if (v > 0) {
-                v = Math.max(0, v - step);  /* slowing down: stop at 0 */
-            } else if (v === 0 && isRepeat) {
-                v = 0;  /* holding at 0: don't go reverse until key pressed again */
+        const isDown = key === 'ArrowLeft' || key === 'ArrowDown';
+        const isUp = key === 'ArrowRight' || key === 'ArrowUp';
+        const stopAtZeroKey = isInvertScroll ? isUp : isDown;
+        if (stopAtZeroKey) {
+            if (isDown) {
+                if (v > 0) {
+                    v = Math.max(0, v - step);  /* slowing down: stop at 0 */
+                } else if (v === 0 && isRepeat) {
+                    v = 0;  /* holding at 0: don't go reverse until key pressed again */
+                } else {
+                    v = Math.max(-10, v - step);  /* new press at 0, or already negative: allow reverse / keep going */
+                }
             } else {
-                v = Math.max(-10, v - step);  /* new press at 0, or already negative: allow reverse / keep going */
+                if (v < 0) {
+                    v = Math.min(0, v + step);  /* slowing down toward 0: stop at 0 */
+                } else if (v === 0 && isRepeat) {
+                    v = 0;  /* holding at 0: don't go forward until key pressed again */
+                } else {
+                    v = Math.min(10, v + step);  /* new press at 0, or already positive: allow forward / keep going */
+                }
             }
         } else {
-            /* Up/Right: always allow increasing speed (no stop at 0) */
-            v = Math.min(10, v + step);
+            if (isDown) {
+                v = Math.max(-10, v - step);  /* no stop at 0 */
+            } else {
+                v = Math.min(10, v + step);  /* no stop at 0 */
+            }
         }
-        v = Math.round(v * 10) / 10;
+        v = Math.round(v * 100) / 100;
         speedSlider.value = v;
         speedSlider.dispatchEvent(new Event('input'));
     };
@@ -1153,6 +1322,57 @@ window.onload = function() {
             }
         }
     }, true);
+
+    /* When Mouse mode is selected and we're playing: wheel over teleprompter changes speed. Otherwise wheel scrolls the content. Listen on document (capture) so we always receive wheel when cursor is over the page. */
+    if (teleprompterView && speedSlider) {
+        const WHEEL_DEBUG = typeof window !== 'undefined' && window.DEBUG_WHEEL_SPEED;
+        let wheelLogCount = 0;
+        function handleWheelForSpeed(e) {
+            const overTeleprompter = teleprompterView && teleprompterView.contains(e.target);
+            const mouseMode = document.querySelector('input[name="controlMode"]:checked')?.value === 'mouse';
+            const useWheelForSpeed = overTeleprompter && mouseMode && isTeleprompting && !isPaused;
+            const shouldLog = WHEEL_DEBUG || wheelLogCount < 5;
+            if (shouldLog) {
+                wheelLogCount += 1;
+                console.log('[WheelSpeed]' + (wheelLogCount <= 5 ? ' (first 5 always)' : ''), {
+                    overTeleprompter,
+                    mouseMode,
+                    isTeleprompting,
+                    isPaused,
+                    useWheelForSpeed,
+                    deltaY: e.deltaY,
+                    deltaMode: e.deltaMode,
+                    targetId: e.target?.id,
+                    targetTag: e.target?.tagName
+                });
+            }
+            if (!useWheelForSpeed) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const isTrackpad = e.deltaMode === 0;
+            const mag = Math.abs(e.deltaY);
+            let step = isTrackpad
+                ? Math.max(0.02, Math.min(0.22, mag * 0.0005))
+                : Math.max(0.5, Math.min(2.5, mag * 0.01));
+            step *= scrollSensitivity;
+            const goUp = e.deltaY < 0;
+            const key = (goUp && !isInvertScroll) || (!goUp && isInvertScroll) ? 'ArrowUp' : 'ArrowDown';
+            const prevVal = parseFloat(speedSlider.value) || 0;
+            applyArrowStep(key, step, false);
+            let newVal = parseFloat(speedSlider.value) || 0;
+            if ((prevVal > 0 && newVal < 0) || (prevVal < 0 && newVal > 0)) {
+                speedSlider.value = 0;
+                newVal = 0;
+            }
+            if (newVal < 0) {
+                speedSlider.value = 0;
+            }
+            if (typeof speedSlider._updateSpeedFromSlider === 'function') speedSlider._updateSpeedFromSlider();
+            if (shouldLog) console.log('[WheelSpeed] applied', { step, key, newValue: speedSlider?.value });
+        }
+        document.addEventListener('wheel', handleWheelForSpeed, { passive: false, capture: true });
+        console.log('[WheelSpeed] Listener attached on document (capture). Set DEBUG_WHEEL_SPEED = true for every wheel, or scroll wheel to see first 5.');
+    }
 
     // -----------------------------------------
     // WebHID: ShuttleXPress (Contour Design)
@@ -1287,7 +1507,9 @@ window.onload = function() {
 
     requestAnimationFrame(() => refreshSelectFontTarget());
 
+    let skipCaretSyncForFontSelects = false;
     function updateFontSelectsFromCaret() {
+        if (skipCaretSyncForFontSelects) return;
         const sel = window.getSelection();
         if (!sel.rangeCount || sel.rangeCount === 0) return;
         const node = sel.anchorNode;
@@ -1391,10 +1613,12 @@ window.onload = function() {
                     measureRowHeightsFromContent();
                     if (mirrorWindow && !mirrorWindow.closed) syncMirrorStyles();
                     syncEditorState();
+                    skipCaretSyncForFontSelects = false;
                 });
             });
         };
 
+        skipCaretSyncForFontSelects = true;
         teleprompterText.focus();
         requestAnimationFrame(() => {
             requestAnimationFrame(doApply);
@@ -1512,19 +1736,26 @@ window.onload = function() {
     if (fontFamilySelect) {
         fontFamilySelect.addEventListener('change', () => {
             lastFontChangeSource = 'family';
+            try { localStorage.setItem(FONT_FAMILY_STORAGE_KEY, fontFamilySelect.value); } catch (_) {}
+            skipCaretSyncForFontSelects = true;
             applyFontSettings();
+            updateFilenamePills();
         });
     }
     if (fontSizeSelect) {
         fontSizeSelect.addEventListener('change', () => {
             lastFontChangeSource = 'size';
+            try { localStorage.setItem(FONT_SIZE_STORAGE_KEY, fontSizeSelect.value); } catch (_) {}
+            skipCaretSyncForFontSelects = true;
             if (isOverviewMode) {
                 savedFontSizeBeforeOverview = fontSizeSelect.value;
                 applyFontSettings();
                 requestAnimationFrame(() => refreshSelectFontTarget());
+                updateFilenamePills();
                 return;
             }
             applyFontSettings();
+            updateFilenamePills();
         });
     }
 
@@ -1562,6 +1793,7 @@ window.onload = function() {
                 requestAnimationFrame(() => {
                     measureRowHeightsFromContent();
                     refreshSelectFontTarget();
+                    updateFilenamePills();
                     if (mirrorWindow && !mirrorWindow.closed) {
                         syncMirrorStyles();
                         refreshMirrorData();
@@ -1610,6 +1842,7 @@ window.onload = function() {
                 measureRowHeightsFromContent();
                 if (sizeToReapply) applyFontSizeOnlyToAllContent(sizeToReapply);
                 refreshSelectFontTarget();
+                updateFilenamePills();
                 if (mirrorWindow && !mirrorWindow.closed) syncMirrorStyles();
                 syncEditorState();
             });
@@ -1715,6 +1948,25 @@ window.onload = function() {
         });
         document.addEventListener('click', () => fontTargetList.classList.remove('open'));
         fontTargetList.addEventListener('click', (e) => e.stopPropagation());
+    }
+    const eventPlanTrigger = document.getElementById('btn-event-plan-trigger');
+    const eventPlanList = document.getElementById('event-plan-list');
+    if (eventPlanTrigger && eventPlanList) {
+        eventPlanTrigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            eventPlanList.classList.toggle('open');
+        });
+        document.addEventListener('click', () => eventPlanList.classList.remove('open'));
+        eventPlanList.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const item = e.target.closest('.event-plan-item');
+            if (!item) return;
+            eventPlanList.classList.remove('open');
+            const action = item.dataset.action;
+            if (action === 'event-plan') {
+                openEventPlanOverlay();
+            } else if (action === 'event-script') { /* Event Script action */ }
+        });
     }
     if (btnRemoveFontTarget) {
         btnRemoveFontTarget.onclick = () => {
@@ -1877,6 +2129,22 @@ window.onload = function() {
     document.addEventListener('mousedown', handleColorBoxSelect, true);
 
     teleprompterView.addEventListener('scroll', syncMirrorByPixels);
+    let bookmarkHighlightRaf = null;
+    teleprompterView.addEventListener('scroll', () => {
+        if (typeof checkTopPillAndGoToPreviousFile === 'function') checkTopPillAndGoToPreviousFile();
+        if (typeof checkBottomPillAndAdvanceToNextFile === 'function') checkBottomPillAndAdvanceToNextFile();
+        if (bookmarkHighlightRaf) return;
+        bookmarkHighlightRaf = requestAnimationFrame(() => {
+            bookmarkHighlightRaf = null;
+            if (typeof updateBookmarkHighlightFromScroll === 'function') updateBookmarkHighlightFromScroll();
+        });
+    }, { passive: true });
+    teleprompterView.addEventListener('click', (e) => {
+        if (typeof getBookmarkIndexAtY === 'function' && typeof setActiveBookmarkByIndex === 'function') {
+            const idx = getBookmarkIndexAtY(e.clientY);
+            if (idx >= 0) setActiveBookmarkByIndex(idx);
+        }
+    });
 
     (function setupIndicatorDrag() {
         if (!indicatorWrapper || !indicatorTriangle || !teleprompterStage) return;
@@ -2119,9 +2387,8 @@ function indexToColumnLetter(colIndex) {
     }
 
     /**
-     * Build the single row-height array for extended view: for each row, use max(height needed for column 2, height needed for column 3).
-     * Main shows column 2, mirror shows column 3 – so this array is the one source of truth for both views.
-     * Call with all columns visible (before hiding column 3).
+     * Build the single row-height array for extended view: for each row, use max height of visible content columns (col 2 and col 3).
+     * Col 1 (ID) does not affect row height.
      */
     function buildRowHeightArrayForExtendedView() {
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
@@ -2136,42 +2403,32 @@ function indexToColumnLetter(colIndex) {
         const firstRow = rows[0];
         const cols = firstRow.querySelectorAll('.script-column');
         const numCols = cols.length;
-        if (numCols < 2) {
-            measuredRowHeights = rows.map(row => {
-                const col = row.querySelector('.script-column');
-                if (!col) return 1;
-                const w = col.getBoundingClientRect().width;
-                const chars = (col.innerText || '').trim().length || 1;
-                const cpl = getCharsPerLine(Math.max(20, w));
-                const numLines = Math.max(1, Math.ceil(chars / cpl));
-                const linePx = row.classList.contains('row-font-12') ? font12LinePx : oneLinePx;
-                return Math.min(viewportMax, Math.max(1, Math.floor(numLines * linePx)));
-            });
-            return;
-        }
-        const w2 = cols[1].getBoundingClientRect().width;
-        const w3 = numCols >= 3 ? cols[2].getBoundingClientRect().width : w2;
-        const cpl2 = getCharsPerLine(Math.max(20, w2));
-        const cpl3 = getCharsPerLine(Math.max(20, w3));
+        if (numCols < 1) return;
+        const contentIndices = getVisibleContentColumnIndices(numCols);
+        const cplPerCol = contentIndices.map(idx => {
+            const col = cols[idx];
+            const w = col ? col.getBoundingClientRect().width : 100;
+            return getCharsPerLine(Math.max(20, w));
+        });
         measuredRowHeights = rows.map(row => {
             const rowCols = row.querySelectorAll('.script-column');
-            const col2 = rowCols[1];
-            const col3 = numCols >= 3 ? rowCols[2] : null;
-            const chars2 = col2 ? (col2.innerText || '').trim().length || 1 : 1;
-            const chars3 = col3 ? (col3.innerText || '').trim().length || 1 : 1;
-            const lines2 = Math.max(1, Math.ceil(chars2 / cpl2));
-            const lines3 = Math.max(1, Math.ceil(chars3 / cpl3));
-            const isFont12 = row.classList.contains('row-font-12');
-            const linePx = isFont12 ? font12LinePx : oneLinePx;
-            const h2 = lines2 * linePx;
-            const h3 = lines3 * linePx;
-            const h = Math.max(h2, h3, 1);
-            return Math.min(viewportMax, Math.max(1, Math.floor(h)));
+            let maxH = 1;
+            contentIndices.forEach((idx, k) => {
+                const col = rowCols[idx];
+                const chars = col ? (col.innerText || '').trim().length || 1 : 1;
+                const cpl = cplPerCol[k] || 20;
+                const numLines = Math.max(1, Math.ceil(chars / cpl));
+                const linePx = row.classList.contains('row-font-12') ? font12LinePx : oneLinePx;
+                const h = numLines * linePx;
+                const floorH = Math.min(viewportMax, Math.max(1, Math.floor(h)));
+                if (floorH > maxH) maxH = floorH;
+            });
+            return maxH;
         });
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
     }
 
-    /** Same approach as when file is opened then extended: measure row heights with probe for last column (avoids inflated heights from DOM scrollHeight on new/added rows). */
+    /** Same approach as when file is opened then extended: measure row heights with probe; use max of visible content columns (col 2 and col 3). */
     function measureRowHeightsWithProbeForBroadcasting() {
         if (!document.body.classList.contains('broadcasting')) return;
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
@@ -2192,28 +2449,24 @@ function indexToColumnLetter(colIndex) {
         probe.style.margin = '0';
         probe.style.boxSizing = 'border-box';
         document.body.appendChild(probe);
+        const numCols = rows[0] ? rows[0].querySelectorAll('.script-column').length : 0;
+        const contentIndices = getVisibleContentColumnIndices(numCols);
         measuredRowHeights = rows.map(row => {
             const cols = row.querySelectorAll('.script-column');
-            const visibleCols = Array.from(cols).slice(0, -1);
-            let visibleMax = 1;
-            if (visibleCols.length > 0) {
-                const visibleHeights = visibleCols.map(col => {
+            let maxH = 1;
+            contentIndices.forEach(idx => {
+                const col = cols[idx];
+                if (col && scriptColWidth > 0) {
                     const cell = col.querySelector('.cell-locker') || col.querySelector('.cell-content') || col;
-                    return cell ? (cell.scrollHeight || 0) : 0;
-                });
-                visibleMax = Math.max(1, ...visibleHeights);
-            }
-            const lastCol = cols[cols.length - 1];
-            let mirrorH = 0;
-            if (lastCol && scriptColWidth > 0) {
-                const cell = lastCol.querySelector('.cell-locker') || lastCol.querySelector('.cell-content') || lastCol;
-                const text = cell ? (cell.innerText || '').trim() || '\u00A0' : '\u00A0';
-                probe.textContent = text;
-                probe.style.fontSize = row.classList.contains('row-font-12') ? '12px' : (mainStyle.fontSize || '');
-                probe.style.lineHeight = row.classList.contains('row-font-12') ? '1.2' : '1.1';
-                mirrorH = probe.scrollHeight || 0;
-            }
-            return Math.max(1, visibleMax, mirrorH);
+                    const text = cell ? (cell.innerText || '').trim() || '\u00A0' : '\u00A0';
+                    probe.textContent = text;
+                    probe.style.fontSize = row.classList.contains('row-font-12') ? '12px' : (mainStyle.fontSize || '');
+                    probe.style.lineHeight = row.classList.contains('row-font-12') ? '1.2' : '1.1';
+                    const h = Math.max(1, probe.scrollHeight || 0);
+                    if (h > maxH) maxH = h;
+                }
+            });
+            return maxH;
         });
         probe.remove();
         rows.forEach((row, i) => {
@@ -2229,13 +2482,17 @@ function indexToColumnLetter(colIndex) {
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
     }
 
-    /** After extend: temporarily let rows size to content, measure actual height, then apply. Reduces gap under text. */
+    /** After extend: temporarily let rows size to content, measure actual height (max of visible content cols), then apply. Reduces gap under text. */
     function reassessRowHeightsFromActualLayout() {
         if (!document.body.classList.contains('broadcasting')) return;
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
         if (rows.length === 0) return;
-        const lastCols = teleprompterText.querySelectorAll('.script-row-wrapper .script-column:last-child');
-        lastCols.forEach(el => el.classList.remove('broadcast-hidden'));
+        const numCols = rows[0] ? rows[0].querySelectorAll('.script-column').length : 0;
+        const contentIndices = getVisibleContentColumnIndices(numCols);
+        rows.forEach(row => {
+            const cols = row.querySelectorAll('.script-column');
+            contentIndices.forEach(idx => { if (cols[idx]) cols[idx].classList.remove('broadcast-hidden'); });
+        });
         void teleprompterText.offsetHeight;
         rows.forEach(row => {
             row.style.alignItems = 'flex-start';
@@ -2255,13 +2512,14 @@ function indexToColumnLetter(colIndex) {
         const viewportMax = Math.min(2000, (window.innerHeight || 800) * 2);
         const mainActualHeights = rows.map(row => {
             const cols = row.querySelectorAll('.script-column');
-            let maxH = 0;
-            cols.forEach(col => {
-                const el = col.querySelector('.cell-locker') || col.querySelector('.cell-content') || col;
+            let maxSh = 1;
+            contentIndices.forEach(idx => {
+                const col = cols[idx];
+                const el = col ? (col.querySelector('.cell-locker') || col.querySelector('.cell-content') || col) : null;
                 const sh = el ? (el.scrollHeight || 0) : 0;
-                if (sh > 0) maxH = Math.max(maxH, Math.min(sh, viewportMax));
+                if (sh > maxSh) maxSh = sh;
             });
-            return Math.max(1, Math.min(Math.floor(maxH), viewportMax));
+            return Math.max(1, Math.min(Math.floor(maxSh || 1), viewportMax));
         });
         /* Merge with mirror reported so both views get same height */
         if (mirrorReportedRowHeights.length === rows.length) {
@@ -2288,7 +2546,6 @@ function indexToColumnLetter(colIndex) {
                 }
             });
         });
-        lastCols.forEach(el => el.classList.add('broadcast-hidden'));
         applyBroadcastingVisibility();
         syncColumnWidths();
         if (mirrorWindow && !mirrorWindow.closed) {
@@ -2336,12 +2593,26 @@ function indexToColumnLetter(colIndex) {
             return;
         }
 
-        const isBroadcasting = document.body.classList.contains('broadcasting');
         const firstRow = rows[0];
         const r0cols = firstRow.querySelectorAll('.script-column');
-        /* When col3 is hidden (un-Aa), we cannot read its text reliably (display:none often yields empty text). Keep existing row colors. */
-        if (isBroadcasting && r0cols[2]?.classList?.contains('broadcast-hidden')) {
+        /* When col3 is unchecked by user (runlist), we are not comparing — clear all red/green. */
+        if (r0cols[2]?.classList?.contains('user-col-hidden')) {
+            rows.forEach(row => ROW_COLOR_CLASSES.forEach(c => row.classList.remove(c)));
+            rowColorsCache = [];
             return;
+        }
+        /* In extend mode one content column has broadcast-hidden on main; temporarily show it so we can read text and recompute colors. */
+        let broadcastHiddenColIndex = -1;
+        for (let i = 1; i < r0cols.length; i++) {
+            if (r0cols[i]?.classList?.contains('broadcast-hidden')) {
+                broadcastHiddenColIndex = i;
+                break;
+            }
+        }
+        const broadcastHiddenElements = broadcastHiddenColIndex >= 0 ? rows.map(row => row.querySelectorAll('.script-column')[broadcastHiddenColIndex]).filter(Boolean) : [];
+        if (broadcastHiddenElements.length > 0) {
+            broadcastHiddenElements.forEach(el => el.classList.remove('broadcast-hidden'));
+            void teleprompterText.offsetHeight;
         }
 
         /* Left text column = col2 (green when more), right text column = col3 (red when more). DOM order: index 0 = numbers, 1 = left, 2 = right. */
@@ -2412,6 +2683,9 @@ function indexToColumnLetter(colIndex) {
                 });
             }
         });
+        if (broadcastHiddenElements.length > 0) {
+            broadcastHiddenElements.forEach(el => el.classList.add('broadcast-hidden'));
+        }
     }
 
     /** When applying 12px or clearing, skip elements that have a user-set font-size (e.g. from font size dropdown in Aa mode). */
@@ -2425,6 +2699,7 @@ function indexToColumnLetter(colIndex) {
     function applyRowFont12() {
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
         if (rows.length === 0) return;
+        if (isCurrentFileXlsx()) return;
         const isBroadcasting = document.body.classList.contains('broadcasting');
         if (isBroadcasting && rowFont12Cache.length === rows.length) {
             rows.forEach((row, i) => {
@@ -2478,7 +2753,7 @@ function indexToColumnLetter(colIndex) {
         });
     }
 
-    /** When in Aa (broadcast edit) mode: let main rows size to content, measure heights, then apply to both main and mirror so they match. */
+    /** When in Aa (broadcast edit) mode: let main rows size to content, measure heights as max of visible content columns (col 2 and col 3), then apply. */
     function syncRowHeightsFromMainInBroadcastEditMode() {
         if (!document.body.classList.contains('broadcasting') || !broadcastEditMode) return;
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
@@ -2495,9 +2770,18 @@ function indexToColumnLetter(colIndex) {
         });
         void teleprompterText.offsetHeight;
         const viewportMax = Math.min(2000, (window.innerHeight || 800) * 2);
+        const numCols = rows[0] ? rows[0].querySelectorAll('.script-column').length : 0;
+        const contentIndices = getVisibleContentColumnIndices(numCols);
         measuredRowHeights = rows.map(row => {
-            const h = row.getBoundingClientRect().height;
-            return Math.max(1, Math.min(Math.floor(h), viewportMax));
+            const cols = row.querySelectorAll('.script-column');
+            let maxH = 1;
+            contentIndices.forEach(idx => {
+                const col = cols[idx];
+                const cell = col ? (col.querySelector('.cell-locker') || col.querySelector('.cell-content')) : null;
+                const h = cell ? cell.getBoundingClientRect().height : 0;
+                if (h > maxH) maxH = h;
+            });
+            return Math.max(1, Math.min(Math.floor(maxH), viewportMax));
         });
         rows.forEach((row, i) => {
             const h = measuredRowHeights[i];
@@ -2513,6 +2797,29 @@ function indexToColumnLetter(colIndex) {
         if (mirrorWindow && !mirrorWindow.closed) {
             mirrorWindow.postMessage({ type: 'updateRowHeights', rowHeights: measuredRowHeights }, '*');
         }
+    }
+
+    /** Index of the last visible column (per file checkboxes). Mirror always shows this column. */
+    function getLastVisibleColumnIndex(maxCols) {
+        const vis = currentFileIndex >= 0 && fileColumnVisibility[currentFileIndex] ? fileColumnVisibility[currentFileIndex] : null;
+        if (!vis || vis.length === 0) return maxCols > 0 ? maxCols - 1 : 0;
+        let last = -1;
+        for (let i = 0; i < vis.length; i++) if (vis[i] !== false) last = i;
+        return last >= 0 ? last : (maxCols > 0 ? maxCols - 1 : 0);
+    }
+
+    /** Number of visible columns (per file checkboxes). When 1, main and mirror show the same column. */
+    function getVisibleColumnCount(maxCols) {
+        const vis = currentFileIndex >= 0 && fileColumnVisibility[currentFileIndex] ? fileColumnVisibility[currentFileIndex] : null;
+        if (!vis || vis.length === 0) return maxCols;
+        return vis.filter(v => v !== false).length;
+    }
+
+    /** Visible content column indices (>= 1). Row height in broadcast = max of these columns' heights. */
+    function getVisibleContentColumnIndices(maxCols) {
+        const vis = currentFileIndex >= 0 && fileColumnVisibility[currentFileIndex] ? fileColumnVisibility[currentFileIndex] : null;
+        if (!vis || vis.length === 0) return Array.from({ length: Math.max(0, maxCols - 1) }, (_, i) => i + 1);
+        return [...vis].map((v, i) => (v !== false && i >= 1 ? i : -1)).filter(i => i >= 0);
     }
 
     function refreshMirrorData() {
@@ -2533,17 +2840,21 @@ function indexToColumnLetter(colIndex) {
             buildCharCountsPerRow();
             applyRowColors();
         }
-        /* Copy full table to mirror (all columns); mirror hides columns via CSS so row height = same layout, no measurement. */
+        /* Copy full table to mirror (all columns); mirror shows the last visible column (per file checkboxes). */
+        const topPill = (currentFileIndex >= 0 && fileStore[currentFileIndex]) ? stripFileExtension(fileStore[currentFileIndex].name) : '';
+        const bottomPill = (currentFileIndex >= 0 && currentFileIndex + 1 < fileStore.length && fileStore[currentFileIndex + 1]) ? stripFileExtension(fileStore[currentFileIndex + 1].name) : '';
         if (rows.length > 0 && isBroadcasting) {
             const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
-            const visibleColumnIndex = maxCols > 0 ? maxCols - 1 : 0; /* Mirror shows the last column (the one main hides when broadcasting) */
+            const visibleColumnIndex = getLastVisibleColumnIndex(maxCols);
             const rowData = rows.map(row => {
                 const cols = row.querySelectorAll('.script-column');
                 const cells = Array.from(cols).map(col => {
                     const c = col.querySelector('.cell-content') || col;
                     return (c.innerText || '').trim() || "\u00A0";
                 });
-                const rowClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
+                const colorClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
+                const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
+                const rowClass = [colorClass, keywordPill].filter(Boolean).join(' ');
                 const font12 = row.classList.contains('row-font-12');
                 return { cells, rowClass, font12 };
             });
@@ -2557,7 +2868,9 @@ function indexToColumnLetter(colIndex) {
                 contentWidth,
                 rowColors,
                 rowFont12,
-                rowHeights
+                rowHeights,
+                topPill,
+                bottomPill
             }, '*');
         } else if (rows.length > 0) {
             const rowData = rows.map(row => {
@@ -2566,12 +2879,14 @@ function indexToColumnLetter(colIndex) {
                     const c = col.querySelector('.cell-content') || col;
                     return (c.innerText || '').trim() || "\u00A0";
                 });
-                const rowClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
+                const colorClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
+                const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
+                const rowClass = [colorClass, keywordPill].filter(Boolean).join(' ');
                 const font12 = row.classList.contains('row-font-12');
                 return { cells, rowClass, font12 };
             });
             const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
-            const visibleColumnIndex = maxCols > 0 ? maxCols - 1 : 0;
+            const visibleColumnIndex = getLastVisibleColumnIndex(maxCols);
             const rowColors = rows.map(row => ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '');
             const rowFont12 = rows.map(row => row.classList.contains('row-font-12'));
             mirrorWindow.postMessage({
@@ -2580,7 +2895,9 @@ function indexToColumnLetter(colIndex) {
                 visibleColumnIndex,
                 contentWidth,
                 rowColors,
-                rowFont12
+                rowFont12,
+                topPill,
+                bottomPill
             }, '*');
         } else {
             const fullText = teleprompterText.innerText || '';
@@ -2591,20 +2908,28 @@ function indexToColumnLetter(colIndex) {
                 visibleColumnIndex: 0,
                 contentWidth: null,
                 rowColors: [],
-                rowFont12: []
+                rowFont12: [],
+                topPill,
+                bottomPill
             }, '*');
         }
     }
 
     function applyBroadcastingVisibility() {
         const isBroadcasting = document.body.classList.contains('broadcasting');
-        const lastCols = teleprompterText.querySelectorAll('.script-row-wrapper .script-column:last-child');
-        const hideLastColumn = isBroadcasting && !broadcastEditMode;
-        lastCols.forEach(el => {
-            if (hideLastColumn) {
-                el.classList.add('broadcast-hidden');
-            } else {
-                el.classList.remove('broadcast-hidden');
+        const rows = teleprompterText.querySelectorAll('.script-row-wrapper');
+        const maxCols = rows.length > 0 ? Math.max(...Array.from(rows).map(r => r.querySelectorAll('.script-column').length)) : 0;
+        const vis = currentFileIndex >= 0 && fileColumnVisibility[currentFileIndex] ? fileColumnVisibility[currentFileIndex] : null;
+        const visibleIndices = vis ? [...vis].map((v, i) => (v !== false ? i : -1)).filter(i => i >= 0) : null;
+        const contentVisibleCount = visibleIndices ? visibleIndices.filter(i => i >= 1).length : 0;
+        const lastVisible = isBroadcasting && maxCols > 0 ? getLastVisibleColumnIndex(maxCols) : -1;
+        const hideLastOnMain = isBroadcasting && contentVisibleCount >= 2 && lastVisible >= 0;
+        rows.forEach(row => {
+            const cols = row.querySelectorAll('.script-column');
+            cols.forEach(col => col.classList.remove('broadcast-hidden'));
+            /* When 2+ content columns visible: main shows all except the last; mirror shows the last. When only 1 content column: main shows same as mirror. */
+            if (hideLastOnMain && cols[lastVisible]) {
+                cols[lastVisible].classList.add('broadcast-hidden');
             }
         });
         if (isBroadcasting) {
@@ -2684,26 +3009,87 @@ function indexToColumnLetter(colIndex) {
         widths[0] = Math.ceil(digitsWidth + paddingWidth);
 
         const isBroadcasting = document.body.classList.contains('broadcasting');
-        const visibleColCount = (isBroadcasting && !broadcastEditMode && maxCols > 1) ? maxCols - 1 : maxCols;
-        const otherColCount = visibleColCount - 1;
+        const isXlsx = isCurrentFileXlsx();
+
+        /* XLSX: col1 shrink-to-fit, cols 2 and 3 equal width */
+        if (isXlsx && maxCols >= 3 && !isBroadcasting) {
+            const probe = document.createElement('span');
+            probe.style.position = 'absolute';
+            probe.style.visibility = 'hidden';
+            probe.style.whiteSpace = 'pre';
+            const tf = window.getComputedStyle(teleprompterText);
+            probe.style.fontFamily = tf.fontFamily;
+            probe.style.fontSize = isOverviewMode ? '12px' : tf.fontSize;
+            probe.style.lineHeight = isOverviewMode ? '1.2' : tf.lineHeight;
+            document.body.appendChild(probe);
+            let col0Max = 0;
+            rows.forEach(row => {
+                const cols = row.querySelectorAll('.script-column');
+                const cell = cols[0]?.querySelector('.cell-content') || cols[0]?.querySelector('.cell-locker') || cols[0];
+                const txt = (cell?.textContent || '').trim() || '0';
+                probe.textContent = txt;
+                col0Max = Math.max(col0Max, probe.getBoundingClientRect().width);
+            });
+            probe.remove();
+            /* Add buffer to prevent numbers wrapping from subpixel rounding */
+            widths[0] = Math.ceil(Math.max(col0Max, digitsWidth) + paddingWidth) + 8;
+            const xlsxRemaining = Math.max(0, (isBroadcasting && extendedFixedWidth != null && extendedFixedWidth > 0 ? extendedFixedWidth : teleprompterText.clientWidth) - widths[0]);
+            const half = Math.floor(xlsxRemaining / 2);
+            widths[1] = half;
+            widths[2] = xlsxRemaining - half;
+        }
+        const nVisible = getVisibleColumnCount(maxCols);
+        const vis = currentFileIndex >= 0 && fileColumnVisibility[currentFileIndex] ? fileColumnVisibility[currentFileIndex] : null;
+        const visibleIndices = vis ? [...vis].map((v, i) => (v !== false ? i : -1)).filter(i => i >= 0) : null;
+        const useVisibleColumns = (isBroadcasting && nVisible > 0) || (!isBroadcasting && visibleIndices && visibleIndices.length > 0);
+        const visibleColCount = useVisibleColumns && visibleIndices ? visibleIndices.length : maxCols;
+        const otherColCount = Math.max(0, visibleColCount - 1);
 
         /* When extended use fixed width so table doesn't change on window resize. */
         const availableWidth = (isBroadcasting && extendedFixedWidth != null && extendedFixedWidth > 0)
             ? extendedFixedWidth
             : teleprompterText.clientWidth;
         const remaining = Math.max(availableWidth - widths[0], 0);
-        const equalWidth = otherColCount > 0 ? Math.floor(remaining / otherColCount) : 0;
+        let equalWidth = otherColCount > 0 ? Math.floor(remaining / (visibleColCount > 0 ? visibleColCount : 1)) : 0;
 
-        for (let i = 1; i < widths.length; i += 1) {
-            widths[i] = (i < visibleColCount) ? equalWidth : 0;
-        }
-        if (otherColCount > 0 && equalWidth > 0 && visibleColCount > 1) {
-            widths[visibleColCount - 1] += remaining - (equalWidth * otherColCount);
+        const useXlsxWidths = isXlsx && maxCols >= 3 && !isBroadcasting;
+        if (!useXlsxWidths && useVisibleColumns && visibleIndices) {
+            const contentVisibleCount = visibleIndices.filter(i => i >= 1).length;
+            /* In extend mode with 2+ content columns: main shows all visible except the last (mirror shows the last). */
+            const mainVisibleIndices = (isBroadcasting && contentVisibleCount >= 2)
+                ? visibleIndices.slice(0, -1)
+                : visibleIndices;
+            const contentIndices = mainVisibleIndices.filter(j => j >= 1);
+            const hasCol0 = mainVisibleIndices.indexOf(0) >= 0;
+            if (hasCol0) {
+                widths[0] = Math.ceil(digitsWidth + paddingWidth);
+            } else {
+                widths[0] = 0;
+            }
+            for (let i = 1; i < widths.length; i++) widths[i] = 0;
+            const contentRemaining = Math.max(0, availableWidth - widths[0]);
+            const nContent = contentIndices.length || 1;
+            const contentEqual = Math.floor(contentRemaining / nContent);
+            contentIndices.forEach((j, k) => {
+                widths[j] = contentEqual;
+                if (k === contentIndices.length - 1) widths[j] += contentRemaining - (contentEqual * contentIndices.length);
+            });
+        } else if (!useXlsxWidths) {
+            for (let i = 1; i < widths.length; i += 1) {
+                widths[i] = (i < visibleColCount) ? equalWidth : 0;
+            }
+            if (otherColCount > 0 && equalWidth > 0 && visibleColCount > 1) {
+                widths[visibleColCount - 1] += remaining - (equalWidth * otherColCount);
+            }
         }
 
-        /* When broadcasting (control view), use the allocated width (remaining) so main and mirror match. When in broadcast edit mode leave lastColumnWidthPx unchanged so the mirror does not get a squeezed width. */
-        if (isBroadcasting && !broadcastEditMode && maxCols > 1) {
-            lastColumnWidthPx = remaining;
+        /* When broadcasting, mirror shows one column; set its width for mirror layout. */
+        if (isBroadcasting && maxCols > 0 && nVisible > 0) {
+            const lastIdx = getLastVisibleColumnIndex(maxCols);
+            const contentRemainingForMirror = Math.max(0, availableWidth - (widths[0] || 0));
+            lastColumnWidthPx = (lastIdx < widths.length && widths[lastIdx] > 0)
+                ? widths[lastIdx]
+                : (useVisibleColumns && visibleIndices && visibleIndices.length > 1 ? contentRemainingForMirror : Math.floor(remaining / nVisible));
         } else if (!isBroadcasting) {
             lastColumnWidthPx = (maxCols > 1 && rows[0]) ? rows[0].querySelectorAll('.script-column')[1]?.getBoundingClientRect().width || remaining / (maxCols - 1) : null;
         }
@@ -2714,30 +3100,26 @@ function indexToColumnLetter(colIndex) {
             col3WidthPx = r0cols[2]?.getBoundingClientRect().width || col2WidthPx;
         }
 
+        const lastVisibleIdx = useVisibleColumns && visibleIndices && visibleIndices.length > 0
+            ? visibleIndices[visibleIndices.length - 1]
+            : (maxCols > 0 ? maxCols - 1 : 0);
         rows.forEach(row => {
             const cols = row.querySelectorAll('.script-column');
             cols.forEach((col, idx) => {
-                const isLast = idx === cols.length - 1;
-                if (isBroadcasting && !broadcastEditMode && isLast) {
-                    col.style.flex = '0 0 0';
-                    col.style.width = '0';
+                const isLastVisible = idx === lastVisibleIdx;
+                const width = widths[idx] || 0;
+                if (isBroadcasting) {
+                    col.style.flex = width > 0 ? `0 0 ${width}px` : '';
+                    col.style.width = width > 0 ? `${width}px` : '';
                     col.style.minWidth = '0';
+                } else if (!isBroadcasting && isLastVisible) {
+                    /* Last visible column grows to fill so col 2 expands when col 3 is hidden */
+                    col.style.flex = `1 1 0%`;
+                    col.style.minWidth = '0';
+                    col.style.width = 'auto';
                 } else {
-                    const width = widths[idx] || 0;
-                    if (isBroadcasting && !broadcastEditMode && idx === visibleColCount - 1) {
-                        /* Use exact allocated width so main and mirror column width match. */
-                        col.style.flex = '0 0 auto';
-                        col.style.width = (lastColumnWidthPx != null ? lastColumnWidthPx : remaining) + 'px';
-                        col.style.minWidth = '0';
-                    } else if (!isBroadcasting && isLast) {
-                        /* Last column grows to fill so fill and grid line extend to right edge (same as glow) */
-                        col.style.flex = `1 1 0%`;
-                        col.style.minWidth = '0';
-                        col.style.width = 'auto';
-                    } else {
-                        col.style.flex = width > 0 ? `0 0 ${width}px` : '';
-                        col.style.width = width > 0 ? `${width}px` : '';
-                    }
+                    col.style.flex = width > 0 ? `0 0 ${width}px` : '';
+                    col.style.width = width > 0 ? `${width}px` : '';
                 }
             });
         });
@@ -2751,6 +3133,7 @@ function indexToColumnLetter(colIndex) {
 
     /** Sync editor state to arrays (contentStore, charCountsPerRow, rowColorsCache) and mirror. Call after user actions (blur, save, etc.). */
     function syncEditorState() {
+        if (typeof stripPipeVFromFirstColumn === 'function') stripPipeVFromFirstColumn();
         if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
             const html = teleprompterText.innerHTML.trim();
             contentStore[currentFileIndex] = (html === '<br>' || html === '') ? '' : html;
@@ -2782,7 +3165,9 @@ function indexToColumnLetter(colIndex) {
     teleprompterText.addEventListener('input', () => {
         clearTimeout(inputColorDebounce);
         inputColorDebounce = setTimeout(() => {
+            if (typeof stripPipeVFromFirstColumn === 'function') stripPipeVFromFirstColumn();
             refreshSelectFontTarget();
+            applyKeywordPills();
             const rows = teleprompterText.querySelectorAll('.script-row-wrapper');
             const maxCols = rows.length ? Math.max(...Array.from(rows).map(r => r.querySelectorAll('.script-column').length)) : 0;
             if (maxCols >= 3) {
@@ -2884,7 +3269,11 @@ saveButton.onclick = () => saveCurrentFile();
 fileOpener.onchange = (e) => {
     const files = Array.from(e.target.files);
     console.log(`Files selected: ${files.length}`, files);
+    const countBefore = fileStore.length;
     files.forEach(file => addFileToRunlist(file));
+    if (countBefore > 0 && fileStore.length > countBefore) {
+        sortRunlistIfNumericPrefix(countBefore);
+    }
     fileOpener.value = "";
 };
 
@@ -2894,19 +3283,33 @@ function moveFileInRunlist(direction) {
     if (newIndex < 0 || newIndex >= fileStore.length) return;
     [fileStore[currentFileIndex], fileStore[newIndex]] = [fileStore[newIndex], fileStore[currentFileIndex]];
     [contentStore[currentFileIndex], contentStore[newIndex]] = [contentStore[newIndex], contentStore[currentFileIndex]];
+    [fileColumnCount[currentFileIndex], fileColumnCount[newIndex]] = [fileColumnCount[newIndex], fileColumnCount[currentFileIndex]];
+    [fileColumnVisibility[currentFileIndex], fileColumnVisibility[newIndex]] = [fileColumnVisibility[newIndex], fileColumnVisibility[currentFileIndex]];
+    [fileFirstColIsId[currentFileIndex], fileFirstColIsId[newIndex]] = [fileFirstColIsId[newIndex], fileFirstColIsId[currentFileIndex]];
     const rows = Array.from(runlistContainer.querySelectorAll('.runlist-row'));
     [rows[currentFileIndex], rows[newIndex]] = [rows[newIndex], rows[currentFileIndex]];
     runlistContainer.innerHTML = '';
     rows.forEach((row, i) => {
         row.dataset.index = i;
-        row.querySelector('.file-name').textContent = fileStore[i].name;
-        row.onclick = () => loadScriptToEditor(i);
+        const nameEl = row.querySelector('.file-name');
+        if (nameEl) nameEl.textContent = fileStore[i].name;
+        row.onclick = (e) => {
+            if (runlistJustDragged) { runlistJustDragged = false; return; }
+            if (e.target.closest('.runlist-column-toggles') || e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle')) return;
+            loadScriptToEditor(i);
+        };
+        const closeBtn = row.querySelector('.runlist-close');
+        if (closeBtn) closeBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); removeFileFromRunlist(i); };
+        attachRunlistRowDrag(row, i);
         runlistContainer.appendChild(row);
+        updateRunlistRowColumnToggles(i);
     });
     currentFileIndex = newIndex;
     document.querySelectorAll('.runlist-row').forEach(r => r.classList.remove('active'));
     const activeRow = runlistContainer.querySelector(`.runlist-row[data-index="${newIndex}"]`);
     if (activeRow) activeRow.classList.add('active');
+    resetPillTriggerState();
+    updateFilenamePills();
 }
 
 if (btnMoveFileUp) btnMoveFileUp.onclick = () => moveFileInRunlist('up');
@@ -2920,19 +3323,195 @@ if (toggleRunlistButton && runlistPanel && resizer) {
     };
 }
 
-if (settingsGearButton && settingsPanel && runlistPanel && resizer) {
+if (settingsGearButton && settingsOverlay) {
     settingsGearButton.onclick = () => {
-        if (settingsPanel.classList.contains('hidden')) {
-            if (runlistPanel.classList.contains('hidden')) {
-                runlistPanel.classList.remove('hidden');
-                resizer.classList.remove('hidden');
-                if (toggleRunlistButton) toggleRunlistButton.title = 'Hide Runlist';
-            }
-            settingsPanel.classList.remove('hidden');
-        } else {
-            settingsPanel.classList.add('hidden');
-        }
+        settingsOverlay.classList.remove('hidden');
     };
+}
+const btnCloseSettings = document.getElementById('btn-close-settings');
+if (btnCloseSettings && settingsOverlay) {
+    btnCloseSettings.onclick = () => settingsOverlay.classList.add('hidden');
+}
+if (settingsOverlay) {
+    settingsOverlay.onclick = (e) => {
+        if (e.target === settingsOverlay) settingsOverlay.classList.add('hidden');
+    };
+    const settingsPanelEl = settingsOverlay.querySelector('.settings-overlay-panel');
+    if (settingsPanelEl) settingsPanelEl.onclick = (e) => e.stopPropagation();
+}
+
+const eventPlanOverlay = document.getElementById('event-plan-overlay');
+const btnEventPlanPrint = document.getElementById('btn-event-plan-print');
+const btnEventPlanClose = document.getElementById('btn-event-plan-close');
+function openEventPlanOverlay() {
+    if (!eventPlanOverlay) return;
+    eventPlanOverlay.classList.remove('hidden');
+}
+function closeEventPlanOverlay() {
+    if (eventPlanOverlay) eventPlanOverlay.classList.add('hidden');
+}
+if (btnEventPlanClose && eventPlanOverlay) {
+    btnEventPlanClose.onclick = closeEventPlanOverlay;
+}
+if (eventPlanOverlay) {
+    eventPlanOverlay.onclick = (e) => {
+        if (e.target === eventPlanOverlay) closeEventPlanOverlay();
+    };
+    const eventPlanPanelEl = eventPlanOverlay.querySelector('.event-plan-panel');
+    if (eventPlanPanelEl) eventPlanPanelEl.onclick = (e) => e.stopPropagation();
+}
+
+function parseEventPlanFilename(name) {
+    if (!name || typeof name !== 'string') return null;
+    const base = stripFileExtension(name);
+    const parts = base.split('_');
+    if (parts.length !== 7) return null;
+    const [orderNum, interpreter, item, speaker, minutes, location, type] = parts;
+    const order = orderNum.trim();
+    const hasNumericOrder = /^\d+$/.test(order);
+    return {
+        file: hasNumericOrder ? order : '-',
+        item: (item || '').trim(),
+        assignment: (speaker || '').trim(),
+        location: (location || '').trim(),
+        interpreter: interpreter.trim(),
+        tel: (type || '').trim(),
+        hasNumericOrder
+    };
+}
+
+function buildEventPlanHtml(files, title, callTime, runTime) {
+    const rows = [];
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const parsed = parseEventPlanFilename(file.name);
+        if (parsed) rows.push(parsed);
+        else rows.push({
+            file: '-',
+            item: '-',
+            assignment: stripFileExtension(file.name) || file.name,
+            location: '-',
+            interpreter: '-',
+            tel: '-',
+            hasNumericOrder: false
+        });
+    }
+    const locationImgMap = { L: 'graphics/Left_Side.jpg', R: 'graphics/Right_side.jpg', LR: 'graphics/Middle.jpg' };
+    const locationCell = (loc) => {
+        if (!loc) return '<span>-</span>';
+        const imgFile = locationImgMap[loc];
+        const escaped = String(loc).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        if (imgFile) {
+            return '<img src="' + imgFile + '" alt="' + escaped + '" class="event-plan-loc-img" title="' + escaped + '">';
+        }
+        return '<span>' + escaped + '</span>';
+    };
+    const esc = (s) => (s == null || s === '') ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const tableRows = rows.map(r => {
+        const rowClass = r.hasNumericOrder ? 'event-plan-row-highlight' : '';
+        return `<tr class="${rowClass}"><td>${esc(r.file)}</td><td>${esc(r.item)}</td><td>${esc(r.assignment)}</td><td>${locationCell(r.location)}</td><td>${esc(r.interpreter)}</td><td>${esc(r.tel)}</td></tr>`;
+    }).join('');
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+.event-plan-print{font-family:Arial,sans-serif;color:#000;background:#fff;padding:0;margin:0;}
+.event-plan-header{background:#1a365d;color:#fff;text-align:center;padding:20px;margin:0;}
+.event-plan-header h1{font-size:24px;font-weight:bold;margin:0 0 8px 0;}
+.event-plan-header .sub{font-size:16px;font-weight:bold;margin:4px 0;}
+.event-plan-table{width:100%;border-collapse:collapse;margin:0;font-size:14px;}
+.event-plan-table th{background:#fff;color:#000;border:1px solid #333;padding:8px 10px;text-align:left;font-weight:bold;}
+.event-plan-table td{border:1px solid #333;padding:8px 10px;}
+.event-plan-row-highlight{background:#d4e8f7;}
+.event-plan-loc-img{max-width:24px;max-height:24px;vertical-align:middle;}
+</style></head><body class="event-plan-print">
+<div class="event-plan-header">
+<h1>${(title || 'Event Plan').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h1>
+<div class="sub">${(callTime || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+<div class="sub">${(runTime || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+</div>
+<table class="event-plan-table">
+<thead><tr><th>File</th><th>Item</th><th>Assignment</th><th>Location</th><th>Interpreter</th><th>TEL</th></tr></thead>
+<tbody>${tableRows}</tbody>
+</table>
+</body></html>`;
+}
+
+if (btnEventPlanPrint && eventPlanOverlay) {
+    btnEventPlanPrint.onclick = () => {
+        if (!fileStore || fileStore.length === 0) {
+            alert('No files in the Files list. Add files first.');
+            return;
+        }
+        const titleEl = document.getElementById('event-plan-title');
+        const callTimeEl = document.getElementById('event-plan-call-time');
+        const runTimeEl = document.getElementById('event-plan-run-time');
+        const title = titleEl ? titleEl.value.trim() : '';
+        const callTime = callTimeEl ? callTimeEl.value.trim() : '';
+        const runTime = runTimeEl ? runTimeEl.value.trim() : '';
+        const html = buildEventPlanHtml(fileStore, title, callTime, runTime);
+        const w = window.open('', '_blank');
+        if (!w) {
+            alert('Popup blocked. Please allow popups to print.');
+            return;
+        }
+        w.document.write(html);
+        w.document.close();
+        w.focus();
+        w.onload = () => {
+            w.print();
+            w.onafterprint = () => w.close();
+        };
+        closeEventPlanOverlay();
+    };
+}
+const CONTROL_MODE_STORAGE_KEY = 'teleprompter_controlMode';
+const INVERT_SCROLL_STORAGE_KEY = 'teleprompter_invertScroll';
+const SCROLL_SENSITIVITY_STORAGE_KEY = 'teleprompter_scrollSensitivity';
+const controlModeRadios = document.querySelectorAll('input[name="controlMode"]');
+if (controlModeRadios && controlModeRadios.length) {
+    try {
+        const saved = localStorage.getItem(CONTROL_MODE_STORAGE_KEY);
+        if (saved === 'off' || saved === 'mouse') {
+            controlModeRadios.forEach((r) => { r.checked = r.value === saved; });
+        }
+    } catch (_) {}
+    controlModeRadios.forEach((r) => {
+        r.addEventListener('change', () => {
+            try { localStorage.setItem(CONTROL_MODE_STORAGE_KEY, r.value); } catch (_) {}
+        });
+    });
+}
+if (invertScrollCheckbox) {
+    try {
+        const saved = localStorage.getItem(INVERT_SCROLL_STORAGE_KEY);
+        if (saved === 'true') invertScrollCheckbox.checked = true;
+        if (saved === 'false') invertScrollCheckbox.checked = false;
+    } catch (_) {}
+    isInvertScroll = invertScrollCheckbox.checked;
+    invertScrollCheckbox.addEventListener('change', function() {
+        isInvertScroll = invertScrollCheckbox.checked;
+        try { localStorage.setItem(INVERT_SCROLL_STORAGE_KEY, invertScrollCheckbox.checked ? 'true' : 'false'); } catch (_) {}
+        if (speedSlider) speedSlider.dispatchEvent(new Event('input'));
+    });
+}
+const scrollSensitivityRange = document.getElementById('scroll-sensitivity');
+const scrollSensitivityValueEl = document.getElementById('scroll-sensitivity-value');
+if (scrollSensitivityRange) {
+    try {
+        const saved = localStorage.getItem(SCROLL_SENSITIVITY_STORAGE_KEY);
+        if (saved != null) {
+            const v = parseFloat(saved);
+            if (!isNaN(v) && v >= 0.25 && v <= 2) {
+                scrollSensitivityRange.value = String(v);
+                scrollSensitivity = v;
+            }
+        }
+    } catch (_) {}
+    if (scrollSensitivityValueEl) scrollSensitivityValueEl.textContent = Math.round((parseFloat(scrollSensitivityRange.value) || 1) * 100) + '%';
+    scrollSensitivity = parseFloat(scrollSensitivityRange.value) || 1;
+    scrollSensitivityRange.addEventListener('input', function() {
+        scrollSensitivity = parseFloat(scrollSensitivityRange.value) || 1;
+        try { localStorage.setItem(SCROLL_SENSITIVITY_STORAGE_KEY, String(scrollSensitivity)); } catch (_) {}
+        if (scrollSensitivityValueEl) scrollSensitivityValueEl.textContent = Math.round(scrollSensitivity * 100) + '%';
+    });
 }
 
 if (resizer && runlistPanel) {
@@ -3004,20 +3583,218 @@ function addFileToRunlist(file) {
     console.log(`Adding to runlist: ${file.name}`);
     const index = fileStore.length;
     fileStore.push(file);
-    contentStore.push(""); 
+    contentStore.push("");
+    fileColumnCount.push(0);
+    fileColumnVisibility.push([]);
+    fileFirstColIsId.push(false);
 
     const row = document.createElement('div');
     row.className = 'runlist-row';
     row.dataset.index = index;
-    row.innerHTML = `<span class="file-name">${file.name}</span>`;
+    row.innerHTML = `<span class="runlist-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</span><div class="runlist-row-left"><span class="file-name">${file.name}</span><div class="runlist-column-toggles"></div></div><button type="button" class="runlist-close" title="Close file" aria-label="Close file">×</button>`;
 
-    row.onclick = () => {
+    row.onclick = (e) => {
+        if (runlistJustDragged) { runlistJustDragged = false; return; }
+        if (e.target.closest('.runlist-column-toggles') || e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle')) return;
         console.log(`Row clicked: loading index ${index}`);
         loadScriptToEditor(index);
     };
+    const closeBtn = row.querySelector('.runlist-close');
+    if (closeBtn) {
+        closeBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            removeFileFromRunlist(index);
+        };
+    }
+    attachRunlistRowDrag(row, index);
 
     runlistContainer.appendChild(row);
     processFileContent(file, index);
+    resetPillTriggerState();
+    updateFilenamePills();
+}
+
+function attachRunlistRowDrag(row, index) {
+    if (row._runlistDragAttached) return;
+    row._runlistDragAttached = true;
+    const handle = row.querySelector('.runlist-drag-handle');
+    if (!handle) return;
+    handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        runlistDraggingIndex = parseInt(row.dataset.index, 10);
+        runlistDraggingRow = row;
+        row.classList.add('runlist-dragging');
+        document.addEventListener('mousemove', onRunlistMouseMove, true);
+        document.addEventListener('mouseup', onRunlistMouseUp, true);
+    });
+}
+
+function moveRunlistRow(fromIndex, toIndex) {
+    if (fromIndex < 0 || fromIndex >= fileStore.length || toIndex < 0 || toIndex > fileStore.length || fromIndex === toIndex) return;
+    const move = (arr) => {
+        const item = arr.splice(fromIndex, 1)[0];
+        arr.splice(toIndex, 0, item);
+    };
+    move(fileStore);
+    move(contentStore);
+    move(fileColumnCount);
+    move(fileColumnVisibility);
+    move(fileFirstColIsId);
+    const rows = Array.from(runlistContainer.querySelectorAll('.runlist-row'));
+    const draggedRow = rows[fromIndex];
+    if (draggedRow) {
+        if (toIndex < fromIndex) runlistContainer.insertBefore(draggedRow, rows[toIndex]);
+        else if (toIndex >= rows.length) runlistContainer.appendChild(draggedRow);
+        else runlistContainer.insertBefore(draggedRow, rows[toIndex].nextSibling);
+    }
+    const reindexed = Array.from(runlistContainer.querySelectorAll('.runlist-row'));
+    reindexed.forEach((r, i) => {
+        r.dataset.index = String(i);
+        const nameEl = r.querySelector('.file-name');
+        if (nameEl) nameEl.textContent = fileStore[i].name;
+        r.onclick = (e) => {
+            if (runlistJustDragged) { runlistJustDragged = false; return; }
+            if (e.target.closest('.runlist-column-toggles') || e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle')) return;
+            loadScriptToEditor(i);
+        };
+        const closeBtn = r.querySelector('.runlist-close');
+        if (closeBtn) closeBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); removeFileFromRunlist(i); };
+        updateRunlistRowColumnToggles(i);
+    });
+    if (currentFileIndex === fromIndex) currentFileIndex = toIndex;
+    else if (fromIndex < currentFileIndex && toIndex >= currentFileIndex) currentFileIndex--;
+    else if (fromIndex > currentFileIndex && toIndex <= currentFileIndex) currentFileIndex++;
+    document.querySelectorAll('.runlist-row').forEach(r => r.classList.remove('active'));
+    const activeRow = runlistContainer.querySelector(`.runlist-row[data-index="${currentFileIndex}"]`);
+    if (activeRow) activeRow.classList.add('active');
+    resetPillTriggerState();
+    updateFilenamePills();
+}
+
+function removeFileFromRunlist(index) {
+    if (index < 0 || index >= fileStore.length) return;
+    const wasActive = currentFileIndex === index;
+    fileStore.splice(index, 1);
+    contentStore.splice(index, 1);
+    fileColumnCount.splice(index, 1);
+    fileColumnVisibility.splice(index, 1);
+    fileFirstColIsId.splice(index, 1);
+    const row = runlistContainer.querySelector(`.runlist-row[data-index="${index}"]`);
+    if (row) row.remove();
+    const rows = Array.from(runlistContainer.querySelectorAll('.runlist-row'));
+    rows.forEach((r, i) => {
+        r.dataset.index = String(i);
+        const nameEl = r.querySelector('.file-name');
+        if (nameEl) nameEl.textContent = fileStore[i].name;
+        r.onclick = (e) => {
+            if (runlistJustDragged) { runlistJustDragged = false; return; }
+            if (e.target.closest('.runlist-column-toggles') || e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle')) return;
+            loadScriptToEditor(i);
+        };
+        const closeBtn = r.querySelector('.runlist-close');
+        if (closeBtn) closeBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); removeFileFromRunlist(i); };
+        attachRunlistRowDrag(r, i);
+        updateRunlistRowColumnToggles(i);
+    });
+    if (fileStore.length === 0) {
+        currentFileIndex = -1;
+        teleprompterText.innerHTML = '<br>';
+        delete teleprompterText.dataset.placeholder;
+        document.querySelectorAll('.runlist-row').forEach(r => r.classList.remove('active'));
+        resetPillTriggerState();
+        updateFilenamePills();
+        return;
+    }
+    if (wasActive) {
+        const newIndex = index >= fileStore.length ? fileStore.length - 1 : index;
+        currentFileIndex = newIndex;
+        loadScriptToEditor(newIndex);
+    } else if (currentFileIndex > index) {
+        currentFileIndex--;
+    }
+    document.querySelectorAll('.runlist-row').forEach(r => r.classList.remove('active'));
+    const activeRow = runlistContainer.querySelector(`.runlist-row[data-index="${currentFileIndex}"]`);
+    if (activeRow) activeRow.classList.add('active');
+    resetPillTriggerState();
+    updateFilenamePills();
+}
+
+/** If existing files have numeric prefix (e.g. "02_"), sort full runlist by filename. */
+function sortRunlistIfNumericPrefix(countBefore) {
+    const firstSet = fileStore.slice(0, countBefore);
+    const allStartWithNumber = firstSet.length > 0 && firstSet.every(f => /^\d+_/.test(f.name));
+    if (!allStartWithNumber) return;
+    /* Save current file's content before reorder so we don't overwrite with wrong index */
+    if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
+        const html = teleprompterText.innerHTML.trim();
+        contentStore[currentFileIndex] = (html === '<br>' || html === '') ? '' : html;
+    }
+    const currentName = currentFileIndex >= 0 && fileStore[currentFileIndex] ? fileStore[currentFileIndex].name : null;
+    const indices = fileStore.map((_, i) => i);
+    indices.sort((a, b) => (fileStore[a].name || '').localeCompare(fileStore[b].name || '', undefined, { numeric: true }));
+    const newFileStore = indices.map(i => fileStore[i]);
+    const newContentStore = indices.map(i => contentStore[i]);
+    const newFileColumnCount = indices.map(i => fileColumnCount[i]);
+    const newFileColumnVisibility = indices.map(i => fileColumnVisibility[i]);
+    const newFileFirstColIsId = indices.map(i => fileFirstColIsId[i]);
+    fileStore.length = 0;
+    fileStore.push(...newFileStore);
+    contentStore.length = 0;
+    contentStore.push(...newContentStore);
+    fileColumnCount.length = 0;
+    fileColumnCount.push(...newFileColumnCount);
+    fileColumnVisibility.length = 0;
+    fileColumnVisibility.push(...newFileColumnVisibility);
+    fileFirstColIsId.length = 0;
+    fileFirstColIsId.push(...newFileFirstColIsId);
+    const newCurrentIndex = currentName ? newFileStore.findIndex(f => f.name === currentName) : -1;
+    currentFileIndex = newCurrentIndex >= 0 ? newCurrentIndex : 0;
+    runlistContainer.innerHTML = '';
+    fileStore.forEach((file, i) => {
+        const row = document.createElement('div');
+        row.className = 'runlist-row';
+        row.dataset.index = String(i);
+        row.innerHTML = `<span class="runlist-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</span><div class="runlist-row-left"><span class="file-name">${file.name}</span><div class="runlist-column-toggles"></div></div><button type="button" class="runlist-close" title="Close file" aria-label="Close file">×</button>`;
+        row.onclick = (e) => {
+            if (runlistJustDragged) { runlistJustDragged = false; return; }
+            if (e.target.closest('.runlist-column-toggles') || e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle')) return;
+            loadScriptToEditor(i);
+        };
+        const closeBtn = row.querySelector('.runlist-close');
+        if (closeBtn) closeBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); removeFileFromRunlist(i); };
+        attachRunlistRowDrag(row, i);
+        runlistContainer.appendChild(row);
+        updateRunlistRowColumnToggles(i);
+    });
+    document.querySelectorAll('.runlist-row').forEach(r => r.classList.remove('active'));
+    /* If target file has no content yet (async load pending), load first file that does to avoid empty editor */
+    let idxToLoad = currentFileIndex;
+    const targetContent = contentStore[idxToLoad];
+    const hasContent = (c) => c && typeof c === 'string' && c.trim() && c.trim() !== '<br>';
+    if (!hasContent(targetContent)) {
+        const firstWithContent = contentStore.findIndex(hasContent);
+        if (firstWithContent >= 0) {
+            idxToLoad = firstWithContent;
+            currentFileIndex = firstWithContent;
+        }
+    }
+    const activeRow = runlistContainer.querySelector(`.runlist-row[data-index="${currentFileIndex}"]`);
+    if (activeRow) activeRow.classList.add('active');
+    if (hasContent(contentStore[idxToLoad])) {
+        loadScriptToEditor(idxToLoad);
+    } else {
+        updateFilenamePills();
+    }
+}
+
+/** Reset pill trigger state so top/bottom filename pills can fire again when file list changes. */
+function resetPillTriggerState() {
+    topPillTriggerFired = false;
+    bottomPillTriggerFired = false;
+    const view = document.getElementById('teleprompter-view');
+    if (view) lastScrollTopForPillTrigger = view.scrollTop;
 }
 
 async function processFileContent(file, index) {
@@ -3027,7 +3804,9 @@ async function processFileContent(file, index) {
     try {
         if (extension === 'txt' || extension === 'html') {
             const text = await file.text();
-            contentStore[index] = text;
+            const currentIdx = fileStore.findIndex(f => f === file);
+            const slot = currentIdx >= 0 ? currentIdx : index;
+            contentStore[slot] = text;
             console.log("Text/HTML content loaded successfully");
         } 
         else if (extension === 'xlsx' || extension === 'xls') {
@@ -3038,12 +3817,29 @@ async function processFileContent(file, index) {
                     console.log("FileReader load complete. Parsing with XLSX...");
                     const data = new Uint8Array(e.target.result);
                     const workbook = XLSX.read(data, { type: 'array' });
-                    
-                    pendingWorkbook = workbook;
-                    pendingFileIndex = index;
-                    
-                    console.log("Workbook parsed. Opening modal.");
-                    showColumnModal(workbook);
+                    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const range = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : { s: { c: 0, r: 0 }, e: { c: 0, r: 0 } };
+                    const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                    const selectedCols = [];
+                    for (let c = range.s.c; c <= range.e.c; c++) selectedCols.push(c);
+                    let html = '<div class="script-container">';
+                    json.forEach((row) => {
+                        html += '<div class="script-row-wrapper">';
+                        selectedCols.forEach(colIdx => {
+                            html += `<div class="script-column"><div class="cell-content">${row[colIdx] != null ? row[colIdx] : ""}</div></div>`;
+                        });
+                        html += '</div>';
+                    });
+                    html += '</div>';
+                    const currentIdx = fileStore.findIndex(f => f === file);
+                    const slot = currentIdx >= 0 ? currentIdx : index;
+                    contentStore[slot] = html;
+                    fileColumnCount[slot] = selectedCols.length;
+                    fileColumnVisibility[slot] = selectedCols.map(() => true);
+                    fileFirstColIsId[slot] = selectedCols.length > 0 && isFirstColumnNumeric(sheet);
+                    updateRunlistRowColumnToggles(slot);
+                    loadScriptToEditor(slot);
+                    console.log("Excel imported with " + selectedCols.length + " column(s). Use file checkboxes to show/hide columns.");
                 } catch (innerErr) {
                     console.error("❌ XLSX Parsing Error:", innerErr);
                 }
@@ -3054,11 +3850,13 @@ async function processFileContent(file, index) {
             console.log("Word document detected. Converting with Mammoth...");
             const reader = new FileReader();
             reader.onload = (e) => {
-                mammoth.convertToHtml({ arrayBuffer: e.target.result })
+                    mammoth.convertToHtml({ arrayBuffer: e.target.result })
                     .then(result => {
-                        contentStore[index] = result.value;
+                        const currentIdx = fileStore.findIndex(f => f === file);
+                        const slot = currentIdx >= 0 ? currentIdx : index;
+                        contentStore[slot] = result.value;
                         console.log("Docx converted successfully");
-                        loadScriptToEditor(index);
+                        loadScriptToEditor(slot);
                     })
                     .catch(err => console.error("❌ Mammoth conversion error:", err));
             };
@@ -3071,66 +3869,6 @@ async function processFileContent(file, index) {
         console.error("❌ Global processFileContent Error:", err);
     }
 }
-
-function showColumnModal(workbook) {
-    if (!columnModal || !columnList) {
-        console.error("❌ Modal elements not found in DOM!");
-        return;
-    }
-
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    const range = XLSX.utils.decode_range(sheet['!ref']);
-    
-    console.log(`Sheet: ${sheetName}, Columns: ${range.e.c + 1}`);
-    columnList.innerHTML = '';
-
-    for (let c = range.s.c; c <= range.e.c; c++) {
-				const colLetter = indexToColumnLetter(c + 1);
-				const label = document.createElement('label');
-				label.className = "modal-checkbox-label";
-				// Added 'checked' below so they start turned on
-				label.innerHTML = `<input type="checkbox" value="${c}" checked> Column ${colLetter}`;
-				columnList.appendChild(label);
-		}
-    
-    columnModal.classList.remove('hidden');
-    columnModal.style.display = 'flex';
-}
-
-// Excel Column Confirmation
-    btnConfirmImport.onclick = () => {
-        const selectedCols = Array.from(columnList.querySelectorAll('input:checked')).map(i => parseInt(i.value));
-        if (selectedCols.length === 0) return;
-
-        const sheet = pendingWorkbook.Sheets[pendingWorkbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-        
-        let html = '<div class="script-container">'; 
-        json.forEach((row) => {
-            html += '<div class="script-row-wrapper">'; 
-            selectedCols.forEach(colIdx => {
-                html += `<div class="script-column"><div class="cell-content">${row[colIdx] || ""}</div></div>`;
-            });
-            html += '</div>';
-        });
-        html += '</div>';
-
-        contentStore[pendingFileIndex] = html;
-        columnModal.style.display = 'none';
-        columnModal.classList.add('hidden');
-        loadScriptToEditor(pendingFileIndex);
-
-    console.log("🚀 Teleprompter Engine Ready");
-
-};
-
-    btnCancelImport.onclick = () => {
-        columnModal.style.display = 'none';
-        columnModal.classList.add('hidden');
-        pendingWorkbook = null;
-        pendingFileIndex = -1;
-    };
 
 // 2. THESE ARE THE INDEPENDENT HELPERS AT THE BOTTOM
 function getOS() {
@@ -3152,6 +3890,38 @@ async function matchResolutions() {
 }
 
 const UUID_REGEX = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g;
+const FIRST_COL_JUNK_REGEX = /[\s\u00A0\-_,;:]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g;
+
+/** Returns true if the first column of the sheet is mostly numbers (after stripping junk). */
+function isFirstColumnNumeric(sheet) {
+    if (!sheet || !sheet['!ref']) return false;
+    const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    let numericCount = 0;
+    let total = 0;
+    for (let r = 0; r < json.length; r++) {
+        const cell = json[r][0];
+        if (cell == null && cell !== 0) continue;
+        const raw = String(cell).trim();
+        if (!raw) continue;
+        total++;
+        const cleaned = raw.replace(FIRST_COL_JUNK_REGEX, '').trim();
+        const looksNumeric = /^\d+$/.test(cleaned) || (cleaned !== '' && !isNaN(Number(cleaned)));
+        if (looksNumeric) numericCount++;
+    }
+    return total > 0 && numericCount / total >= 0.5;
+}
+
+/** Strip |v prefix and trailing | from first column (e.g. |v13 or |v13| -> 13) */
+function stripPipeVFromFirstColumn() {
+    if (!teleprompterText) return;
+    teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
+        const firstCol = row.querySelector('.script-column:first-child .cell-content') || row.querySelector('.script-column:first-child .cell-locker') || row.querySelector('.script-column:first-child');
+        if (!firstCol) return;
+        const raw = (firstCol.textContent || '').trim();
+        const cleaned = raw.replace(/^\|v(.*?)\|?$/, '$1').trim();
+        if (cleaned !== raw) firstCol.textContent = cleaned;
+    });
+}
 
 function removeUuidFromFirstColumn() {
     teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
@@ -3216,6 +3986,82 @@ function processTableColumns() {
         wrapper.appendChild(rowDiv);
         child.parentNode?.replaceChild(wrapper, child);
     }
+    /* Merge all script-containers into one so every row shares the same table layout */
+    ensureSingleScriptContainer();
+    /* Split any cell content that contains hard returns (<br> or newline) into separate rows */
+    splitMultiLineCellsIntoRows();
+    /* Ensure blank/empty rows have nbsp so they keep height and stay separated */
+    ensureEmptyRowsHaveNbsp();
+}
+
+/** Set empty cell-content to nbsp so blank rows preserve height and separation. */
+function ensureEmptyRowsHaveNbsp() {
+    teleprompterText.querySelectorAll('.cell-content').forEach(cell => {
+        const text = (cell.textContent || '').trim();
+        if (!text) cell.innerHTML = '\u00A0';
+    });
+}
+
+/** Split cell innerHTML by <br> and newline into an array of HTML fragments (one per line). */
+function splitHtmlByLineBreaks(html) {
+    if (!html || typeof html !== 'string') return [html || ''];
+    const SENTINEL = '\u0000';
+    const normalized = html.replace(/\r\n|\r|\n/g, '<br>').replace(/<br\s*\/?>/gi, SENTINEL);
+    return normalized.split(SENTINEL).map(s => s.trim());
+}
+
+/** Expand rows whose cell-content contains <br> or newlines into multiple rows, one per line. */
+function splitMultiLineCellsIntoRows() {
+    const container = teleprompterText.querySelector('.script-container');
+    if (!container) return;
+    const rows = Array.from(container.querySelectorAll(':scope > .script-row-wrapper'));
+    for (const row of rows) {
+        const cols = row.querySelectorAll('.script-column');
+        const partsPerCol = Array.from(cols).map(col => {
+            const cell = col.querySelector('.cell-content') || col;
+            const html = cell.innerHTML || '';
+            return splitHtmlByLineBreaks(html);
+        });
+        const maxParts = Math.max(1, ...partsPerCol.map(p => p.length));
+        if (maxParts <= 1) continue;
+        const numCols = cols.length;
+        let insertBefore = row;
+        for (let i = 0; i < maxParts; i++) {
+            const newRow = document.createElement('div');
+            newRow.className = row.className;
+            for (let j = 0; j < numCols; j++) {
+                const origCol = cols[j];
+                const origCell = origCol.querySelector('.cell-content') || origCol;
+                const colDiv = document.createElement('div');
+                colDiv.className = origCol.className;
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'cell-content';
+                if (origCell.style && origCell.style.cssText) contentDiv.style.cssText = origCell.style.cssText;
+                const parts = partsPerCol[j];
+                const raw = (parts[i] !== undefined ? parts[i] : '').trim();
+                contentDiv.innerHTML = raw || '\u00A0'; /* empty lines: use nbsp to preserve row height */
+                colDiv.appendChild(contentDiv);
+                newRow.appendChild(colDiv);
+            }
+            row.parentNode.insertBefore(newRow, insertBefore);
+            insertBefore = newRow.nextSibling;
+        }
+        row.remove();
+    }
+}
+
+/** Merge all direct-child script-containers into a single one. Prevents pill/row layout differences when docx/xlsx produce multiple containers. */
+function ensureSingleScriptContainer() {
+    const containers = Array.from(teleprompterText.children).filter(el =>
+        el.nodeType === Node.ELEMENT_NODE && el.classList?.contains('script-container')
+    );
+    if (containers.length <= 1) return;
+    const first = containers[0];
+    for (let i = 1; i < containers.length; i++) {
+        const c = containers[i];
+        while (c.firstChild) first.appendChild(c.firstChild);
+        c.remove();
+    }
 }
 
 function loadFileContent(file, index) {
@@ -3232,7 +4078,12 @@ function loadFileContent(file, index) {
                         delete teleprompterText.dataset.placeholder;
                         processTableColumns();
                         wrapCellContentInBlock();
-                        updateBookmarkSidebar();
+                        requestAnimationFrame(() => {
+                            convertBkmkPlaceholdersToBookmarks();
+                            updateBookmarkSidebar();
+                            if (currentFileIndex === index && index < contentStore.length)
+                                contentStore[index] = teleprompterText.innerHTML.trim();
+                        });
                     }
                 });
         } else if (ext === 'xlsx' || ext === 'xls') {
@@ -3246,7 +4097,12 @@ function loadFileContent(file, index) {
                 delete teleprompterText.dataset.placeholder;
                 processTableColumns();
                 wrapCellContentInBlock();
-                updateBookmarkSidebar();
+                requestAnimationFrame(() => {
+                    convertBkmkPlaceholdersToBookmarks();
+                    updateBookmarkSidebar();
+                    if (currentFileIndex === index && index < contentStore.length)
+                        contentStore[index] = teleprompterText.innerHTML.trim();
+                });
             }
         } else {
             const text = new TextDecoder().decode(e.target.result);
@@ -3254,7 +4110,12 @@ function loadFileContent(file, index) {
             if (currentFileIndex === index) {
                 teleprompterText.innerHTML = text;
                 delete teleprompterText.dataset.placeholder;
-                updateBookmarkSidebar();
+                requestAnimationFrame(() => {
+                    convertBkmkPlaceholdersToBookmarks();
+                    updateBookmarkSidebar();
+                    if (currentFileIndex === index && index < contentStore.length)
+                        contentStore[index] = teleprompterText.innerHTML.trim();
+                });
             }
         }
     };
@@ -3272,22 +4133,194 @@ function loadFileContent(file, index) {
 function updateBookmarkSidebar() {
     const list = document.querySelector('.bookmark-list');
     if (!list) return;
-    const bars = Array.from(teleprompterText.querySelectorAll('.bookmark-dot')).sort((a, b) => {
-        const pos = (el) => el.getBoundingClientRect?.().top ?? 0;
-        return pos(a) - pos(b);
-    });
+    const bars = getSortedBookmarkDots();
     list.innerHTML = '';
     bars.forEach((el, i) => {
         const num = el.dataset.bookmarkNum || String(i + 1);
         const label = el.dataset.bookmarkLabel || '';
         const item = document.createElement('div');
         item.className = 'bookmark-item';
+        item.dataset.bookmarkIndex = String(i);
         item.innerHTML = `<span class="bookmark-num">${num}</span> ${label}`;
         item.onclick = () => {
+            if (pendingBookmarkNavTimeoutId) {
+                clearTimeout(pendingBookmarkNavTimeoutId);
+                pendingBookmarkNavTimeoutId = null;
+            }
+            bookmarkNavigationInProgress = true;
+            pendingBookmarkTargetIndex = i;
+            setActiveBookmarkByIndex(i);
             el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            pendingBookmarkNavTimeoutId = setTimeout(() => {
+                bookmarkNavigationInProgress = false;
+                pendingBookmarkTargetIndex = -1;
+                pendingBookmarkNavTimeoutId = null;
+            }, BOOKMARK_NAV_ARRIVAL_TIMEOUT_MS);
         };
         list.appendChild(item);
     });
+    /* Sync highlight with current scroll position */
+    updateBookmarkHighlightFromScroll();
+}
+
+function setActiveBookmarkByIndex(idx) {
+    const list = document.querySelector('.bookmark-list');
+    if (!list) return;
+    const items = list.querySelectorAll('.bookmark-item');
+    items.forEach((item, i) => {
+        item.classList.toggle('active', idx >= 0 && i === idx);
+    });
+}
+
+function updateBookmarkHighlightFromScroll() {
+    const view = document.getElementById('teleprompter-view');
+    checkTopPillAndGoToPreviousFile();
+    checkBottomPillAndAdvanceToNextFile();
+    const bars = getSortedBookmarkDots();
+    if (!view || bars.length === 0) return;
+    if (bookmarkNavigationInProgress && pendingBookmarkTargetIndex >= 0) {
+        const barsArr = bars;
+        if (pendingBookmarkTargetIndex < barsArr.length) {
+            const wrapper = document.getElementById('indicator-wrapper');
+            const indicatorY = wrapper ? (wrapper.getBoundingClientRect().top + wrapper.getBoundingClientRect().height / 2) : (view.getBoundingClientRect().top + view.getBoundingClientRect().height / 2);
+            const targetCursor = teleprompterText?.querySelector(`.bookmark-cursor-dot[data-bookmark-id="${barsArr[pendingBookmarkTargetIndex].dataset.bookmarkId}"]`);
+            if (targetCursor) {
+                const rect = targetCursor.getBoundingClientRect();
+                const centerY = rect.top + rect.height / 2;
+                if (centerY <= indicatorY) {
+                    bookmarkNavigationInProgress = false;
+                    pendingBookmarkTargetIndex = -1;
+                    if (pendingBookmarkNavTimeoutId) {
+                        clearTimeout(pendingBookmarkNavTimeoutId);
+                        pendingBookmarkNavTimeoutId = null;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    if (bookmarkNavigationInProgress) return;
+    const idx = getCurrentBookmarkIndexFromCursorDot();
+    if (idx >= 0 && idx < bars.length) setActiveBookmarkByIndex(idx);
+}
+
+function checkTopPillAndGoToPreviousFile() {
+    const topPill = document.getElementById('filename-pill-top');
+    const wrapper = document.getElementById('indicator-wrapper');
+    const view = document.getElementById('teleprompter-view');
+    if (!topPill || !wrapper || !view) return;
+    if (topPill.classList.contains('hidden')) {
+        topPillTriggerFired = false;
+        return;
+    }
+    const hasPrev = typeof currentFileIndex !== 'undefined' && currentFileIndex > 0 && typeof fileStore !== 'undefined';
+    if (!hasPrev) return;
+    const currentScrollTop = view.scrollTop;
+    const scrollDelta = lastScrollTopForPillTrigger != null ? currentScrollTop - lastScrollTopForPillTrigger : 0;
+    const scrollingUp = (typeof scrollSpeed !== 'undefined' && scrollSpeed < 0) || (scrollDelta < 0);
+    if (!scrollingUp) return;
+    const indicatorY = wrapper.getBoundingClientRect().top + wrapper.getBoundingClientRect().height / 2;
+    const rect = topPill.getBoundingClientRect();
+    const indicatorTouchingPill = indicatorY >= rect.top && indicatorY <= rect.bottom;
+    if (!indicatorTouchingPill) {
+        topPillTriggerFired = false;
+        return;
+    }
+    if (topPillTriggerFired) return;
+    topPillTriggerFired = true;
+    if (typeof playPageTurnAndGoToPreviousFile === 'function') playPageTurnAndGoToPreviousFile(currentFileIndex - 1);
+}
+
+function checkBottomPillAndAdvanceToNextFile() {
+    const bottomPill = document.getElementById('filename-pill-bottom');
+    const wrapper = document.getElementById('indicator-wrapper');
+    const view = document.getElementById('teleprompter-view');
+    if (!bottomPill || !wrapper || !view) return;
+    if (bottomPill.classList.contains('hidden')) {
+        bottomPillTriggerFired = false;
+        return;
+    }
+    const hasNext = typeof currentFileIndex !== 'undefined' && currentFileIndex >= 0 && typeof fileStore !== 'undefined' && currentFileIndex + 1 < fileStore.length;
+    if (!hasNext) return;
+    const currentScrollTop = view.scrollTop;
+    const scrollDelta = lastScrollTopForPillTrigger != null ? currentScrollTop - lastScrollTopForPillTrigger : 0;
+    lastScrollTopForPillTrigger = currentScrollTop;
+    const scrollingDown = (typeof scrollSpeed !== 'undefined' && scrollSpeed > 0) || (scrollDelta > 0);
+    if (!scrollingDown) return;
+    const indicatorY = wrapper.getBoundingClientRect().top + wrapper.getBoundingClientRect().height / 2;
+    const rect = bottomPill.getBoundingClientRect();
+    const indicatorTouchingPill = indicatorY >= rect.top && indicatorY <= rect.bottom;
+    if (!indicatorTouchingPill) {
+        bottomPillTriggerFired = false;
+        return;
+    }
+    if (bottomPillTriggerFired) return;
+    bottomPillTriggerFired = true;
+    if (typeof playPageTurnAndAdvanceToNextFile === 'function') playPageTurnAndAdvanceToNextFile(currentFileIndex + 1);
+}
+
+const BOOKMARK_CLICK_MATCH_THRESHOLD_PX = 80;
+const BOOKMARK_NAV_ARRIVAL_TIMEOUT_MS = 3000;
+let bookmarkNavigationInProgress = false;
+let pendingBookmarkTargetIndex = -1;
+let pendingBookmarkNavTimeoutId = null;
+let bottomPillTriggerFired = false;
+let topPillTriggerFired = false;
+let lastScrollTopForPillTrigger = null;
+
+function getBookmarkIndexAtY(clientY) {
+    const cursorDots = teleprompterText ? Array.from(teleprompterText.querySelectorAll('.bookmark-cursor-dot')) : [];
+    if (cursorDots.length === 0) return -1;
+    const bars = getSortedBookmarkDots();
+    let bestIdx = -1;
+    let bestDist = Infinity;
+    cursorDots.forEach((cursorDot) => {
+        const bid = cursorDot.dataset.bookmarkId;
+        if (!bid) return;
+        const rect = cursorDot.getBoundingClientRect();
+        const centerY = rect.top + rect.height / 2;
+        const dist = Math.abs(centerY - clientY);
+        if (dist < bestDist && dist <= BOOKMARK_CLICK_MATCH_THRESHOLD_PX) {
+            const dot = bars.find((b) => b.dataset.bookmarkId === bid);
+            if (dot) {
+                const idx = bars.indexOf(dot);
+                if (idx >= 0) {
+                    bestDist = dist;
+                    bestIdx = idx;
+                }
+            }
+        }
+    });
+    return bestIdx;
+}
+
+function getCurrentBookmarkIndexFromCursorDot() {
+    const view = document.getElementById('teleprompter-view');
+    const bars = getSortedBookmarkDots();
+    if (!view || bars.length === 0) return -1;
+    const wrapper = document.getElementById('indicator-wrapper');
+    const viewRect = view.getBoundingClientRect();
+    const indicatorY = wrapper ? (wrapper.getBoundingClientRect().top + wrapper.getBoundingClientRect().height / 2) : (viewRect.top + viewRect.height / 2);
+    let lastPassedIdx = -1;
+    for (let i = 0; i < bars.length; i++) {
+        const cursorDot = teleprompterText?.querySelector(`.bookmark-cursor-dot[data-bookmark-id="${bars[i].dataset.bookmarkId}"]`);
+        if (!cursorDot) continue;
+        const rect = cursorDot.getBoundingClientRect();
+        const centerY = rect.top + rect.height / 2;
+        if (centerY <= indicatorY) {
+            lastPassedIdx = i;
+        }
+    }
+    if (lastPassedIdx >= 0) return lastPassedIdx;
+    const firstCursor = teleprompterText?.querySelector(`.bookmark-cursor-dot[data-bookmark-id="${bars[0].dataset.bookmarkId}"]`);
+    if (firstCursor) {
+        const firstRect = firstCursor.getBoundingClientRect();
+        const firstCenterY = firstRect.top + firstRect.height / 2;
+        if (firstCenterY > indicatorY) {
+            return 0;
+        }
+    }
+    return -1;
 }
 
 function addBookmarkAtCursor() {
@@ -3336,8 +4369,21 @@ function addBookmarkAtCursor() {
     const bookmarkId = `bookmark-${nextNum}`;
     const stableId = `bk-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-    const rowText = (row.innerText || '').trim().replace(/\s+/g, ' ');
-    const label = rowText.slice(0, 30).trim() + (rowText.length > 30 ? '…' : '');
+    const label = (function () {
+        const cell = cursorCol || row;
+        if (!cell) return '';
+        const endRange = document.createRange();
+        endRange.selectNodeContents(cell);
+        endRange.setStart(range.startContainer, range.startOffset);
+        let textAfter = (endRange.toString() || '').trim().replace(/\s+/g, ' ');
+        if (!textAfter) {
+            const full = (cell.innerText || '').trim().replace(/\s+/g, ' ');
+            textAfter = full.slice(-25).trim() || full.slice(0, 30);
+        }
+        if (!textAfter) return '';
+        const maxLen = 30;
+        return textAfter.slice(0, maxLen).trim() + (textAfter.length > maxLen ? '…' : '');
+    })();
 
     const cursorRect = range.getBoundingClientRect();
 
@@ -3360,7 +4406,7 @@ function addBookmarkAtCursor() {
 
     numCircle.style.position = 'absolute';
     numCircle.style.top = topPercentNum + '%';
-    numCircle.style.left = '-10px';
+    numCircle.style.left = '';
     numCircle.dataset.bookmarkId = stableId;
 
     if (col1) {
@@ -3426,11 +4472,7 @@ function addBookmarkAtCursor() {
 }
 
 function renumberBookmarks() {
-    const bars = Array.from(teleprompterText.querySelectorAll('.bookmark-dot')).sort((a, b) => {
-        const aRect = a.getBoundingClientRect();
-        const bRect = b.getBoundingClientRect();
-        return aRect.top - bRect.top;
-    });
+    const bars = getSortedBookmarkDots();
     bars.forEach((bar, i) => {
         const num = String(i + 1);
         bar.id = `bookmark-${num}`;
@@ -3439,26 +4481,38 @@ function renumberBookmarks() {
 }
 
 function getSortedBookmarkDots() {
-    return Array.from(teleprompterText.querySelectorAll('.bookmark-dot')).sort((a, b) => {
-        const pos = (el) => el.getBoundingClientRect?.().top ?? 0;
-        return pos(a) - pos(b);
+    const el = document.getElementById('teleprompter-text');
+    if (!el) return [];
+    const dots = Array.from(el.querySelectorAll('.bookmark-dot'));
+    return dots.sort((a, b) => {
+        const cursorA = el.querySelector(`.bookmark-cursor-dot[data-bookmark-id="${a.dataset.bookmarkId}"]`);
+        const cursorB = el.querySelector(`.bookmark-cursor-dot[data-bookmark-id="${b.dataset.bookmarkId}"]`);
+        const posA = cursorA ? (cursorA.getBoundingClientRect?.().top ?? a.getBoundingClientRect?.().top ?? 0) : (a.getBoundingClientRect?.().top ?? 0);
+        const posB = cursorB ? (cursorB.getBoundingClientRect?.().top ?? b.getBoundingClientRect?.().top ?? 0) : (b.getBoundingClientRect?.().top ?? 0);
+        return posA - posB;
     });
 }
 
 function getCurrentBookmarkIndex() {
+    const view = document.getElementById('teleprompter-view');
     const bars = getSortedBookmarkDots();
-    if (bars.length === 0) return -1;
-    const viewRect = teleprompterView.getBoundingClientRect();
+    if (!view || bars.length === 0) return -1;
+    const viewRect = view.getBoundingClientRect();
     const viewCenterY = viewRect.top + viewRect.height / 2;
-    const firstCenterY = bars[0].getBoundingClientRect().top + bars[0].getBoundingClientRect().height / 2;
-    const lastCenterY = bars[bars.length - 1].getBoundingClientRect().top + bars[bars.length - 1].getBoundingClientRect().height / 2;
+    const getCenterY = (bar) => {
+        const cursor = teleprompterText?.querySelector(`.bookmark-cursor-dot[data-bookmark-id="${bar.dataset.bookmarkId}"]`);
+        const el = cursor || bar;
+        const r = el.getBoundingClientRect();
+        return r.top + r.height / 2;
+    };
+    const firstCenterY = getCenterY(bars[0]);
+    const lastCenterY = getCenterY(bars[bars.length - 1]);
     if (viewCenterY < firstCenterY) return -1;
     if (viewCenterY > lastCenterY) return bars.length;
     let bestIdx = 0;
     let bestDist = Infinity;
     bars.forEach((el, i) => {
-        const rect = el.getBoundingClientRect();
-        const centerY = rect.top + rect.height / 2;
+        const centerY = getCenterY(el);
         const dist = Math.abs(centerY - viewCenterY);
         if (dist < bestDist) {
             bestDist = dist;
@@ -3468,22 +4522,60 @@ function getCurrentBookmarkIndex() {
     return bestIdx;
 }
 
+const BOOKMARK_SCROLL_DURATION_MS = 280;
+
+function scrollViewToCenterElement(view, targetEl, onComplete) {
+    if (!view || !targetEl) return;
+    const viewRect = view.getBoundingClientRect();
+    const targetRect = targetEl.getBoundingClientRect();
+    const targetCenterY = targetRect.top + targetRect.height / 2;
+    const viewCenterY = viewRect.top + viewRect.height / 2;
+    const scrollDelta = targetCenterY - viewCenterY;
+    const startTop = view.scrollTop;
+    const endTop = Math.max(0, Math.min(view.scrollHeight - view.clientHeight, startTop + scrollDelta));
+    if (endTop === startTop) {
+        if (onComplete) onComplete();
+        return;
+    }
+    const startTime = performance.now();
+    function tick(now) {
+        const elapsed = now - startTime;
+        const t = Math.min(1, elapsed / BOOKMARK_SCROLL_DURATION_MS);
+        const ease = 1 - Math.pow(1 - t, 2);
+        view.scrollTop = startTop + (endTop - startTop) * ease;
+        if (t < 1) {
+            requestAnimationFrame(tick);
+        } else if (onComplete) {
+            onComplete();
+        }
+    }
+    requestAnimationFrame(tick);
+}
+
 function goToPrevBookmark() {
+    const view = document.getElementById('teleprompter-view');
     const bars = getSortedBookmarkDots();
-    if (bars.length === 0) return;
+    if (!view || bars.length === 0) return;
     const currentIdx = getCurrentBookmarkIndex();
-    const prevIdx = currentIdx <= 0 ? 0 : currentIdx - 1;
-    bars[prevIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
-    teleprompterView.focus();
+    const prevIdx = currentIdx <= 0 ? 0 : (currentIdx >= bars.length - 1 ? Math.max(0, bars.length - 2) : currentIdx - 1);
+    const target = bars[prevIdx];
+    bookmarkNavigationInProgress = true;
+    setActiveBookmarkByIndex(prevIdx);
+    scrollViewToCenterElement(view, target, () => { bookmarkNavigationInProgress = false; });
+    view.focus();
 }
 
 function goToNextBookmark() {
+    const view = document.getElementById('teleprompter-view');
     const bars = getSortedBookmarkDots();
-    if (bars.length === 0) return;
+    if (!view || bars.length === 0) return;
     const currentIdx = getCurrentBookmarkIndex();
-    const nextIdx = currentIdx >= bars.length - 1 ? bars.length - 1 : currentIdx + 1;
-    bars[nextIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
-    teleprompterView.focus();
+    const nextIdx = currentIdx >= bars.length - 1 ? bars.length - 1 : (currentIdx < 0 ? 0 : currentIdx + 1);
+    const target = bars[nextIdx];
+    bookmarkNavigationInProgress = true;
+    setActiveBookmarkByIndex(nextIdx);
+    scrollViewToCenterElement(view, target, () => { bookmarkNavigationInProgress = false; });
+    view.focus();
 }
 
 function updateBookmarkPositions() {
@@ -3536,11 +4628,408 @@ function wrapCellContentInBlock() {
     teleprompterText.querySelectorAll('.cell-locker').forEach(cell => wrap(cell));
 }
 
-function loadScriptToEditor(index) {
+const BKMK_PLACEHOLDER = '{BKMK}';
+
+/** Collect all text nodes under root in document order (recursive, no TreeWalker). */
+function getTextNodesUnder(root) {
+    const out = [];
+    function walk(n) {
+        if (!n || !root.contains(n)) return;
+        if (n.nodeType === Node.TEXT_NODE) {
+            out.push(n);
+            return;
+        }
+        for (let i = 0; i < n.childNodes.length; i++) walk(n.childNodes[i]);
+    }
+    for (let i = 0; i < root.childNodes.length; i++) walk(root.childNodes[i]);
+    return out;
+}
+
+/** Find next "{BKMK}" in document order; returns { textNode, offset } or null. */
+function findNextBkmkPlaceholder() {
+    const textNodes = getTextNodesUnder(teleprompterText);
+    for (let i = 0; i < textNodes.length; i++) {
+        const text = textNodes[i].textContent || '';
+        const idx = text.indexOf(BKMK_PLACEHOLDER);
+        if (idx !== -1) return { textNode: textNodes[i], offset: idx };
+    }
+    return null;
+}
+
+/** Find all "{BKMK}" in the editor and replace each with a real bookmark (number circle + cursor dot). Call after layout is ready. */
+function convertBkmkPlaceholdersToBookmarks() {
+    const initialDotCount = teleprompterText.querySelectorAll('.bookmark-dot').length;
+    let nextNum = initialDotCount;
+    let hit;
+    const rawHtml = teleprompterText.innerHTML || '';
+    const hasPlaceholderInHtml = rawHtml.indexOf(BKMK_PLACEHOLDER) !== -1;
+    console.log('[BKMK] convertBkmkPlaceholdersToBookmarks called. initialDotCount=', initialDotCount, 'innerHTML contains "{BKMK}":', hasPlaceholderInHtml, 'innerHTML length:', rawHtml.length);
+    const textNodes = getTextNodesUnder(teleprompterText);
+    console.log('[BKMK] getTextNodesUnder returned', textNodes.length, 'text nodes');
+    textNodes.forEach((tn, i) => {
+        const t = (tn.textContent || '').slice(0, 80);
+        const hasBkmk = (tn.textContent || '').indexOf(BKMK_PLACEHOLDER) !== -1;
+        if (hasBkmk || t.trim()) console.log('[BKMK] textNode[' + i + '] length=', (tn.textContent || '').length, 'hasBKMK=', hasBkmk, 'preview:', JSON.stringify(t));
+    });
+    while ((hit = findNextBkmkPlaceholder())) {
+        const { textNode, offset } = hit;
+        console.log('[BKMK] found placeholder at offset', offset, 'in textNode, text length=', (textNode.textContent || '').length);
+        if (!teleprompterText.contains(textNode)) {
+            console.log('[BKMK] skip: textNode not contained in teleprompterText');
+            continue;
+        }
+        const text = textNode.textContent || '';
+        if (text.indexOf(BKMK_PLACEHOLDER, offset) !== offset) {
+            console.log('[BKMK] skip: placeholder not at expected offset');
+            continue;
+        }
+        const parentEl = textNode.parentElement;
+        if (!parentEl) {
+            console.log('[BKMK] skip: textNode has no parentElement');
+            continue;
+        }
+        let row = parentEl.closest('.script-row-wrapper');
+        const cursorCol = parentEl.closest('.script-column');
+        if (!row) row = parentEl.closest('div, p') || teleprompterText;
+        const col1 = row ? row.querySelector('.script-column') : null;
+        console.log('[BKMK] row=', !!row, row?.className || row?.nodeName, 'col1=', !!col1, 'cursorCol=', !!cursorCol);
+        if (!row || !teleprompterText.contains(row)) {
+            console.log('[BKMK] skip: no row or row not in editor');
+            continue;
+        }
+        nextNum += 1;
+        const stableId = `bk-${Date.now()}-${nextNum}-${Math.random().toString(36).slice(2)}`;
+        const range = document.createRange();
+        try {
+            range.setStart(textNode, offset);
+            range.setEnd(textNode, offset + BKMK_PLACEHOLDER.length);
+        } catch (err) {
+            console.log('[BKMK] skip: range set failed', err);
+            continue;
+        }
+        range.deleteContents();
+        range.collapse(true);
+        const cursorDot = document.createElement('span');
+        cursorDot.className = 'bookmark-cursor-dot';
+        cursorDot.dataset.bookmarkId = stableId;
+        const bulletSpan = document.createElement('span');
+        bulletSpan.className = 'bookmark-cursor-dot-bullet';
+        bulletSpan.textContent = '\u2022';
+        cursorDot.appendChild(bulletSpan);
+        const noBreakSpan = document.createElement('span');
+        noBreakSpan.className = 'bookmark-cursor-dot-nobreak';
+        cursorDot.appendChild(noBreakSpan);
+        range.insertNode(cursorDot);
+        const cell = cursorCol || row;
+        const fullCellText = (cell.innerText || '').trim().replace(/\s+/g, ' ');
+        const afterBullet = fullCellText.split(/\s*\u2022\s*/).slice(1).join(' ').trim() || fullCellText;
+        const label = afterBullet ? (afterBullet.slice(0, 30).trim() + (afterBullet.length > 30 ? '…' : '')) : '';
+        const col1Container = col1 || row;
+        if (col1Container.style.position === 'static' || !col1Container.style.position) col1Container.style.position = 'relative';
+        const numCircle = document.createElement('div');
+        numCircle.className = 'bookmark-dot';
+        numCircle.dataset.bookmarkNum = String(nextNum);
+        numCircle.dataset.bookmarkLabel = label;
+        numCircle.dataset.bookmarkId = stableId;
+        numCircle.style.position = 'absolute';
+        numCircle.style.top = '0%';
+        numCircle.style.left = '';
+        if (col1) {
+            col1.insertBefore(numCircle, col1.firstChild);
+        } else {
+            row.insertBefore(numCircle, row.firstChild);
+        }
+        console.log('[BKMK] inserted bookmark', nextNum, 'stableId=', stableId);
+    }
+    if (nextNum <= initialDotCount) {
+        console.log('[BKMK] no bookmarks added, returning early (nextNum=', nextNum, 'initialDotCount=', initialDotCount, ')');
+        return;
+    }
+    console.log('[BKMK] done: added', nextNum - initialDotCount, 'bookmarks, calling renumberBookmarks + rAF');
+    renumberBookmarks();
+    requestAnimationFrame(() => {
+        updateBookmarkPositions();
+        updateBookmarkSidebar();
+    });
+}
+
+function applyColumnVisibilityToEditor() {
+    if (currentFileIndex < 0 || !fileColumnVisibility[currentFileIndex]) return;
+    const vis = fileColumnVisibility[currentFileIndex];
+    teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
+        row.querySelectorAll('.script-column').forEach((col, i) => {
+            col.classList.toggle('user-col-hidden', vis[i] === false);
+        });
+    });
+    syncColumnWidths();
+    if (document.body.classList.contains('broadcasting')) {
+        if (broadcastEditMode) syncRowHeightsFromMainInBroadcastEditMode();
+        else measureRowHeightsWithProbeForBroadcasting();
+        if (mirrorWindow && !mirrorWindow.closed) refreshMirrorData();
+    } else if (mirrorWindow && !mirrorWindow.closed) {
+        refreshMirrorData();
+    }
+}
+
+function updateRunlistRowColumnToggles(fileIndex) {
+    const row = runlistContainer && fileIndex >= 0 ? runlistContainer.querySelector(`.runlist-row[data-index="${fileIndex}"]`) : null;
+    const togglesEl = row ? row.querySelector('.runlist-column-toggles') : null;
+    if (!togglesEl) return;
+    togglesEl.innerHTML = '';
+    const n = fileColumnCount[fileIndex] || 0;
+    const vis = fileColumnVisibility[fileIndex];
+    if (n <= 0 || !vis) return;
+    for (let i = 0; i < n; i++) {
+        const label = document.createElement('label');
+        label.className = 'runlist-col-toggle';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = vis[i] !== false;
+        cb.dataset.colIndex = String(i);
+        cb.addEventListener('change', (e) => {
+            e.stopPropagation();
+            const colIndex = parseInt(cb.dataset.colIndex, 10);
+            if (!fileColumnVisibility[fileIndex]) return;
+            fileColumnVisibility[fileIndex][colIndex] = cb.checked;
+            /* Ensure the file whose toggles we changed is shown in the teleprompter */
+            if (currentFileIndex !== fileIndex) {
+                loadScriptToEditor(fileIndex);
+                return;
+            }
+            teleprompterText.querySelectorAll('.script-row-wrapper').forEach(r => {
+                const cols = r.querySelectorAll('.script-column');
+                if (cols[colIndex]) cols[colIndex].classList.toggle('user-col-hidden', !cb.checked);
+            });
+            syncColumnWidths();
+            if (document.body.classList.contains('broadcasting')) {
+                if (broadcastEditMode) syncRowHeightsFromMainInBroadcastEditMode();
+                else measureRowHeightsWithProbeForBroadcasting();
+                if (mirrorWindow && !mirrorWindow.closed) refreshMirrorData();
+            } else if (mirrorWindow && !mirrorWindow.closed) {
+                refreshMirrorData();
+            }
+        });
+        label.appendChild(cb);
+        const labelText = (i === 0 && fileFirstColIsId[fileIndex]) ? 'ID' : String(i + 1);
+        label.appendChild(document.createTextNode(' ' + labelText));
+        togglesEl.appendChild(label);
+    }
+}
+
+const KEYWORD_PILL_RED = ['end', 'full screen', 'stop', 'out'];
+const KEYWORD_PILL_YELLOW_EXACT = ['panel', 'chorus'];
+const KEYWORD_PILL_YELLOW_VERSE = /^verse\s*\d*$/i;
+const KEYWORD_PILL_YELLOW_NAME = /^(elder|president|sister|brother)\s+.+$/i;
+/** Matches "Name (00:00 – 18:41)" or "Brianna (1:23 - 5:00)" - speaker/time rows -> blue pill */
+const KEYWORD_PILL_BLUE_NAME_TIME = /^[A-Za-z][A-Za-z0-9\s\-'.]*\s*\([^)]+\)\s*$/;
+
+function getInterpreterFromFilename(name) {
+    if (!name || typeof name !== 'string') return '';
+    const base = stripFileExtension(name);
+    const parts = base.split('_');
+    return parts.length >= 2 ? (parts[1] || '').trim() : '';
+}
+
+function isCurrentFileXlsx() {
+    if (currentFileIndex < 0 || currentFileIndex >= fileStore.length) return false;
+    const name = fileStore[currentFileIndex].name;
+    if (!name || typeof name !== 'string') return false;
+    const ext = name.split('.').pop().toLowerCase();
+    return ext === 'xlsx' || ext === 'xls';
+}
+
+function applyKeywordPills() {
+    if (!teleprompterText) return;
+    if (isCurrentFileXlsx()) return;
+    const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
+    const currentInterpreter = (currentFileIndex >= 0 && fileStore[currentFileIndex]) ? getInterpreterFromFilename(fileStore[currentFileIndex].name) : '';
+    const nextInterpreter = (currentFileIndex >= 0 && currentFileIndex + 1 < fileStore.length && fileStore[currentFileIndex + 1]) ? getInterpreterFromFilename(fileStore[currentFileIndex + 1].name) : '';
+    const switchLabel = (nextInterpreter && nextInterpreter !== currentInterpreter) ? 'SWITCH' : 'STAY';
+
+    rows.forEach(row => {
+        const raw = (row.textContent || '').trim();
+        const lower = raw.toLowerCase();
+        row.classList.remove('keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white');
+
+        if (KEYWORD_PILL_RED.includes(lower)) {
+            row.classList.add('keyword-pill-red');
+        } else if (['switch', 'stay'].includes(lower)) {
+            row.classList.add('keyword-pill-green');
+            setFirstVisibleCellText(row, switchLabel);
+        } else if (KEYWORD_PILL_YELLOW_EXACT.includes(lower) || KEYWORD_PILL_YELLOW_VERSE.test(raw) || KEYWORD_PILL_YELLOW_NAME.test(raw)) {
+            row.classList.add('keyword-pill-yellow');
+        } else if (KEYWORD_PILL_BLUE_NAME_TIME.test(raw)) {
+            row.classList.add('keyword-pill-blue');
+        } else if (raw.includes('|v')) {
+            row.classList.add('keyword-pill-white');
+        }
+        if (row.classList.contains('keyword-pill-red') || row.classList.contains('keyword-pill-yellow') || row.classList.contains('keyword-pill-green') || row.classList.contains('keyword-pill-blue') || row.classList.contains('keyword-pill-white')) {
+            row.querySelectorAll('.script-column, .cell-content, .cell-locker, .script-column *').forEach(el => {
+                if (el && el.style && el.style.fontSize) el.style.removeProperty('font-size');
+            });
+        }
+    });
+}
+
+function setFirstVisibleCellText(row, text) {
+    const cols = row.querySelectorAll('.script-column');
+    for (let i = 0; i < cols.length; i++) {
+        const col = cols[i];
+        if (col.classList.contains('user-col-hidden') || col.classList.contains('broadcast-hidden')) continue;
+        const cell = col.querySelector('.cell-content') || col.querySelector('.cell-locker') || col;
+        if (cell) {
+            cell.textContent = text;
+            break;
+        }
+    }
+}
+
+function stripFileExtension(name) {
+    if (!name || typeof name !== 'string') return '';
+    const lastDot = name.lastIndexOf('.');
+    return lastDot > 0 ? name.slice(0, lastDot) : name;
+}
+
+function updateFilenamePills() {
+    const topPill = document.getElementById('filename-pill-top');
+    const bottomPill = document.getElementById('filename-pill-bottom');
+    const staySwitchPill = document.getElementById('stay-switch-pill');
+    const view = document.getElementById('teleprompter-view');
+    if (!topPill || !bottomPill) return;
+    const hasCurrent = currentFileIndex >= 0 && fileStore.length > 0 && fileStore[currentFileIndex];
+    const hasNext = hasCurrent && currentFileIndex + 1 < fileStore.length;
+    if (view) view.classList.toggle('has-file', !!hasCurrent);
+    if (hasCurrent) {
+        topPill.textContent = stripFileExtension(fileStore[currentFileIndex].name);
+        topPill.classList.remove('hidden');
+        topPill.setAttribute('aria-hidden', 'false');
+    } else {
+        topPill.textContent = '';
+        topPill.classList.add('hidden');
+        topPill.setAttribute('aria-hidden', 'true');
+    }
+    if (hasNext) {
+        bottomPill.textContent = stripFileExtension(fileStore[currentFileIndex + 1].name);
+        bottomPill.classList.remove('hidden');
+        bottomPill.setAttribute('aria-hidden', 'false');
+    } else {
+        bottomPill.textContent = '';
+        bottomPill.classList.add('hidden');
+        bottomPill.setAttribute('aria-hidden', 'true');
+    }
+    /* Stay/Switch pill: show when next file exists (green STAY/SWITCH); when last file, show red END */
+    if (staySwitchPill) {
+        if (hasNext) {
+            const currentInterpreter = getInterpreterFromFilename(fileStore[currentFileIndex].name);
+            const nextInterpreter = getInterpreterFromFilename(fileStore[currentFileIndex + 1].name);
+            const label = nextInterpreter && nextInterpreter !== currentInterpreter ? 'SWITCH' : 'STAY';
+            staySwitchPill.textContent = nextInterpreter ? label + ' ' + nextInterpreter : label;
+            staySwitchPill.classList.remove('hidden', 'end-pill');
+            staySwitchPill.setAttribute('aria-hidden', 'false');
+        } else if (hasCurrent) {
+            staySwitchPill.textContent = 'END';
+            staySwitchPill.classList.add('end-pill');
+            staySwitchPill.classList.remove('hidden');
+            staySwitchPill.setAttribute('aria-hidden', 'false');
+        } else {
+            staySwitchPill.textContent = '';
+            staySwitchPill.classList.remove('end-pill');
+            staySwitchPill.classList.add('hidden');
+            staySwitchPill.setAttribute('aria-hidden', 'true');
+        }
+    }
+    /* Sync font size and family from teleprompter text to pills */
+    if (teleprompterText) {
+        const style = window.getComputedStyle(teleprompterText);
+        const fontSize = style.fontSize;
+        const fontFamily = style.fontFamily;
+        const pillsToSync = [topPill, bottomPill];
+        if (staySwitchPill && !staySwitchPill.classList.contains('hidden')) pillsToSync.push(staySwitchPill);
+        pillsToSync.forEach(p => {
+            if (fontSize) p.style.fontSize = fontSize;
+            if (fontFamily) p.style.fontFamily = fontFamily;
+        });
+    }
+    shrinkAllPillsToFit();
+}
+
+const PILL_SHRINK_MIN_PX = 10;
+
+/** Shrink one pill's font-size until its content fits without overflow (no wrap). */
+function shrinkPillTextToFit(pillEl, minPx) {
+    if (!pillEl || pillEl.offsetParent === null) return;
+    minPx = minPx ?? PILL_SHRINK_MIN_PX;
+    const computed = window.getComputedStyle(pillEl);
+    let size = parseFloat(computed.fontSize) || 16;
+    const setSize = (px) => {
+        pillEl.style.setProperty('font-size', px + 'px', 'important');
+    };
+    setSize(size);
+    const col = pillEl.closest('.script-column');
+    const maxW = col ? (col.clientWidth || pillEl.clientWidth) : pillEl.clientWidth;
+    if (maxW <= 0) return;
+    while (pillEl.scrollWidth > maxW && size > minPx) {
+        size = Math.max(minPx, size - 2);
+        setSize(size);
+    }
+}
+
+/** Run shrink-to-fit on all visible pills (filename, stay/switch, keyword rows). */
+function shrinkAllPillsToFit() {
+    const view = document.getElementById('teleprompter-view');
+    if (!view) return;
+    const pills = [
+        document.getElementById('filename-pill-top'),
+        document.getElementById('filename-pill-bottom'),
+        document.getElementById('stay-switch-pill')
+    ].filter(Boolean);
+    pills.forEach(p => {
+        if (!p.classList.contains('hidden')) shrinkPillTextToFit(p);
+    });
+    const keywordRows = teleprompterText ? teleprompterText.querySelectorAll('.script-row-wrapper.keyword-pill-red, .script-row-wrapper.keyword-pill-yellow, .script-row-wrapper.keyword-pill-green, .script-row-wrapper.keyword-pill-blue, .script-row-wrapper.keyword-pill-white') : [];
+    keywordRows.forEach(row => {
+        row.querySelectorAll('.cell-content').forEach(cell => {
+            cell.style.removeProperty('font-size');
+            shrinkPillTextToFit(cell);
+        });
+    });
+}
+
+function playPageTurnAndAdvanceToNextFile(nextIndex) {
+    const overlay = document.getElementById('page-turn-overlay');
+    if (overlay) overlay.classList.add('page-turn-active');
+    const DURATION_MS = 500;
+    const LOAD_AT_MS = 150;
+    setTimeout(() => {
+        if (typeof loadScriptToEditor === 'function') loadScriptToEditor(nextIndex, { scrollToTop: true, triggerNewTalkPill: true });
+    }, LOAD_AT_MS);
+    setTimeout(() => {
+        if (overlay) overlay.classList.remove('page-turn-active');
+    }, DURATION_MS);
+}
+
+function playPageTurnAndGoToPreviousFile(prevIndex) {
+    const overlay = document.getElementById('page-turn-overlay');
+    if (overlay) overlay.classList.add('page-turn-active');
+    const DURATION_MS = 500;
+    const LOAD_AT_MS = 150;
+    setTimeout(() => {
+        if (typeof loadScriptToEditor === 'function') loadScriptToEditor(prevIndex, { scrollToBottom: true });
+    }, LOAD_AT_MS);
+    setTimeout(() => {
+        if (overlay) overlay.classList.remove('page-turn-active');
+    }, DURATION_MS);
+}
+
+function loadScriptToEditor(index, options) {
     console.log(`Attempting to load index: ${index}`);
+    bottomPillTriggerFired = false;
+    topPillTriggerFired = false;
+    lastScrollTopForPillTrigger = null;
     if (fileStore[index] === null) return;
 
-    if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
+    /* Save current file only when switching to a different file (avoid overwriting with placeholder/empty when reloading same file after sort) */
+    if (currentFileIndex >= 0 && currentFileIndex < contentStore.length && currentFileIndex !== index) {
         const html = teleprompterText.innerHTML.trim();
         contentStore[currentFileIndex] = (html === '<br>' || html === '') ? '' : html;
     }
@@ -3553,11 +5042,15 @@ function loadScriptToEditor(index) {
 
     currentFileIndex = index;
     const content = contentStore[index];
+    const contentHasBkmk = (content && typeof content === 'string') ? content.indexOf('{BKMK}') !== -1 : false;
+    console.log('[BKMK] loadScriptToEditor index=', index, 'content length=', (content && content.length) || 0, 'content contains "{BKMK}":', contentHasBkmk);
     teleprompterText.innerHTML = (content === '' || !content) ? '<br>' : content;
     delete teleprompterText.dataset.placeholder;
     processTableColumns();
     wrapCellContentInBlock();
     removeUuidFromFirstColumn();
+    stripPipeVFromFirstColumn();
+    applyColumnVisibilityToEditor();
     if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
         contentStore[currentFileIndex] = teleprompterText.innerHTML.trim();
     }
@@ -3584,7 +5077,15 @@ function loadScriptToEditor(index) {
     requestAnimationFrame(() => {
         refreshSelectFontTarget();
         syncColumnWidths();
+        /* Replace {BKMK} with bookmark (red dot + number in list) after layout so formatting is unchanged */
+        console.log('[BKMK] rAF: about to call convertBkmkPlaceholdersToBookmarks for file index', index);
+        convertBkmkPlaceholdersToBookmarks();
+        applyKeywordPills();
+        shrinkAllPillsToFit();
         updateBookmarkSidebar();
+        if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
+            contentStore[currentFileIndex] = teleprompterText.innerHTML.trim();
+        }
     });
 
     if (mirrorWindow && !mirrorWindow.closed) {
@@ -3594,6 +5095,28 @@ function loadScriptToEditor(index) {
         // ✅ KEEP THESE:
         refreshMirrorData(); // This handles the clean text extraction
         syncMirrorStyles();
+    }
+    updateFilenamePills();
+    if (options && options.scrollToTop) {
+        const view = document.getElementById('teleprompter-view');
+        if (view) view.scrollTop = 0;
+    }
+    if (options && options.scrollToBottom) {
+        const view = document.getElementById('teleprompter-view');
+        if (view) view.scrollTop = Math.max(0, view.scrollHeight - view.clientHeight);
+    }
+    requestAnimationFrame(() => {
+        const view = document.getElementById('teleprompter-view');
+        if (view) lastScrollTopForPillTrigger = view.scrollTop;
+    });
+    if (options && options.triggerNewTalkPill) {
+        const topPill = document.getElementById('filename-pill-top');
+        if (topPill) {
+            topPill.classList.remove('new-talk');
+            void topPill.offsetWidth;
+            topPill.classList.add('new-talk');
+            setTimeout(() => topPill.classList.remove('new-talk'), 600);
+        }
     }
     console.log("Editor and Mirror updated with Content and Styles.");
 }
@@ -3641,7 +5164,7 @@ if (btnRequestMultiscreen && multiscreenStatusEl) {
             return;
         }
         if (!('getScreenDetails' in window)) {
-            multiscreenStatusEl.textContent = 'Multi-screen API not available (Chrome on Mac or file://). Use Left/Right above; if the mirror doesn\'t move, drag it to your other monitor.';
+            multiscreenStatusEl.textContent = 'Multi-screen API not available (Chrome on Mac or file://). Use Left/Right; if the mirror doesn\'t move, drag it to your other monitor.';
             return;
         }
         try {
@@ -3649,7 +5172,7 @@ if (btnRequestMultiscreen && multiscreenStatusEl) {
             const n = screenDetails.screens ? screenDetails.screens.length : 0;
             multiscreenStatusEl.textContent = n > 1 ? 'Access allowed (' + n + ' screen(s)).' : 'Allowed (1 screen).';
         } catch (err) {
-            multiscreenStatusEl.textContent = 'Denied or failed. Using Left/Right/Above/Below for mirror.';
+            multiscreenStatusEl.textContent = 'Denied or failed. Using Left/Right for mirror.';
         }
     });
 }
@@ -3854,7 +5377,7 @@ extendMonitorButton.onclick = async () => {
         /* Same 5:4 ratio and fixed width as main: both views use extendedWindowWidth × extendedWindowHeight so teleprompter layout matches. */
         const mirrorW = extendedWindowWidth;
         const mirrorH = extendedWindowHeight;
-        const specs = `left=${mirrorLeft},top=${mirrorTop},width=${mirrorW},height=${mirrorH}`;
+        const specs = `left=${mirrorLeft},top=${mirrorTop},width=${mirrorW},height=${mirrorH},toolbar=no,menubar=no,location=no,status=no,scrollbars=no`;
 
         if (!secondaryScreen) {
             pendingMirrorPosition = { left: mirrorLeft, top: mirrorTop, width: mirrorW, height: mirrorH };
@@ -4037,5 +5560,6 @@ window.addEventListener('resize', () => {
     syncColumnWidths();
     syncMirrorStyles();
     if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
+    requestAnimationFrame(() => shrinkAllPillsToFit());
 });
-};
+});
