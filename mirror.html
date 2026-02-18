@@ -14,6 +14,12 @@
             padding: 0;
             margin: 0;
         }
+        /* Blank space at end so last line can scroll up to top (matches main) */
+        .mirror-runway {
+            min-height: 50vh;
+            width: 100%;
+            flex-shrink: 0;
+        }
         /* Same structure as main; visible column uses same width as main so wrapping and row height match */
         .mirror-table .script-row-wrapper {
             display: flex !important;
@@ -64,6 +70,54 @@
             font-size: 12px !important;
             line-height: 1.2 !important;
         }
+        /* Keyword pills (match main: font-size inherit, padding left only) */
+        .mirror-table .script-row-wrapper.keyword-pill-red,
+        .mirror-table .script-row-wrapper.keyword-pill-yellow,
+        .mirror-table .script-row-wrapper.keyword-pill-green,
+        .mirror-table .script-row-wrapper.keyword-pill-blue,
+        .mirror-table .script-row-wrapper.keyword-pill-white {
+            border-radius: 9999px; padding: 0 0 0 16px !important; margin: 0 !important; border: none !important;
+        }
+        .mirror-table .script-row-wrapper.keyword-pill-red {
+            background-color: #dc2626 !important; color: #000000 !important;
+        }
+        .mirror-table .script-row-wrapper.keyword-pill-red .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-red .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-red .script-column * {
+            color: #000000 !important; background: transparent !important; border: none !important;
+        }
+        .mirror-table .script-row-wrapper.keyword-pill-yellow {
+            background-color: #ffda03 !important; color: #000000 !important;
+        }
+        .mirror-table .script-row-wrapper.keyword-pill-yellow .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-yellow .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-yellow .script-column * {
+            color: #000000 !important; background: transparent !important; border: none !important;
+        }
+        .mirror-table .script-row-wrapper.keyword-pill-green {
+            background-color: #22c55e !important; color: #000000 !important;
+        }
+        .mirror-table .script-row-wrapper.keyword-pill-green .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-green .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-green .script-column * {
+            color: #000000 !important; background: transparent !important; border: none !important;
+        }
+        .mirror-table .script-row-wrapper.keyword-pill-blue {
+            background-color: #2563eb !important; color: #ffffff !important;
+        }
+        .mirror-table .script-row-wrapper.keyword-pill-blue .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-blue .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-blue .script-column * {
+            color: #ffffff !important; background: transparent !important; border: none !important;
+        }
+        .mirror-table .script-row-wrapper.keyword-pill-white {
+            background-color: #ffffff !important; color: #000000 !important;
+        }
+        .mirror-table .script-row-wrapper.keyword-pill-white .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-white .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-white .script-column * {
+            color: #000000 !important; background: transparent !important; border: none !important;
+        }
         #mirror-sync-guide {
             position: fixed;
             left: 0;
@@ -77,13 +131,88 @@
             z-index: 100;
             pointer-events: none;
         }
+        #fullscreen-prompt {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            cursor: pointer;
+            font-size: 1.2rem;
+            color: #fff;
+            text-align: center;
+            padding: 2rem;
+        }
+        #fullscreen-prompt.hidden { display: none; }
+        /* Filename pills: light blue fill, black text, pill shape, full width (match main) */
+        .mirror-filename-pill {
+            display: block;
+            width: 100%;
+            padding: 8px 20px;
+            background-color: #87CEEB;
+            color: #000000;
+            border-radius: 9999px;
+            line-height: 1.4;
+            font-weight: 500;
+            margin-bottom: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            box-sizing: border-box;
+            text-align: center;
+        }
+        .mirror-filename-pill-bottom {
+            margin-bottom: 0;
+            margin-top: 12px;
+        }
+        .mirror-filename-pill.hidden { display: none !important; }
     </style>
 </head>
 <body>
+    <div id="fullscreen-prompt" title="Press Enter to enter fullscreen">Press Enter for fullscreen</div>
     <div id="scroll-container">
+        <div id="mirror-pill-top" class="mirror-filename-pill hidden" aria-hidden="true"></div>
         <div id="mirror-content" class="mirror-table"></div>
+        <div id="mirror-runway" class="mirror-runway" aria-hidden="true"></div>
+        <div id="mirror-pill-bottom" class="mirror-filename-pill mirror-filename-pill-bottom hidden" aria-hidden="true"></div>
     </div>
     <div id="mirror-sync-guide"></div>
+    <script>
+        (function() {
+            var promptEl = document.getElementById('fullscreen-prompt');
+            function enterFullscreen() {
+                var el = document.documentElement;
+                var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+                if (req) {
+                    req.call(el).then(function() {
+                        if (promptEl) promptEl.classList.add('hidden');
+                    }).catch(function() {});
+                } else if (promptEl) promptEl.classList.add('hidden');
+            }
+            function onFullscreenChange() {
+                var isFull = !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
+                if (promptEl) promptEl.classList.toggle('hidden', isFull);
+            }
+            document.addEventListener('fullscreenchange', onFullscreenChange);
+            document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+            document.addEventListener('MSFullscreenChange', onFullscreenChange);
+            if (promptEl) {
+                promptEl.addEventListener('click', enterFullscreen);
+            }
+            function onKey(e) {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    enterFullscreen();
+                }
+            }
+            window.addEventListener('keydown', onKey);
+            window.addEventListener('load', function() {
+                enterFullscreen();
+            });
+        })();
+    </script>
     <script>
         (function() {
             const container = document.getElementById('scroll-container');
@@ -109,6 +238,20 @@
                 const data = e.data || {};
                 const type = data.type;
                 if (type === 'loadContent') {
+                    var topPillEl = document.getElementById('mirror-pill-top');
+                    var bottomPillEl = document.getElementById('mirror-pill-bottom');
+                    if (topPillEl) {
+                        var topText = (data.topPill != null && data.topPill !== '') ? data.topPill : '';
+                        topPillEl.textContent = topText;
+                        topPillEl.classList.toggle('hidden', !topText);
+                        topPillEl.setAttribute('aria-hidden', topText ? 'false' : 'true');
+                    }
+                    if (bottomPillEl) {
+                        var bottomText = (data.bottomPill != null && data.bottomPill !== '') ? data.bottomPill : '';
+                        bottomPillEl.textContent = bottomText;
+                        bottomPillEl.classList.toggle('hidden', !bottomText);
+                        bottomPillEl.setAttribute('aria-hidden', bottomText ? 'false' : 'true');
+                    }
                     if (data.table && Array.isArray(data.table)) {
                         var visibleColumnIndex = typeof data.visibleColumnIndex === 'number' ? data.visibleColumnIndex : 0;
                         if (data.contentWidth) {
@@ -150,6 +293,10 @@
                     document.documentElement.style.setProperty('--mirror-pad', pad);
                     document.documentElement.style.setProperty('--mirror-line-height', s.lineHeight || '1.4');
                     document.documentElement.style.setProperty('--mirror-content-width', s.contentWidth || '100%');
+                    var topPill = document.getElementById('mirror-pill-top');
+                    var bottomPill = document.getElementById('mirror-pill-bottom');
+                    if (topPill) { topPill.style.fontSize = s.fontSize || ''; topPill.style.fontFamily = s.fontFamily || ''; }
+                    if (bottomPill) { bottomPill.style.fontSize = s.fontSize || ''; bottomPill.style.fontFamily = s.fontFamily || ''; }
                 }
                 if (type === 'pixelSync') {
                     skipNextScrollPost = true;
