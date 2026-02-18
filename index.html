@@ -22,6 +22,13 @@
             <div class="top-ribbon-row top-ribbon-row-1">
             <button id="btn-open-file" title="Open File"><i class="fa-solid fa-folder-open"></i></button>
             <button id="btn-save" title="Save"><i class="fa-solid fa-save"></i></button>
+            <div class="event-plan-dropdown" id="event-plan-dropdown" title="Event documents">
+                <button type="button" id="btn-event-plan-trigger" class="event-plan-trigger" title="Event Plan / Event Script"><i class="fa-solid fa-file-lines"></i></button>
+                <div class="event-plan-list" id="event-plan-list">
+                    <div class="event-plan-item" data-action="event-plan">Event Plan</div>
+                    <div class="event-plan-item" data-action="event-script">Event Script</div>
+                </div>
+            </div>
             <button id="btn-undo" title="Undo (Cmd+Z)"><i class="fa-solid fa-undo"></i></button>
             <button id="btn-redo" title="Redo (Cmd+Y)"><i class="fa-solid fa-rotate-right"></i></button>
             <span class="divider"></span>
@@ -88,7 +95,7 @@
                             <div class="speed-slider-fill" id="speed-slider-fill"></div>
                             <div class="speed-slider-center-marker"></div>
                         </div>
-                        <input type="range" id="speed-slider" min="-10" max="10" step="0.1" value="0" title="Scroll speed (-10 to 10)">
+                        <input type="range" id="speed-slider" min="-10" max="10" step="0.01" value="0" title="Scroll speed (-10 to 10)">
                         <div class="speed-slider-scale">
                             <span class="speed-scale-left">-10</span>
                             <span class="speed-scale-left-mid">-5</span>
@@ -99,7 +106,7 @@
                     </div>
                     <span id="speed-value">0</span>
                     <button id="btn-keyboard-shortcuts" class="keyboard-btn" title="Keyboard shortcuts"><i class="fa-solid fa-keyboard"></i></button>
-                    <button id="btn-connect-shuttle" class="keyboard-btn" title="Connect ShuttleXPress (Chrome). Option+click: show all HID devices."><i class="fa-solid fa-gamepad"></i> Shuttle</button>
+                    <button id="btn-connect-shuttle" class="keyboard-btn hidden" title="Connect ShuttleXPress (Chrome). Option+click: show all HID devices." aria-hidden="true"><i class="fa-solid fa-gamepad"></i> Shuttle</button>
                 </div>
             </div>
         </header>
@@ -157,18 +164,80 @@
             </div>
         </div>
 
+        <div id="event-plan-overlay" class="event-plan-overlay hidden">
+            <div class="event-plan-panel">
+                <h3>Event Plan</h3>
+                <p class="event-plan-hint">Enter event details. Data is built from filenames in Files (format: order_interpreter_item_speaker_minutes_location_type).</p>
+                <div class="event-plan-fields">
+                    <label for="event-plan-title">Event Title</label>
+                    <input type="text" id="event-plan-title" placeholder="e.g. World Wide Devotional with Sister Johnson">
+                    <label for="event-plan-call-time">Date &amp; Call Time</label>
+                    <input type="text" id="event-plan-call-time" placeholder="e.g. May 4th - 4:30pm (Call time)">
+                    <label for="event-plan-run-time">Run Time</label>
+                    <input type="text" id="event-plan-run-time" placeholder="e.g. 6:00pm - 7:00pm (Run Time)">
+                </div>
+                <div class="event-plan-actions">
+                    <button type="button" id="btn-event-plan-print" class="settings-action-btn">Generate &amp; Print</button>
+                    <button type="button" id="btn-event-plan-close" class="settings-close-btn">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="settings-overlay" class="settings-overlay hidden">
+            <div class="settings-overlay-panel">
+                <h3>Settings</h3>
+                <h4>Control Mode</h4>
+                <label><input type="radio" name="controlMode" value="off"> Off</label>
+                <label><input type="radio" name="controlMode" value="mouse" checked> Mouse</label>
+                <label><input type="checkbox" id="invert-scroll-checkbox"> Invert Scroll</label>
+                <div class="settings-row">
+                    <label for="scroll-sensitivity">Scroll sensitivity:</label>
+                    <input type="range" id="scroll-sensitivity" min="0.25" max="2" step="0.05" value="1" title="Mouse/trackpad scroll sensitivity (0.25–200%)">
+                    <span id="scroll-sensitivity-value" aria-live="polite">100%</span>
+                </div>
+                <h4>Second monitor (mirror window)</h4>
+                <div class="monitor-position-options">
+                    <label><input type="radio" name="secondMonitorPosition" value="right" checked> Right</label>
+                    <label><input type="radio" name="secondMonitorPosition" value="left"> Left</label>
+                </div>
+                <button type="button" id="btn-request-multiscreen" class="settings-action-btn">Request multi-screen access</button>
+                <span id="multiscreen-status" class="settings-status" aria-live="polite"></span>
+                <button type="button" id="btn-close-settings" class="settings-close-btn">Close</button>
+            </div>
+        </div>
+
         <main class="content-area">
             <div class="teleprompter-stage">
+								<div id="page-turn-overlay" class="page-turn-overlay" aria-hidden="true"></div>
 								<div id="indicator-wrapper" class="indicator stopped">
 									<div id="indicator-triangle" class="indicator-drag-handle"></div>
 									<div id="sync-guide"></div>
 								</div>
 								
-								<div id="teleprompter-view" tabindex="-1">
-										<div id="teleprompter-text" contenteditable="true" data-placeholder="true">
+							<div id="teleprompter-view" tabindex="-1">
+									<div id="teleprompter-top-spacer" class="teleprompter-top-spacer" aria-hidden="true"></div>
+									<div id="teleprompter-top-runway" class="teleprompter-top-runway" aria-hidden="true"></div>
+									<div id="filename-pill-top" class="filename-pill filename-pill-top hidden" aria-hidden="true"></div>
+									<div id="teleprompter-text" contenteditable="true" data-placeholder="true">
 												Welcome to your new teleprompter.<br>Start typing, paste your script, or open a file to begin...
 										</div>
+										<div id="teleprompter-runway" class="teleprompter-runway" aria-hidden="true"></div>
+									<div id="stay-switch-pill" class="stay-switch-pill hidden" aria-hidden="true"></div>
+									<div id="filename-pill-bottom" class="filename-pill filename-pill-bottom hidden" aria-hidden="true"></div>
+									<div id="teleprompter-bottom-spacer" class="teleprompter-bottom-spacer" aria-hidden="true"></div>
 								</div>
+								<script>
+								(function(){
+									var el = document.getElementById('teleprompter-text');
+									if (!el) return;
+									try {
+										var f = localStorage.getItem('teleprompter_fontFamily');
+										var s = localStorage.getItem('teleprompter_fontSize');
+										if (f) el.style.fontFamily = f;
+										if (s) el.style.fontSize = s + 'px';
+									} catch (_) {}
+								})();
+								</script>
 						</div>
             
             <div id="resizer"></div>
@@ -181,24 +250,6 @@
                         <button id="btn-move-file-down" title="Move Down"><i class="fa-solid fa-arrow-down"></i></button>
                     </div>
                     <div class="runlist-files"></div>
-                </div>
-                <div id="settings-panel" class="hidden">
-                    <h4>Control Mode</h4>
-                    <label><input type="radio" name="controlMode" value="off" checked> Off</label>
-                    <label><input type="radio" name="controlMode" value="mouse"> Mouse</label>
-                    <label><input type="checkbox" id="invert-scroll-checkbox"> Invert Scroll</label>
-                    <h4>Second monitor (mirror window)</h4>
-                    <p class="settings-hint">If you work on the 2nd monitor and want the mirror on the main one, choose Left. Otherwise choose Right, Above, or Below.</p>
-                    <div class="monitor-position-options">
-                        <label><input type="radio" name="secondMonitorPosition" value="right" checked> Right</label>
-                        <label><input type="radio" name="secondMonitorPosition" value="left"> Left</label>
-                        <label><input type="radio" name="secondMonitorPosition" value="above"> Above</label>
-                        <label><input type="radio" name="secondMonitorPosition" value="below"> Below</label>
-                    </div>
-                    <p class="settings-hint">If the mirror window doesn’t move to the other monitor by itself, drag it there. On Mac and in some setups the browser blocks automatic placement.</p>
-                    <p class="settings-hint">For automatic placement when supported, allow multi-screen access when your browser asks. If the button below says &quot;Not available&quot;, use Left/Right above and drag the mirror if needed. From file (file://), run <code>npx serve</code> then open <code>http://localhost:3000</code>.</p>
-                    <button type="button" id="btn-request-multiscreen" class="settings-action-btn">Request multi-screen access</button>
-                    <span id="multiscreen-status" class="settings-status" aria-live="polite"></span>
                 </div>
                 <div id="runlist-bookmark-resizer" class="panel-resizer" title="Drag to resize"></div>
                 <div class="bookmark-section">
@@ -220,18 +271,6 @@
     <div id="mirror-placement-toast" class="mirror-placement-toast hidden" aria-live="polite"></div>
 
     <input type="file" id="file-opener" multiple style="display: none;" accept=".txt,.html,.htm,.xlsx,.xls,.docx,.doc" />
-    <div id="column-modal" class="modal-overlay hidden">
-        <div class="modal-content">
-            <h3>Select Columns to Import</h3>
-            <p>Check the columns you want to display on the teleprompter.</p>
-            <div id="column-list" class="column-grid">
-                </div>
-            <div class="modal-actions">
-                <button id="btn-cancel-import">Cancel</button>
-                <button id="btn-confirm-import" class="primary-btn">Import Selected</button>
-            </div>
-        </div>
-    </div>
     <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://unpkg.com/docx-preview@0.3.7/dist/docx-preview.js"></script>
     
