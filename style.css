@@ -1106,6 +1106,27 @@ body {
     font-weight: 600;
 }
 
+.bookmark-item { display: flex; align-items: center; gap: 6px; }
+.bookmark-item .bookmark-num { flex-shrink: 0; }
+.bookmark-item .bookmark-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bookmark-close {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: #c62828;
+    color: #fff;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.15s;
+}
+.bookmark-close:hover { background: #b71c1c; }
 .bookmark-item::before {
     content: none;
 }
@@ -1652,9 +1673,10 @@ body.broadcasting #teleprompter-text .script-column .cell-content div {
     line-height: 1.2 !important;
 }
 
-/* First column always black background; allow bookmark-dot to extend left into indicator column */
+/* First column always black background */
 #teleprompter-text .script-row-wrapper .script-column:first-child { background-color: #000000 !important; }
-#teleprompter-text .script-row-wrapper .script-column:first-child:has(.bookmark-dot) { overflow: visible !important; }
+/* Bookmark-dot lives in row (not first column) so it stays visible when column 1 is unchecked */
+#teleprompter-text .script-row-wrapper:has(.bookmark-dot) { overflow: visible !important; position: relative; }
 
 /* Row background colors by col2 vs col3 comparison (3-column table only)
    col2 < col3 = red (1 line: glow; 2+: fill). col3 < col2 = green (1 line: glow; 2+: fill). */
