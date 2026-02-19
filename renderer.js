@@ -145,6 +145,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // =========================================
     // 2. APP STATE
     // =========================================
+    const MAX_COLUMNS = 3;
     let fileStore = [];         // Stores File objects
     let contentStore = [];      // Stores HTML strings
     let currentFileIndex = -1;
@@ -1627,7 +1628,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const isFontControl = (el) => el && (fontFamilySelect?.contains(el) || fontSizeSelect?.contains(el) || fontColorButton?.contains(el) || fontColorPanel?.contains(el) || bgColorButton?.contains(el) || bgColorPanel?.contains(el) || boldButton?.contains(el) || italicButton?.contains(el) || underlineButton?.contains(el) || document.getElementById('font-target-dropdown')?.contains(el) || selectFontTarget?.contains(el) || document.getElementById('btn-overview-toggle')?.contains(el));
     const saveSelectionWhenFocusingFontControl = (e) => {
         if (!isFontControl(e.target)) return;
-        if (savedFontSelections.length === 0) saveFontSelectionFromEditor(false);
+        const sel = window.getSelection();
+        if (sel.rangeCount && sel.getRangeAt(0) && !sel.getRangeAt(0).collapsed && teleprompterText.contains(sel.anchorNode))
+            saveFontSelectionFromEditor(false);
+        else if (savedFontSelections.length === 0) saveFontSelectionFromEditor(false);
         updateMultiSelectHighlight();
     };
     const saveSelectionOnEditorBlur = (e) => {
@@ -1965,7 +1969,22 @@ document.addEventListener('DOMContentLoaded', function() {
             const action = item.dataset.action;
             if (action === 'event-plan') {
                 openEventPlanOverlay();
-            } else if (action === 'event-script') { /* Event Script action */ }
+            } else if (action === 'event-script') {
+                if (!fileStore || fileStore.length === 0) {
+                    alert('No files in the Files list. Add files first.');
+                    return;
+                }
+                if (typeof syncEditorState === 'function') syncEditorState();
+                const html = buildMasterScriptHtml();
+                const w = window.open('', '_blank');
+                if (!w) {
+                    alert('Popup blocked. Please allow popups to print.');
+                    return;
+                }
+                w.document.write(html.replace('</body></html>', '<script>window.onload=function(){window.onafterprint=function(){window.close()};window.print()}<\/script></body></html>'));
+                w.document.close();
+                w.focus();
+            }
         });
     }
     if (btnRemoveFontTarget) {
@@ -2086,11 +2105,14 @@ document.addEventListener('DOMContentLoaded', function() {
         teleprompterText.focus();
         if (ranges.length > 0 && tagName) {
             applyFormattingToRanges(ranges, tagName);
-        } else if (ranges.length === 0) {
+        } else {
             const sel = window.getSelection();
-            if (sel.rangeCount) {
-                document.execCommand(cmd, false, null);
+            const toRestore = savedFontSelections.find(r => { try { return r && document.contains(r.startContainer); } catch (_) { return false; } });
+            if (toRestore) {
+                sel.removeAllRanges();
+                sel.addRange(toRestore.cloneRange());
             }
+            if (sel.rangeCount) document.execCommand(cmd, false, null);
         }
         flattenRedundantSpans();
         updateMultiSelectState();
@@ -3434,6 +3456,186 @@ function buildEventPlanHtml(files, title, callTime, runTime) {
 </body></html>`;
 }
 
+/** Compute pill class for a row's raw text (for master script / print). switchLabel is 'STAY' or 'SWITCH'. cells=optional array of cell texts for per-cell matching (xlsx). */
+function getPillClassForRow(raw, switchLabel, cells) {
+    const lower = (raw || '').trim().toLowerCase();
+    const r = (raw || '').trim();
+    const check = (t) => {
+        const L = (t || '').trim().toLowerCase();
+        const T = (t || '').trim();
+        if (KEYWORD_PILL_RED.includes(L)) return 'ms-pill-red';
+        if (['switch', 'stay'].includes(L)) return 'ms-pill-green';
+        if (KEYWORD_PILL_YELLOW_EXACT.includes(L) || KEYWORD_PILL_YELLOW_VERSE.test(T) || KEYWORD_PILL_YELLOW_NAME.test(T) || KEYWORD_PILL_YELLOW_BRACKETS.test(T)) return 'ms-pill-yellow';
+        if (KEYWORD_PILL_BLUE_NAME_TIME.test(T)) return 'ms-pill-blue';
+        if (T.includes('|v')) return 'ms-pill-white';
+        return '';
+    };
+    let pill = check(r);
+    if (!pill && cells && cells.length > 0) {
+        for (let i = 0; i < cells.length; i++) {
+            pill = check(cells[i]);
+            if (pill) break;
+        }
+    }
+    return pill;
+}
+
+/** Build printable master script: all files combined with pill/color format (Aa-mode style). */
+function buildMasterScriptHtml() {
+    const esc = (s) => (s == null || s === '') ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const sections = [];
+    const temp = document.createElement('div');
+
+    for (let fi = 0; fi < fileStore.length; fi++) {
+        const file = fileStore[fi];
+        const content = contentStore[fi];
+        const name = stripFileExtension(file?.name || '');
+        const fileExt = (file?.name || '').split('.').pop().toLowerCase();
+        const isDocx = fileExt === 'docx' || fileExt === 'doc';
+        const nextFile = fi + 1 < fileStore.length ? fileStore[fi + 1] : null;
+        const currentInterpreter = file ? getInterpreterFromFilename(file.name) : '';
+        const nextInterpreter = nextFile ? getInterpreterFromFilename(nextFile.name) : '';
+        const switchLabel = (nextInterpreter && nextInterpreter !== currentInterpreter) ? 'SWITCH' : 'STAY';
+
+        const sectionRows = [];
+
+        if (!content || (typeof content === 'string' && !content.trim())) {
+            sectionRows.push({ type: 'row', cells: ['\u00A0'], pill: '', font12: false, singleCol: true });
+            sections.push({ header: name || 'Untitled', rows: sectionRows });
+            continue;
+        }
+
+        temp.innerHTML = typeof content === 'string' ? content : '';
+        let rowEls = temp.querySelectorAll('.script-row-wrapper');
+        if (rowEls.length === 0) {
+            /* Fallback: parse tables (e.g. from docx with multiple or nested tables) */
+            const allTables = temp.querySelectorAll('table');
+            const topLevelTables = Array.from(allTables).filter(t => !t.closest('table'));
+            if (topLevelTables.length > 0) {
+                const collected = [];
+                topLevelTables.forEach(tbl => {
+                    tbl.querySelectorAll('tr').forEach(tr => {
+                        let cells = Array.from(tr.querySelectorAll('td, th')).map(td => (td.innerText || '').trim() || '\u00A0');
+                        if (cells.length > 3) {
+                            const extra = cells.slice(3).join(' ').trim();
+                            cells = [cells[0] || '', cells[1] || '', (cells[2] || '') + (extra ? ' ' + extra : '')];
+                        }
+                        const div = document.createElement('div');
+                        div.className = 'script-row-wrapper';
+                        cells.forEach(c => {
+                            const col = document.createElement('div');
+                            col.className = 'script-column';
+                            const cell = document.createElement('div');
+                            cell.className = 'cell-content';
+                            cell.textContent = c;
+                            col.appendChild(cell);
+                            div.appendChild(col);
+                        });
+                        collected.push(div);
+                    });
+                });
+                rowEls = collected;
+            }
+        }
+        if (rowEls.length === 0) {
+            const text = (temp.innerText || '').trim() || '\u00A0';
+            sectionRows.push({ type: 'row', cells: [text], pill: getPillClassForRow(text, switchLabel, [text]), font12: text.includes('|v'), singleCol: true });
+            sections.push({ header: name || 'Untitled', rows: sectionRows });
+            continue;
+        }
+
+        rowEls.forEach(rowEl => {
+            const cols = rowEl.querySelectorAll('.script-column');
+            let cells = Array.from(cols).map(col => {
+                const c = col.querySelector('.cell-content') || col.querySelector('.cell-locker') || col;
+                let t = (c?.innerText ?? c?.textContent ?? '').toString().trim();
+                if (!isDocx) t = t.replace(/^\|v(.*?)\|?$/, '$1').trim();
+                return t || '\u00A0';
+            });
+            const bkmkDot = rowEl.querySelector('.bookmark-dot');
+            const bkmkNum = (bkmkDot?.dataset?.bookmarkNum || '').toString();
+            if (isDocx && cells.length > 3) {
+                const extra = cells.slice(3).join(' ').trim();
+                cells = [cells[0] || '', cells[1] || '', (cells[2] || '') + (extra ? ' ' + extra : '')];
+            }
+            const raw = (rowEl.textContent || '').trim();
+            let pill = getPillClassForRow(raw, switchLabel, cells);
+            for (let ci = 0; ci < cells.length; ci++) {
+                if (pill === 'ms-pill-green' && ['switch', 'stay'].includes((cells[ci] || '').trim().toLowerCase())) {
+                    cells[ci] = switchLabel;
+                    break;
+                }
+            }
+            const font12 = raw.includes('|v') || cells.some(c => (c || '').includes('|v'));
+            const singleCol = cells.length <= 1;
+            sectionRows.push({ type: 'row', cells, pill, font12, singleCol, bookmarkNum: bkmkNum });
+        });
+        sections.push({ header: name || 'Untitled', rows: sectionRows });
+    }
+
+    const tocHtml = '<div class="ms-toc-page"><h2>Master Script – File List</h2><div class="ms-toc-list">' +
+        sections.map((s, i) => '<div class="ms-toc-item"><span class="ms-toc-num">' + (i + 1) + '</span>' + esc(s.header) + '</div>').join('') + '</div></div>';
+    const sectionHtml = sections.map((sec, secIdx) => {
+        const secNum = secIdx + 1;
+        const maxCols = sec.rows.length ? Math.max(...sec.rows.map(r => r.cells.length)) : 1;
+        let colgroup = '<colgroup>';
+        if (maxCols <= 1) colgroup += '<col style="width:100%">';
+        else {
+            colgroup += '<col style="width:55px">';
+            for (let i = 1; i < maxCols; i++) colgroup += '<col>';
+        }
+        colgroup += '</colgroup>';
+        const rowHtml = sec.rows.map(r => {
+            const pillCl = r.pill ? ' ' + r.pill : '';
+            const fontCl = r.font12 ? ' ms-font-12' : '';
+            const singleCl = r.singleCol ? ' ms-row-single-col' : '';
+            const cells = r.cells.slice();
+            while (cells.length < maxCols) cells.push('\u00A0');
+            const cellsHtml = cells.map((c, ci) => {
+                let inner = esc(c).replace(/\n/g, '<br>');
+                if (ci === 0 && r.bookmarkNum) inner = '<span class="ms-bookmark-dot"></span> ' + inner;
+                if (r.bookmarkNum && /^[\u2022\u00B7•·]/.test(c)) inner = inner.replace(/^([\u2022\u00B7•·])\s*/, '<span class="ms-bullet-red">$1</span> ');
+                return '<td class="ms-cell">' + inner + '</td>';
+            }).join('');
+            return '<tr class="ms-row' + pillCl + fontCl + singleCl + '">' + cellsHtml + '</tr>';
+        }).join('');
+        return '<div class="ms-section"><div class="ms-file-header"><span class="ms-file-num">' + secNum + '</span>' + esc(sec.header) + '</div><table class="ms-table">' + colgroup + '<tbody>' + rowHtml + '</tbody></table></div>';
+    }).join('');
+
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Master Script</title><style>
+*{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;}
+.ms-print{font-family:Arial,sans-serif;color:#000;background:#fff;padding:16px;margin:0;}
+.ms-toc-page{page-break-after:always;min-height:80vh;padding:24px 0;}
+.ms-toc-page h2{font-size:16px;margin:0 0 12px 0;}
+.ms-toc-list{font-size:14px;margin:0;}
+.ms-toc-item{padding:12px 14px;border-bottom:1px solid #333;line-height:1.5;font-size:18px;font-weight:600;}
+.ms-toc-item:last-child{border-bottom:1px solid #333;}
+.ms-toc-num{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;border-radius:50%;background:#c62828;color:#fff;font-size:14px;font-weight:700;margin-right:10px;vertical-align:middle;}
+.ms-section{margin-bottom:24px;}
+.ms-file-header{font-size:18px;font-weight:bold;margin:0 0 8px 0;padding:8px 0;border-bottom:2px solid #333;}
+.ms-file-num{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;border-radius:50%;background:#c62828;color:#fff;font-size:14px;font-weight:700;margin-right:10px;vertical-align:middle;}
+.ms-table{width:100%;max-width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0;font-size:12px;overflow-wrap:break-word;}
+.ms-table td{vertical-align:top;padding:6px 10px;border-bottom:1px solid #333;border-right:1px solid #ccc;overflow-wrap:break-word;word-wrap:break-word;word-break:break-all;min-width:0;max-width:100%;box-sizing:border-box;white-space:normal;}
+.ms-table td:last-child{border-right:none;}
+.ms-table td:first-child{width:55px;min-width:55px;white-space:nowrap;padding-right:12px;}
+.ms-bookmark-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#c62828;margin-right:6px;vertical-align:middle;}
+.ms-bullet-red{color:#c62828 !important;}
+.ms-row.ms-row-single-col td{width:100% !important;max-width:100% !important;}
+.ms-row.ms-font-12 td{font-size:12px;line-height:1.2;}
+.ms-pill-red,.ms-pill-red td{background-color:#dc2626 !important;color:#000 !important;}
+.ms-pill-yellow,.ms-pill-yellow td{background-color:#ffda03 !important;color:#000 !important;}
+.ms-pill-green,.ms-pill-green td{background-color:#22c55e !important;color:#000 !important;}
+.ms-pill-blue,.ms-pill-blue td{background-color:#2563eb !important;color:#fff !important;}
+.ms-pill-white,.ms-pill-white td{background-color:#000 !important;color:#fff !important;padding:2px 8px !important;line-height:1.1 !important;font-size:11px !important;}
+@page{size:letter;margin:0.5in;}
+@media print{html{width:100%;height:100%;} body{width:100% !important;max-width:7.5in !important;margin:0 auto !important;padding:0 !important;background:#fff !important;-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;box-sizing:border-box !important;} *{box-sizing:border-box !important;} .ms-print{width:100% !important;max-width:7.5in !important;padding:16px !important;margin:0 auto !important;} .ms-section{width:100% !important;max-width:100% !important;} .ms-table{width:100% !important;max-width:100% !important;min-width:0 !important;table-layout:fixed !important;} .ms-table td{overflow-wrap:break-word !important;word-wrap:break-word !important;word-break:break-all !important;white-space:normal !important;} .ms-row.ms-row-single-col td{width:100% !important;max-width:100% !important;}}
+</style></head><body class="ms-print">
+<h1>Master Script</h1>
+${tocHtml}
+${sectionHtml}
+</body></html>`;
+}
+
 if (btnEventPlanPrint && eventPlanOverlay) {
     btnEventPlanPrint.onclick = () => {
         if (!fileStore || fileStore.length === 0) {
@@ -3452,13 +3654,9 @@ if (btnEventPlanPrint && eventPlanOverlay) {
             alert('Popup blocked. Please allow popups to print.');
             return;
         }
-        w.document.write(html);
+        w.document.write(html.replace('</body></html>', '<script>window.onload=function(){window.onafterprint=function(){window.close()};window.print()}<\/script></body></html>'));
         w.document.close();
         w.focus();
-        w.onload = () => {
-            w.print();
-            w.onafterprint = () => w.close();
-        };
         closeEventPlanOverlay();
     };
 }
@@ -3797,15 +3995,54 @@ function resetPillTriggerState() {
     if (view) lastScrollTopForPillTrigger = view.scrollTop;
 }
 
+/** Normalize HTML to max 3 columns. Merges extra cells into the 3rd. Returns { html, wasTrimmed }. */
+function normalizeContentToMax3Columns(html) {
+    if (!html || typeof html !== 'string' || !html.trim()) return { html: html || '', wasTrimmed: false };
+    const temp = document.createElement('div');
+    temp.innerHTML = html;
+    let wasTrimmed = false;
+    temp.querySelectorAll('.script-row-wrapper').forEach(row => {
+        const cols = row.querySelectorAll('.script-column');
+        if (cols.length > MAX_COLUMNS) {
+            wasTrimmed = true;
+            const extras = Array.from(cols).slice(MAX_COLUMNS);
+            const extraText = extras.map(c => (c.innerText || c.textContent || '').trim()).join(' ').trim();
+            extras.forEach(c => c.remove());
+            const third = row.querySelector('.script-column:nth-child(3)');
+            if (third) {
+                const cell = third.querySelector('.cell-content') || third.querySelector('.cell-locker') || third;
+                if (cell && extraText) cell.textContent = (cell.textContent || '').trim() + (cell.textContent?.trim() ? ' ' : '') + extraText;
+            }
+        }
+    });
+    temp.querySelectorAll('table tr').forEach(tr => {
+        const cells = Array.from(tr.querySelectorAll('td, th'));
+        if (cells.length > MAX_COLUMNS) {
+            wasTrimmed = true;
+            const third = cells[MAX_COLUMNS - 1];
+            const extras = cells.slice(MAX_COLUMNS);
+            const extraText = extras.map(c => (c.innerText || c.textContent || '').trim()).join(' ').trim();
+            extras.forEach(c => c.remove());
+            if (third && extraText) third.textContent = (third.textContent || '').trim() + (third.textContent?.trim() ? ' ' : '') + extraText;
+        }
+    });
+    return { html: temp.innerHTML, wasTrimmed };
+}
+
 async function processFileContent(file, index) {
     const extension = file.name.split('.').pop().toLowerCase();
     console.log(`Starting process for .${extension} at index ${index}`);
 
     try {
         if (extension === 'txt' || extension === 'html') {
-            const text = await file.text();
+            let text = await file.text();
             const currentIdx = fileStore.findIndex(f => f === file);
             const slot = currentIdx >= 0 ? currentIdx : index;
+            if (extension === 'html') {
+                const { html: normalized, wasTrimmed } = normalizeContentToMax3Columns(text);
+                text = normalized;
+                if (wasTrimmed) alert(`"${file.name}" had more than ${MAX_COLUMNS} columns. Extra columns were merged into column ${MAX_COLUMNS}.`);
+            }
             contentStore[slot] = text;
             console.log("Text/HTML content loaded successfully");
         } 
@@ -3820,13 +4057,20 @@ async function processFileContent(file, index) {
                     const sheet = workbook.Sheets[workbook.SheetNames[0]];
                     const range = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : { s: { c: 0, r: 0 }, e: { c: 0, r: 0 } };
                     const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-                    const selectedCols = [];
-                    for (let c = range.s.c; c <= range.e.c; c++) selectedCols.push(c);
+                    const allCols = [];
+                    for (let c = range.s.c; c <= range.e.c; c++) allCols.push(c);
+                    const maxCols = MAX_COLUMNS;
+                    const selectedCols = allCols.slice(0, maxCols);
                     let html = '<div class="script-container">';
                     json.forEach((row) => {
+                        const cells = selectedCols.map(colIdx => row[colIdx] != null ? String(row[colIdx]).trim() : '');
+                        if (allCols.length > maxCols) {
+                            const extra = allCols.slice(maxCols).map(colIdx => row[colIdx] != null ? String(row[colIdx]).trim() : '').join(' ').trim();
+                            if (extra && cells.length >= maxCols) cells[maxCols - 1] = (cells[maxCols - 1] || '') + (cells[maxCols - 1] ? ' ' : '') + extra;
+                        }
                         html += '<div class="script-row-wrapper">';
-                        selectedCols.forEach(colIdx => {
-                            html += `<div class="script-column"><div class="cell-content">${row[colIdx] != null ? row[colIdx] : ""}</div></div>`;
+                        cells.forEach(val => {
+                            html += `<div class="script-column"><div class="cell-content">${(val || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div></div>`;
                         });
                         html += '</div>';
                     });
@@ -3834,11 +4078,14 @@ async function processFileContent(file, index) {
                     const currentIdx = fileStore.findIndex(f => f === file);
                     const slot = currentIdx >= 0 ? currentIdx : index;
                     contentStore[slot] = html;
-                    fileColumnCount[slot] = selectedCols.length;
+                    fileColumnCount[slot] = Math.min(allCols.length, maxCols);
                     fileColumnVisibility[slot] = selectedCols.map(() => true);
                     fileFirstColIsId[slot] = selectedCols.length > 0 && isFirstColumnNumeric(sheet);
                     updateRunlistRowColumnToggles(slot);
                     loadScriptToEditor(slot);
+                    if (allCols.length > maxCols) {
+                        alert(`"${file.name}" has ${allCols.length} columns. Teleprompter uses a maximum of ${MAX_COLUMNS} columns. Extra columns were merged into column ${MAX_COLUMNS}.`);
+                    }
                     console.log("Excel imported with " + selectedCols.length + " column(s). Use file checkboxes to show/hide columns.");
                 } catch (innerErr) {
                     console.error("❌ XLSX Parsing Error:", innerErr);
@@ -3854,7 +4101,9 @@ async function processFileContent(file, index) {
                     .then(result => {
                         const currentIdx = fileStore.findIndex(f => f === file);
                         const slot = currentIdx >= 0 ? currentIdx : index;
-                        contentStore[slot] = result.value;
+                        const { html, wasTrimmed } = normalizeContentToMax3Columns(result.value);
+                        contentStore[slot] = html;
+                        if (wasTrimmed) alert(`"${file.name}" had more than ${MAX_COLUMNS} columns. Extra columns were merged into column ${MAX_COLUMNS}.`);
                         console.log("Docx converted successfully");
                         loadScriptToEditor(slot);
                     })
@@ -3911,9 +4160,11 @@ function isFirstColumnNumeric(sheet) {
     return total > 0 && numericCount / total >= 0.5;
 }
 
-/** Strip |v prefix and trailing | from first column (e.g. |v13 or |v13| -> 13) */
+/** Strip |v prefix and trailing | from first column (e.g. |v13 or |v13| -> 13). Only for xlsx with numeric first column. */
 function stripPipeVFromFirstColumn() {
     if (!teleprompterText) return;
+    if (!isCurrentFileXlsx()) return;
+    if (!(currentFileIndex >= 0 && fileFirstColIsId[currentFileIndex])) return;
     teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
         const firstCol = row.querySelector('.script-column:first-child .cell-content') || row.querySelector('.script-column:first-child .cell-locker') || row.querySelector('.script-column:first-child');
         if (!firstCol) return;
@@ -4130,19 +4381,41 @@ function loadFileContent(file, index) {
     // =========================================
     // 5. SCRIPT LOADING & EDITOR SYNC
     // =========================================
+function removeBookmark(bookmarkId) {
+    if (!bookmarkId) return;
+    const numCircle = teleprompterText?.querySelector(`.bookmark-dot[data-bookmark-id="${bookmarkId}"]`);
+    const cursorDot = teleprompterText?.querySelector(`.bookmark-cursor-dot[data-bookmark-id="${bookmarkId}"]`);
+    if (numCircle) numCircle.remove();
+    if (cursorDot) {
+        const text = (cursorDot.innerText || cursorDot.textContent || '').replace(/^\s*•\s*/, '').trim();
+        const textNode = document.createTextNode(text ? ' ' + text : ' ');
+        cursorDot.parentNode?.replaceChild(textNode, cursorDot);
+    }
+    renumberBookmarks();
+    updateBookmarkSidebar();
+    if (typeof syncEditorState === 'function') syncEditorState();
+    if (mirrorWindow && !mirrorWindow.closed) refreshMirrorData();
+}
+
 function updateBookmarkSidebar() {
     const list = document.querySelector('.bookmark-list');
     if (!list) return;
     const bars = getSortedBookmarkDots();
     list.innerHTML = '';
+    const esc = (s) => (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     bars.forEach((el, i) => {
         const num = el.dataset.bookmarkNum || String(i + 1);
         const label = el.dataset.bookmarkLabel || '';
+        const bid = el.dataset.bookmarkId || '';
         const item = document.createElement('div');
         item.className = 'bookmark-item';
         item.dataset.bookmarkIndex = String(i);
-        item.innerHTML = `<span class="bookmark-num">${num}</span> ${label}`;
-        item.onclick = () => {
+        item.dataset.bookmarkId = bid;
+        item.innerHTML = `<span class="bookmark-num">${num}</span><span class="bookmark-label">${esc(label)}</span><button type="button" class="bookmark-close" title="Delete bookmark" aria-label="Delete bookmark">×</button>`;
+        const closeBtn = item.querySelector('.bookmark-close');
+        if (closeBtn) closeBtn.onclick = (e) => { e.preventDefault(); e.stopPropagation(); removeBookmark(bid); };
+        item.onclick = (e) => {
+            if (e.target.closest('.bookmark-close')) return;
             if (pendingBookmarkNavTimeoutId) {
                 clearTimeout(pendingBookmarkNavTimeoutId);
                 pendingBookmarkNavTimeoutId = null;
@@ -4394,26 +4667,22 @@ function addBookmarkAtCursor() {
     numCircle.dataset.bookmarkNum = String(nextNum);
     numCircle.dataset.bookmarkLabel = label;
 
-    const col1Container = col1 || row;
-    const col1Style = window.getComputedStyle(col1Container);
-    if (col1Style.position === 'static') col1Container.style.position = 'relative';
+    /* Insert bookmark-dot in row (not col1) so it stays visible when first column is unchecked */
+    const rowStyle = window.getComputedStyle(row);
+    if (rowStyle.position === 'static') row.style.position = 'relative';
 
-    const col1Rect = col1Container.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
     const numCircleHeight = 26;
-    const topOffsetNum = cursorRect.top + cursorRect.height / 2 - col1Rect.top - numCircleHeight / 2;
-    const col1Height = col1Rect.height;
-    const topPercentNum = col1Height > 0 ? Math.max(0, Math.min(100, (topOffsetNum / col1Height) * 100)) : 0;
+    const topOffsetNum = cursorRect.top + cursorRect.height / 2 - rowRect.top - numCircleHeight / 2;
+    const rowHeight = rowRect.height;
+    const topPercentNum = rowHeight > 0 ? Math.max(0, Math.min(100, (topOffsetNum / rowHeight) * 100)) : 0;
 
     numCircle.style.position = 'absolute';
     numCircle.style.top = topPercentNum + '%';
     numCircle.style.left = '';
     numCircle.dataset.bookmarkId = stableId;
 
-    if (col1) {
-        col1.insertBefore(numCircle, col1.firstChild);
-    } else {
-        row.insertBefore(numCircle, row.firstChild);
-    }
+    row.insertBefore(numCircle, row.firstChild);
 
     /* 2. Small red dot inline - dot + first word in nowrap (no break after dot), rest wraps normally */
     const cursorDot = document.createElement('span');
@@ -4587,10 +4856,9 @@ function updateBookmarkPositions() {
         if (!cursorDot) return;
         const bullet = cursorDot.querySelector('.bookmark-cursor-dot-bullet');
         const alignEl = bullet || cursorDot;
-        const row = numCircle.closest('.script-row-wrapper');
-        const col1 = row?.querySelector('.script-column');
+        const row = numCircle.closest('.script-row-wrapper') || numCircle.parentElement;
         const textCol = cursorDot.closest('.script-column');
-        const container = col1 || row || numCircle.parentElement;
+        const container = row || numCircle.parentElement;
         if (!container) return;
         const style = window.getComputedStyle(container);
         if (style.position === 'static') container.style.position = 'relative';
@@ -4724,8 +4992,8 @@ function convertBkmkPlaceholdersToBookmarks() {
         const fullCellText = (cell.innerText || '').trim().replace(/\s+/g, ' ');
         const afterBullet = fullCellText.split(/\s*\u2022\s*/).slice(1).join(' ').trim() || fullCellText;
         const label = afterBullet ? (afterBullet.slice(0, 30).trim() + (afterBullet.length > 30 ? '…' : '')) : '';
-        const col1Container = col1 || row;
-        if (col1Container.style.position === 'static' || !col1Container.style.position) col1Container.style.position = 'relative';
+        /* Insert bookmark-dot in row (not col1) so it stays visible when first column is unchecked */
+        if (row.style.position === 'static' || !row.style.position) row.style.position = 'relative';
         const numCircle = document.createElement('div');
         numCircle.className = 'bookmark-dot';
         numCircle.dataset.bookmarkNum = String(nextNum);
@@ -4734,11 +5002,7 @@ function convertBkmkPlaceholdersToBookmarks() {
         numCircle.style.position = 'absolute';
         numCircle.style.top = '0%';
         numCircle.style.left = '';
-        if (col1) {
-            col1.insertBefore(numCircle, col1.firstChild);
-        } else {
-            row.insertBefore(numCircle, row.firstChild);
-        }
+        row.insertBefore(numCircle, row.firstChild);
         console.log('[BKMK] inserted bookmark', nextNum, 'stableId=', stableId);
     }
     if (nextNum <= initialDotCount) {
@@ -4820,6 +5084,8 @@ const KEYWORD_PILL_RED = ['end', 'full screen', 'stop', 'out'];
 const KEYWORD_PILL_YELLOW_EXACT = ['panel', 'chorus'];
 const KEYWORD_PILL_YELLOW_VERSE = /^verse\s*\d*$/i;
 const KEYWORD_PILL_YELLOW_NAME = /^(elder|president|sister|brother)\s+.+$/i;
+/** Text that starts with [ and ends with ] -> yellow pill */
+const KEYWORD_PILL_YELLOW_BRACKETS = /^\[.*\]$/;
 /** Matches "Name (00:00 – 18:41)" or "Brianna (1:23 - 5:00)" - speaker/time rows -> blue pill */
 const KEYWORD_PILL_BLUE_NAME_TIME = /^[A-Za-z][A-Za-z0-9\s\-'.]*\s*\([^)]+\)\s*$/;
 
@@ -4856,7 +5122,7 @@ function applyKeywordPills() {
         } else if (['switch', 'stay'].includes(lower)) {
             row.classList.add('keyword-pill-green');
             setFirstVisibleCellText(row, switchLabel);
-        } else if (KEYWORD_PILL_YELLOW_EXACT.includes(lower) || KEYWORD_PILL_YELLOW_VERSE.test(raw) || KEYWORD_PILL_YELLOW_NAME.test(raw)) {
+        } else if (KEYWORD_PILL_YELLOW_EXACT.includes(lower) || KEYWORD_PILL_YELLOW_VERSE.test(raw) || KEYWORD_PILL_YELLOW_NAME.test(raw) || KEYWORD_PILL_YELLOW_BRACKETS.test(raw)) {
             row.classList.add('keyword-pill-yellow');
         } else if (KEYWORD_PILL_BLUE_NAME_TIME.test(raw)) {
             row.classList.add('keyword-pill-blue');
@@ -4923,7 +5189,8 @@ function updateFilenamePills() {
             const currentInterpreter = getInterpreterFromFilename(fileStore[currentFileIndex].name);
             const nextInterpreter = getInterpreterFromFilename(fileStore[currentFileIndex + 1].name);
             const label = nextInterpreter && nextInterpreter !== currentInterpreter ? 'SWITCH' : 'STAY';
-            staySwitchPill.textContent = nextInterpreter ? label + ' ' + nextInterpreter : label;
+            const nextName = nextInterpreter || stripFileExtension(fileStore[currentFileIndex + 1].name) || '';
+            staySwitchPill.textContent = nextName ? label + ' ' + nextName : label;
             staySwitchPill.classList.remove('hidden', 'end-pill');
             staySwitchPill.setAttribute('aria-hidden', 'false');
         } else if (hasCurrent) {
