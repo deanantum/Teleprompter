@@ -66,6 +66,13 @@
         .mirror-table .script-row-wrapper.row-col2-more { background-color: #002D04 !important; color: #ffffff !important; }
         .mirror-table .script-row-wrapper.row-col3-more,
         .mirror-table .script-row-wrapper.row-col3-much-more { background-color: #531516 !important; color: #ffffff !important; }
+        /* Match main: line spacing on shorter column fills row when red/green (stretch classes from main) */
+        .mirror-table .script-row-wrapper.row-stretch-col2 .script-column.mirror-visible .cell-content,
+        .mirror-table .script-row-wrapper.row-stretch-col2 .script-column.mirror-visible .cell-content *,
+        .mirror-table .script-row-wrapper.row-stretch-col3 .script-column.mirror-visible .cell-content,
+        .mirror-table .script-row-wrapper.row-stretch-col3 .script-column.mirror-visible .cell-content * {
+            line-height: inherit !important;
+        }
         .mirror-table .script-row-wrapper.mirror-row-font-12 .script-column .cell-content {
             font-size: 12px !important;
             line-height: 1.2 !important;
@@ -234,6 +241,87 @@
                 return div.innerHTML;
             }
 
+            function mirrorBalanceColWidthPx(col) {
+                return Math.max(1, Math.floor(col.getBoundingClientRect().width));
+            }
+            function clearMirrorBalanceProbe(cell) {
+                cell.style.removeProperty('flex');
+                cell.style.removeProperty('align-self');
+                cell.style.removeProperty('height');
+                cell.style.removeProperty('min-height');
+                cell.style.removeProperty('max-height');
+                cell.style.removeProperty('width');
+                cell.style.removeProperty('box-sizing');
+            }
+            function measureMirrorCellNaturalHeight(cell, col) {
+                var w = mirrorBalanceColWidthPx(col);
+                cell.style.setProperty('flex', '0 0 auto', 'important');
+                cell.style.setProperty('align-self', 'flex-start', 'important');
+                cell.style.setProperty('height', 'auto', 'important');
+                cell.style.setProperty('min-height', '0', 'important');
+                cell.style.setProperty('max-height', 'none', 'important');
+                cell.style.setProperty('width', w + 'px', 'important');
+                cell.style.setProperty('box-sizing', 'border-box', 'important');
+                void cell.offsetHeight;
+                var natural = cell.offsetHeight;
+                clearMirrorBalanceProbe(cell);
+                return natural;
+            }
+            function measureMirrorHeightAtLh(cell, col, lhPx) {
+                var w = mirrorBalanceColWidthPx(col);
+                cell.style.setProperty('line-height', lhPx + 'px', 'important');
+                cell.style.setProperty('flex', '0 0 auto', 'important');
+                cell.style.setProperty('align-self', 'flex-start', 'important');
+                cell.style.setProperty('height', 'auto', 'important');
+                cell.style.setProperty('min-height', '0', 'important');
+                cell.style.setProperty('max-height', 'none', 'important');
+                cell.style.setProperty('width', w + 'px', 'important');
+                cell.style.setProperty('box-sizing', 'border-box', 'important');
+                void cell.offsetHeight;
+                return cell.offsetHeight;
+            }
+
+            function applyMirrorShortColumnLineBalance(displayRoot, visibleColumnIndex) {
+                if (!displayRoot) return;
+                var rows = displayRoot.querySelectorAll('.script-row-wrapper');
+                for (var ri = 0; ri < rows.length; ri++) {
+                    var row = rows[ri];
+                    var wantCol = 0;
+                    if (row.classList.contains('row-stretch-col2')) wantCol = 2;
+                    else if (row.classList.contains('row-stretch-col3')) wantCol = 3;
+                    else continue;
+                    if (visibleColumnIndex !== wantCol - 1) continue;
+                    var col = row.querySelector('.script-column:nth-child(' + wantCol + ')');
+                    if (!col || !col.classList.contains('mirror-visible')) continue;
+                    var cell = col.querySelector('.cell-content');
+                    if (!cell) continue;
+                    var text = (cell.textContent || '').trim();
+                    if (!text) continue;
+                    var avail = Math.max(1, Math.floor(row.clientHeight) - 1);
+                    cell.style.removeProperty('line-height');
+                    void cell.offsetHeight;
+                    var natural = measureMirrorCellNaturalHeight(cell, col);
+                    void cell.offsetHeight;
+                    if (natural >= avail - 2) continue;
+                    var cs = window.getComputedStyle(cell);
+                    var fontPx = parseFloat(cs.fontSize) || 16;
+                    var lo = parseFloat(cs.lineHeight);
+                    if (isNaN(lo) || lo < fontPx * 1.02) lo = fontPx * 1.15;
+                    var hi = Math.max(lo + 1, avail * 2.5);
+                    for (var iter = 0; iter < 30; iter++) {
+                        var mid = (lo + hi) / 2;
+                        var h = measureMirrorHeightAtLh(cell, col, mid);
+                        clearMirrorBalanceProbe(cell);
+                        cell.style.removeProperty('line-height');
+                        if (h > avail) hi = mid;
+                        else lo = mid;
+                    }
+                    cell.style.removeProperty('line-height');
+                    void cell.offsetHeight;
+                    cell.style.setProperty('line-height', lo + 'px', 'important');
+                }
+            }
+
             function handleMessage(e) {
                 const data = e.data || {};
                 const type = data.type;
@@ -282,6 +370,12 @@
                                 });
                             }
                         }
+                        var visIdx = typeof data.visibleColumnIndex === 'number' ? data.visibleColumnIndex : 0;
+                        requestAnimationFrame(function() {
+                            requestAnimationFrame(function() {
+                                applyMirrorShortColumnLineBalance(display, visIdx);
+                            });
+                        });
                     }
                 }
                 if (type === 'syncStyleLite' && data.style) {
