@@ -84,6 +84,7 @@ body {
     background-color: transparent;
     color: white;
     overflow-y: scroll !important;
+    overflow-x: hidden;
     z-index: 3;
     outline: none;
     padding: 0;
@@ -97,12 +98,13 @@ body {
     pointer-events: none;
 }
 #teleprompter-view.has-file .teleprompter-top-spacer {
-    min-height: calc(50vh - 12.5em); /* pill well above indicator-triangle (indicator center at 50vh) */
+    /* Taller spacer + runway below so you can scroll past the top pill to the sync line before scrollTop hits 0 */
+    min-height: calc(50vh - 8em);
 }
 
-/* Blank rows above top filename pill so arrow can trigger previous file when scrolling up */
+/* Extra scroll room above top filename pill (light blue) so the indicator can intersect it and trigger previous file */
 .teleprompter-top-runway {
-    min-height: 4.2em;
+    min-height: max(10em, 22vh);
     width: 100%;
     flex-shrink: 0;
     pointer-events: none;
@@ -151,6 +153,11 @@ body {
 }
 .filename-pill.hidden {
     display: none !important;
+}
+
+/* Red END bar: always shown when a file is open; sits above green STAY/SWITCH when there is a next file */
+#pre-stay-end-pill:not(.hidden) {
+    margin-bottom: 0.55em;
 }
 
 /* Stay/Switch pill: green, between table and bottom filename pill */
@@ -1176,13 +1183,30 @@ body {
     display: inline;
 }
 
-/* Color spans: keep inline to avoid line breaks (per GitHub/Stack Overflow) */
+/* Color spans: keep inline to avoid line breaks / new flex columns */
 .color-span-inline {
     display: inline !important;
 }
-/* execCommand-generated color spans (no class) - force inline */
+/* execCommand-generated spans (color, font-size) - force inline so they don't create new flex columns */
 #teleprompter-text span[style*="color"],
-#teleprompter-text span[style*="background"] {
+#teleprompter-text span[style*="background"],
+#teleprompter-text span[style*="font-size"] {
+    display: inline !important;
+}
+/* Bold, italic, underline - use format-span-inline (span with styles) + legacy b/i/u - force inline */
+#teleprompter-text .format-span-inline,
+#teleprompter-text .script-column b,
+#teleprompter-text .script-column i,
+#teleprompter-text .script-column u,
+#teleprompter-text .cell-content b,
+#teleprompter-text .cell-content i,
+#teleprompter-text .cell-content u,
+#teleprompter-text .cell-locker b,
+#teleprompter-text .cell-locker i,
+#teleprompter-text .cell-locker u,
+#teleprompter-text b,
+#teleprompter-text i,
+#teleprompter-text u {
     display: inline !important;
 }
 
@@ -1498,7 +1522,8 @@ body {
 
 .script-container {
     width: 100%;
-    min-width: 100%;
+    max-width: 100%;
+    min-width: 0;
     box-sizing: border-box;
     background-color: black;
 }
@@ -1507,7 +1532,8 @@ body {
 .script-row-wrapper {
     display: flex !important;   
     width: 100% !important;
-    min-width: 100%; /* Row and its background (glow) extend to right edge */
+    max-width: 100%;
+    min-width: 0; /* Allow row to shrink inside padded editor so fixed px columns don’t force horizontal scroll */
     box-sizing: border-box;
     border-bottom: 1px solid #444;
     align-items: stretch; /* Forces all columns in a row to the same height */
@@ -1719,6 +1745,23 @@ body.broadcasting #teleprompter-text .script-column .cell-content div {
 #teleprompter-text .script-row-wrapper.row-col3-more .cell-locker,
 #teleprompter-text .script-row-wrapper.row-col3-much-more .script-column,
 #teleprompter-text .script-row-wrapper.row-col3-much-more .cell-locker { color: #ffffff !important; }
+
+/* Imbalanced rows: visually shorter column (measured height) gets extra line spacing to fill row (not Aa overview) */
+body:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col2 .script-column:nth-child(2) .cell-locker,
+body:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col3 .script-column:nth-child(3) .cell-locker {
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+}
+body:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col2 .script-column:nth-child(2) .cell-content,
+body:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col2 .script-column:nth-child(2) .cell-content *,
+body:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col3 .script-column:nth-child(3) .cell-content,
+body:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col3 .script-column:nth-child(3) .cell-content *,
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col2 .script-column:nth-child(2) .cell-content,
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col2 .script-column:nth-child(2) .cell-content *,
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col3 .script-column:nth-child(3) .cell-content,
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col3 .script-column:nth-child(3) .cell-content * {
+    line-height: inherit !important;
+}
 
 /* Aa mode: glow at the line between 2nd and 3rd column, out both sides (same gradient shape) */
 body.overview-mode #teleprompter-text .script-row-wrapper.row-col2-one-more .script-column:nth-child(2) {
