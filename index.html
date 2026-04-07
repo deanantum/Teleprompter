@@ -67,12 +67,12 @@
             <span class="divider"></span>
             <button id="btn-bg-color" title="Background Color"><i class="fa-solid fa-fill-drip"></i></button>
             <button id="btn-font-color" title="Font Color"><i class="fa-solid fa-palette"></i></button>
-            <button id="btn-bold" title="Bold"><i class="fa-solid fa-bold"></i></button>
-            <button id="btn-italic" title="Italic"><i class="fa-solid fa-italic"></i></button>
-            <button id="btn-underline" title="Underline"><i class="fa-solid fa-underline"></i></button>
+            <button id="btn-bold" type="button" tabindex="-1" title="Bold"><i class="fa-solid fa-bold"></i></button>
+            <button id="btn-italic" type="button" tabindex="-1" title="Italic"><i class="fa-solid fa-italic"></i></button>
+            <button id="btn-underline" type="button" tabindex="-1" title="Underline"><i class="fa-solid fa-underline"></i></button>
             <span class="divider"></span>
             <button id="btn-overview-toggle" class="overview-btn" title="Toggle overview (size 12) / restore size">Aa</button>
-            <div class="font-target-dropdown" id="font-target-dropdown" title="Select font to format">
+            <div class="font-target-dropdown" id="font-target-dropdown" title="Styles you applied with the ribbon (color, highlight, font size/family). Row defaults (e.g. overview 12px) are not listed. Each row is font + size + text/highlight colors.">
                 <button type="button" class="font-target-trigger" id="font-target-trigger">Select</button>
                 <div class="font-target-list" id="font-target-list"></div>
             </div>
@@ -222,6 +222,7 @@
 												Welcome to your new teleprompter.<br>Start typing, paste your script, or open a file to begin...
 										</div>
 										<div id="teleprompter-runway" class="teleprompter-runway" aria-hidden="true"></div>
+									<div id="pre-stay-end-pill" class="stay-switch-pill end-pill hidden" aria-hidden="true">END</div>
 									<div id="stay-switch-pill" class="stay-switch-pill hidden" aria-hidden="true"></div>
 									<div id="filename-pill-bottom" class="filename-pill filename-pill-bottom hidden" aria-hidden="true"></div>
 									<div id="teleprompter-bottom-spacer" class="teleprompter-bottom-spacer" aria-hidden="true"></div>
