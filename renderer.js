@@ -254,6 +254,183 @@ document.addEventListener('DOMContentLoaded', function() {
         return null;
     }
 
+    /**
+     * Nested .color-span-inline (e.g. background on outer, text color on inner) must share font metrics or the
+     * outer highlight box keeps the old line-box size. Walk from startEl up and sync font on every color span.
+     */
+    function applyMetricsToColorHighlightInclusiveChain(startEl, fontFamily, sizeStr, lineHeight) {
+        let n = startEl;
+        while (n && n !== teleprompterText) {
+            if (n.classList?.contains('color-span-inline')) {
+                if (fontFamily) n.style.fontFamily = fontFamily;
+                if (sizeStr) n.style.setProperty('font-size', sizeStr, 'important');
+                if (lineHeight) n.style.lineHeight = lineHeight;
+            }
+            n = n.parentElement;
+        }
+    }
+
+    /** Apply font family via extractContents+insertNode (same flow as font size/color). Returns span or null. */
+    function applyFontFamilyToRangesSingle(ranges, fontVal) {
+        if (ranges.length === 0 || !fontVal) return null;
+        const range = ranges[0].cloneRange();
+        const sel = window.getSelection();
+        teleprompterText.focus();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        if (range.collapsed) return null;
+        const computed = getComputedFontFromSelection(range);
+        const useSize = computed ? computed.fontSize : null;
+        try {
+            const span = document.createElement('span');
+            span.className = 'format-span-inline';
+            span.style.display = 'inline';
+            span.style.fontFamily = fontVal;
+            if (useSize) span.style.fontSize = useSize;
+            span.appendChild(range.extractContents());
+            range.insertNode(span);
+            const hlParent = span.parentElement;
+            if (hlParent?.classList?.contains('color-span-inline') && hlParent.childNodes.length === 1 && hlParent.firstChild === span && span.classList?.contains('format-span-inline')) {
+                while (span.firstChild) hlParent.insertBefore(span.firstChild, span);
+                span.remove();
+                applyMetricsToColorHighlightInclusiveChain(hlParent, fontVal || null, useSize || null, null);
+                return hlParent;
+            }
+            return span;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    /** Apply font/size via extractContents+insertNode (same as bold/italic/underline). Returns span or null. */
+    function applyFontAndSizeToRanges(ranges, fontVal, sizeVal, preserveSize, preserveFamily) {
+        if (ranges.length === 0) return null;
+        const range = ranges[0].cloneRange();
+        const sel = window.getSelection();
+        teleprompterText.focus();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        if (range.collapsed) return null;
+        const computed = getComputedFontFromSelection(range);
+        const useFont = preserveFamily && computed ? computed.fontFamily : (fontVal != null && fontVal !== '' ? fontVal : null);
+        const useSize = preserveSize && computed ? computed.fontSize : (sizeVal != null && sizeVal !== '' ? (sizeVal + '').endsWith('px') ? sizeVal : sizeVal + 'px' : null);
+        try {
+            const span = document.createElement('span');
+            span.className = 'format-span-inline';
+            span.style.display = 'inline';
+            if (useFont) span.style.fontFamily = useFont;
+            if (useSize) span.style.fontSize = useSize;
+            span.appendChild(range.extractContents());
+            range.insertNode(span);
+            const hlParent = span.parentElement;
+            if (hlParent?.classList?.contains('color-span-inline') && hlParent.childNodes.length === 1 && hlParent.firstChild === span && span.classList?.contains('format-span-inline')) {
+                while (span.firstChild) hlParent.insertBefore(span.firstChild, span);
+                span.remove();
+                applyMetricsToColorHighlightInclusiveChain(hlParent, useFont || null, useSize || null, null);
+                return hlParent;
+            }
+            return span;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    /** Apply font color via extractContents+insertNode (same flow as font size). Returns span or null. */
+    function applyFontColorToRangesSingle(ranges, color) {
+        if (ranges.length === 0) return null;
+        const range = ranges[0].cloneRange();
+        const sel = window.getSelection();
+        teleprompterText.focus();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        if (range.collapsed) return null;
+        try {
+            const span = document.createElement('span');
+            span.className = 'color-span-inline';
+            span.style.display = 'inline';
+            span.style.color = color;
+            span.appendChild(range.extractContents());
+            range.insertNode(span);
+            return span;
+        } catch (err) {
+            const toWrap = [];
+            const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
+            let node;
+            while ((node = walker.nextNode())) {
+                if (!range.intersectsNode(node)) continue;
+                let startOff = 0, endOff = node.length;
+                if (node === range.startContainer) startOff = range.startOffset;
+                if (node === range.endContainer) endOff = range.endOffset;
+                if (startOff >= endOff) continue;
+                toWrap.push({ node, startOff, endOff });
+            }
+            let firstSpan = null;
+            toWrap.forEach(({ node, startOff, endOff }) => {
+                let target = node;
+                if (startOff > 0) target = node.splitText(startOff);
+                const len = endOff - startOff;
+                if (target.length > len && len > 0) target.splitText(len);
+                if (typeof ensureTargetInCellContent === 'function') ensureTargetInCellContent(target);
+                const span = document.createElement('span');
+                span.className = 'color-span-inline';
+                span.style.display = 'inline';
+                span.style.color = color;
+                target.parentNode.insertBefore(span, target);
+                span.appendChild(target);
+                if (!firstSpan) firstSpan = span;
+            });
+            return firstSpan;
+        }
+    }
+
+    /** Apply background color via extractContents+insertNode (same flow as font size). Returns span or null. */
+    function applyBackgroundColorToRangesSingle(ranges, color) {
+        if (ranges.length === 0) return null;
+        const range = ranges[0].cloneRange();
+        const sel = window.getSelection();
+        teleprompterText.focus();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        if (range.collapsed) return null;
+        try {
+            const span = document.createElement('span');
+            span.className = 'color-span-inline';
+            span.style.display = 'inline';
+            span.style.backgroundColor = color;
+            span.appendChild(range.extractContents());
+            range.insertNode(span);
+            return span;
+        } catch (err) {
+            const toWrap = [];
+            const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
+            let node;
+            while ((node = walker.nextNode())) {
+                if (!range.intersectsNode(node)) continue;
+                let startOff = 0, endOff = node.length;
+                if (node === range.startContainer) startOff = range.startOffset;
+                if (node === range.endContainer) endOff = range.endOffset;
+                if (startOff >= endOff) continue;
+                toWrap.push({ node, startOff, endOff });
+            }
+            let firstSpan = null;
+            toWrap.forEach(({ node, startOff, endOff }) => {
+                let target = node;
+                if (startOff > 0) target = node.splitText(startOff);
+                const len = endOff - startOff;
+                if (target.length > len && len > 0) target.splitText(len);
+                if (typeof ensureTargetInCellContent === 'function') ensureTargetInCellContent(target);
+                const span = document.createElement('span');
+                span.className = 'color-span-inline';
+                span.style.display = 'inline';
+                span.style.backgroundColor = color;
+                target.parentNode.insertBefore(span, target);
+                span.appendChild(target);
+                if (!firstSpan) firstSpan = span;
+            });
+            return firstSpan;
+        }
+    }
+
     function wrapSelectionInSpan(range, fontVal, sizeVal, preserveSize, preserveFamily) {
         const getCell = (node) => {
             let n = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
@@ -271,39 +448,50 @@ document.addEventListener('DOMContentLoaded', function() {
         const useFont = preserveFamily && computed ? computed.fontFamily : (fontVal != null && fontVal !== '' ? fontVal : null);
         const useSize = preserveSize && computed ? computed.fontSize : (sizeVal != null && sizeVal !== '' ? sizeVal + 'px' : null);
 
-        const toWrap = [];
-        const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
-        let node;
-        while ((node = walker.nextNode())) {
-            if (!range.intersectsNode(node)) continue;
-            let startOff = 0, endOff = node.length;
-            if (node === range.startContainer) startOff = range.startOffset;
-            if (node === range.endContainer) endOff = range.endOffset;
-            if (startOff >= endOff) continue;
-            toWrap.push({ node, startOff, endOff });
-        }
-        const newSpans = [];
-        toWrap.forEach(({ node, startOff, endOff }) => {
-            let target = node;
-            if (startOff > 0) target = node.splitText(startOff);
-            const len = endOff - startOff;
-            if (target.length > len && len > 0) target.splitText(len);
+        /* Same approach as bold/italic/underline: extractContents + insertNode to avoid creating extra columns */
+        const r = range.cloneRange();
+        if (r.collapsed) return;
+        try {
             const span = document.createElement('span');
+            span.className = 'format-span-inline';
             span.style.display = 'inline';
             if (useFont) span.style.fontFamily = useFont;
-            if (useSize) span.style.fontSize = useSize;
-            target.parentNode.insertBefore(span, target);
-            span.appendChild(target);
-            newSpans.push(span);
-        });
-        if (newSpans.length > 0) {
-            const r = document.createRange();
-            r.setStartBefore(newSpans[0]);
-            r.setEndAfter(newSpans[newSpans.length - 1]);
+            if (useSize) span.style.fontSize = useSize.endsWith('px') ? useSize : useSize + 'px';
+            span.appendChild(r.extractContents());
+            r.insertNode(span);
+            /* Restore selection to formatted span */
             const sel = window.getSelection();
+            const sr = document.createRange();
+            sr.selectNodeContents(span);
             sel.removeAllRanges();
-            sel.addRange(r);
-            flattenRedundantSpans();
+            sel.addRange(sr);
+        } catch (err) {
+            /* Fallback: walker/split if extractContents fails (e.g. range spans blocks) */
+            const toWrap = [];
+            const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
+            let node;
+            while ((node = walker.nextNode())) {
+                if (!range.intersectsNode(node)) continue;
+                let startOff = 0, endOff = node.length;
+                if (node === range.startContainer) startOff = range.startOffset;
+                if (node === range.endContainer) endOff = range.endOffset;
+                if (startOff >= endOff) continue;
+                toWrap.push({ node, startOff, endOff });
+            }
+            toWrap.forEach(({ node, startOff, endOff }) => {
+                let target = node;
+                if (startOff > 0) target = node.splitText(startOff);
+                const len = endOff - startOff;
+                if (target.length > len && len > 0) target.splitText(len);
+                if (typeof ensureTargetInCellContent === 'function') ensureTargetInCellContent(target);
+                const span = document.createElement('span');
+                span.className = 'format-span-inline';
+                span.style.display = 'inline';
+                if (useFont) span.style.fontFamily = useFont;
+                if (useSize) span.style.fontSize = useSize.endsWith('px') ? useSize : useSize + 'px';
+                target.parentNode.insertBefore(span, target);
+                span.appendChild(target);
+            });
         }
     }
 
@@ -367,32 +555,40 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function applyFontToMatchingTarget(target, newFontVal, newSizeVal, resetLineHeight) {
-        if (!target || (!newFontVal && !newSizeVal)) return;
+        if (!target) return;
         const { fontFamily: targetFont, fontSize: targetSize } = target;
+        if (FONT_SIZE_DEBUG()) console.log('[FontSize] applyFontToMatchingTarget', {
+            targetFont,
+            targetSize,
+            newFontVal,
+            newSizeVal,
+        });
         const preserveSize = lastFontChangeSource === 'family';
         const preserveFamily = lastFontChangeSource === 'size';
         const newFont = preserveFamily ? targetFont : (newFontVal || targetFont);
         const newSize = preserveSize ? targetSize : ((newSizeVal || '') + (newSizeVal ? 'px' : ''));
+        if (!newFont && !newSize) return;
         const rootLineHeight = resetLineHeight ? (window.getComputedStyle(teleprompterText).lineHeight || '1.4') : null;
         const normalizeFont = (s) => (s || '').split(',')[0].trim().replace(/^["']|["']$/g, '').toLowerCase();
-        const normalizeSize = (s) => String(s || '').trim();
+        const sizeNum = (s) => parseFloat(String(s || '').trim()) || 0;
         const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
         const toWrap = [];
         let node;
+        const tFont = normalizeFont(targetFont);
+        const tSizeNum = sizeNum(targetSize);
         while ((node = walker.nextNode())) {
             if (!node.textContent.trim()) continue;
             const parent = node.parentElement;
             if (!parent) continue;
             const style = window.getComputedStyle(parent);
             const pFont = normalizeFont(style.fontFamily);
-            const pSize = normalizeSize(style.fontSize);
-            const tFont = normalizeFont(targetFont);
-            const tSize = normalizeSize(targetSize);
+            const pSizeNum = sizeNum(style.fontSize);
             const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(node);
-            if (tFont && tSize && pFont === tFont && pSize === tSize && colorsMatch(target, effColor, effBg)) {
+            if (tFont && tSizeNum > 0 && pFont === tFont && Math.abs(pSizeNum - tSizeNum) < 0.5 && colorsMatch(target, effColor, effBg)) {
                 toWrap.push(node);
             }
         }
+        fontReport('applyFontToMatchingTarget matched', { matchedNodes: toWrap.length });
         const isStructuralNode = (el) => el === teleprompterText || el?.classList?.contains('script-row-wrapper') || el?.classList?.contains('script-column') || el?.classList?.contains('cell-locker') || el?.classList?.contains('cell-content');
         const BLOCK_TAGS = ['DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'];
         const unwrapBlockAncestors = (child) => {
@@ -409,12 +605,39 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
         };
+        const sizeStrForImportant = !newSize ? null : (newSize.endsWith('px') ? newSize : newSize + 'px');
+        const applyMetricsToEl = (el) => {
+            if (newFont) el.style.fontFamily = newFont;
+            if (sizeStrForImportant) el.style.setProperty('font-size', sizeStrForImportant, 'important');
+            if (rootLineHeight) el.style.lineHeight = rootLineHeight;
+        };
+        /**
+         * Font color / background lives on .color-span-inline. Nesting .format-span-inline inside it leaves the
+         * highlight box sized with the outer span’s inherited font — apply metrics on the highlight wrapper instead.
+         * Nested color spans (bg + fg) need the same metrics on every wrapper in the chain.
+         */
+        const tryApplyFontOnHighlightWrapper = (textNode) => {
+            const par = textNode.parentElement;
+            if (!par) return false;
+            if (par.classList?.contains('color-span-inline') && par.childNodes.length === 1 && par.firstChild === textNode && textNode.nodeType === Node.TEXT_NODE) {
+                applyMetricsToColorHighlightInclusiveChain(par, newFont || null, sizeStrForImportant, rootLineHeight || null);
+                if (resetLineHeight) unwrapBlockAncestors(par);
+                return true;
+            }
+            if (par.classList?.contains('format-span-inline') && par.parentElement?.classList?.contains('color-span-inline')) {
+                applyMetricsToEl(par);
+                applyMetricsToColorHighlightInclusiveChain(par.parentElement, newFont || null, sizeStrForImportant, rootLineHeight || null);
+                if (resetLineHeight) unwrapBlockAncestors(par);
+                return true;
+            }
+            return false;
+        };
         toWrap.forEach(textNode => {
+            if (tryApplyFontOnHighlightWrapper(textNode)) return;
             const span = document.createElement('span');
+            span.className = 'format-span-inline';
             span.style.display = 'inline';
-            if (newFont) span.style.fontFamily = newFont;
-            if (newSize) span.style.fontSize = newSize.endsWith('px') ? newSize : newSize + 'px';
-            if (rootLineHeight) span.style.lineHeight = rootLineHeight;
+            applyMetricsToEl(span);
             textNode.parentNode.insertBefore(span, textNode);
             span.appendChild(textNode);
             if (resetLineHeight) {
@@ -425,14 +648,14 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function flattenRedundantSpans() {
-        const isStructural = (el) => el === teleprompterText || el?.classList?.contains('script-row-wrapper') || el?.classList?.contains('script-column') || el?.classList?.contains('cell-locker') || el?.classList?.contains('cell-content') || el?.classList?.contains('bookmark-cursor-dot') || el?.classList?.contains('bookmark-cursor-dot-nobreak') || el?.classList?.contains('bookmark-cursor-dot-wrap') || el?.classList?.contains('color-span-inline') || el?.hasAttribute?.('data-bookmark-inline');
+        const isStructural = (el) => el === teleprompterText || el?.classList?.contains('script-row-wrapper') || el?.classList?.contains('script-column') || el?.classList?.contains('cell-locker') || el?.classList?.contains('cell-content') || el?.classList?.contains('bookmark-cursor-dot') || el?.classList?.contains('bookmark-cursor-dot-nobreak') || el?.classList?.contains('bookmark-cursor-dot-wrap') || el?.classList?.contains('color-span-inline') || el?.classList?.contains('format-span-inline') || el?.hasAttribute?.('data-bookmark-inline');
         const BLOCK_TAGS = ['DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'];
         let changed = true;
         while (changed) {
             changed = false;
             const all = Array.from(teleprompterText.querySelectorAll('span, div, p'));
             all.forEach(el => {
-                if (el?.classList?.contains('bookmark-cursor-dot') || el?.classList?.contains('bookmark-cursor-dot-wrap') || el?.classList?.contains('color-span-inline') || isStructural(el.parentElement)) return;
+                if (el?.classList?.contains('bookmark-cursor-dot') || el?.classList?.contains('bookmark-cursor-dot-wrap') || el?.classList?.contains('color-span-inline') || el?.classList?.contains('format-span-inline') || isStructural(el.parentElement)) return;
                 if (el.childNodes.length === 1) {
                     const child = el.firstChild;
                     if (child.nodeType === Node.TEXT_NODE) {
@@ -515,6 +738,17 @@ document.addEventListener('DOMContentLoaded', function() {
         return { color: (style.color || '').trim(), backgroundColor: (style.backgroundColor || '').trim() };
     }
 
+    /** Select menu lists only ribbon-applied runs (color/highlight/font-size/family), not row defaults (Aa 12px, body size). */
+    function textNodeQualifiesForFontTargetList(textNode) {
+        let el = textNode.parentElement;
+        while (el && el !== teleprompterText) {
+            if (el.classList?.contains('bookmark-cursor-dot') || el.classList?.contains('bookmark-cursor-dot-wrap') || el.classList?.contains('bookmark-cursor-dot-nobreak')) return false;
+            if (el.classList?.contains('color-span-inline') || el.classList?.contains('format-span-inline')) return true;
+            el = el.parentElement;
+        }
+        return false;
+    }
+
     function collectUniqueFontSizes() {
         const rootColor = (window.getComputedStyle(teleprompterText).color || '').trim();
         const rootColorNorm = normalizeColorForKey(rootColor);
@@ -523,6 +757,7 @@ document.addEventListener('DOMContentLoaded', function() {
         let node;
         while ((node = walker.nextNode())) {
             if (!node.textContent.trim()) continue;
+            if (!textNodeQualifiesForFontTargetList(node)) continue;
             const parent = node.parentElement;
             if (!parent) continue;
             const style = window.getComputedStyle(parent);
@@ -601,6 +836,12 @@ document.addEventListener('DOMContentLoaded', function() {
         return { fontFamily, fontSize, color: (color || '').trim(), backgroundColor: (backgroundColor || '').trim() };
     }
 
+    /** List + trigger label: font + size only; colors use swatches (no hex in text). */
+    function fontTargetMenuLabel(fontFamily, fontSize) {
+        const sizeNum = parseInt(fontSize, 10) || fontSize;
+        return `${fontFamily} ${sizeNum}`;
+    }
+
     function refreshSelectFontTarget() {
         if (!selectFontTarget) return;
         const trigger = document.getElementById('font-target-trigger');
@@ -623,8 +864,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         listEl.appendChild(clearItem);
         opts.forEach(({ fontFamily, fontSize, color, backgroundColor }) => {
-            const sizeNum = parseInt(fontSize, 10) || fontSize;
-            const label = `${fontFamily} ${sizeNum}`;
+            const label = fontTargetMenuLabel(fontFamily, fontSize);
             const hasFontColor = isOpaqueColor(color);
             const hasBgColor = isOpaqueColor(backgroundColor);
             const val = JSON.stringify({ fontFamily, fontSize, color: hasFontColor ? color : null, backgroundColor: hasBgColor ? backgroundColor : null });
@@ -635,6 +875,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const item = document.createElement('div');
             item.className = 'font-target-item';
             item.dataset.value = val;
+            item.title = 'All ribbon-formatted text with this font, size, and colors. Plain row text is not in this list.';
             const labelSpan = document.createElement('span');
             labelSpan.className = 'font-target-label';
             labelSpan.textContent = label;
@@ -731,8 +972,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 if (match) {
                     const { fontFamily, fontSize, color, backgroundColor } = match;
-                    const sizeNum = parseInt(fontSize, 10) || fontSize;
-                    const label = `${fontFamily} ${sizeNum}`;
+                    const label = fontTargetMenuLabel(fontFamily, fontSize);
                     const val = JSON.stringify({ fontFamily, fontSize, color: isOpaqueColor(color) ? color : null, backgroundColor: isOpaqueColor(backgroundColor) ? backgroundColor : null });
                     selectFontTarget.value = val;
                     trigger.innerHTML = '';
@@ -763,11 +1003,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 trigger.textContent = 'Select';
             }
         }
-        try {
-            selectedFontTarget = selectFontTarget.value ? JSON.parse(selectFontTarget.value) : null;
-        } catch (_) {
-            selectedFontTarget = null;
-        }
+        /* Don't overwrite selectedFontTarget here – it's only set when user explicitly picks from Select list.
+           Caret sync (selectFontTarget.value) is for display only. */
     }
 
     function removeRedundantBrInContainer(container) {
@@ -789,50 +1026,42 @@ document.addEventListener('DOMContentLoaded', function() {
         toRemove.forEach(n => n.remove());
     }
 
+    const CLR_DEBUG = false; /* [CLR] color troubleshooting – set true to debug */
+    const clrLog = (...a) => { if (CLR_DEBUG) console.log('[CLR]', ...a); };
+    const getAncestry = (el) => {
+        const a = []; let n = el; while (n && n !== teleprompterText) { a.push(n.tagName + (n.className ? '.' + String(n.className).split(' ')[0] : '')); n = n.parentElement; } return a.join(' < ');
+    };
     function applyColorToRanges(ranges, color) {
         const newRanges = [];
-        const sel = window.getSelection();
+        if (ranges.length === 0) return newRanges;
         teleprompterText.focus();
-        /* Use execCommand for single selection - browser handles DOM, avoids line breaks (per GitHub/Stack Overflow) */
-        if (ranges.length === 1) {
-            try {
-                sel.removeAllRanges();
-                sel.addRange(ranges[0]);
-                document.execCommand('styleWithCSS', false, true);
-                if (document.execCommand('foreColor', false, color)) {
-                    const r = sel.rangeCount ? sel.getRangeAt(0) : null;
-                    if (r && !r.collapsed) newRanges.push(r.cloneRange());
-                }
-            } catch (_) { /* fall through to manual */ }
-        }
-        if (newRanges.length === 0) {
-            /* Fallback: manual span creation (multi-select or execCommand failed) */
-            let container = null;
-            if (ranges.length > 0) {
-                try { container = ranges[0].commonAncestorContainer; } catch (_) {}
-                if (container && container.nodeType === Node.TEXT_NODE) container = container.parentElement;
-            }
-            ranges.sort((a, b) => {
-                try { return b.compareBoundaryPoints(Range.START_TO_START, a); } catch (_) { return 0; }
-            });
-            ranges.forEach(range => {
-                const atStart = range.startOffset === 0;
-                const cursorNode = range.startContainer;
-                let prev = cursorNode.nodeType === Node.TEXT_NODE ? cursorNode.previousSibling : cursorNode.previousSibling;
-                let el = cursorNode.nodeType === Node.TEXT_NODE ? cursorNode.parentElement : cursorNode;
-                while (el && !prev && el !== teleprompterText) {
-                    prev = el.previousSibling;
-                    el = el.parentElement;
-                }
-                if (atStart && prev) {
-                    if (prev.nodeName === 'BR') {
-                        prev.remove();
-                        range.insertNode(document.createTextNode(' '));
-                    } else if (prev.nodeType === Node.ELEMENT_NODE && (!prev.textContent?.trim() || (prev.childNodes.length === 1 && prev.firstChild?.nodeName === 'BR'))) {
-                        prev.remove();
-                        range.insertNode(document.createTextNode(' '));
-                    }
-                }
+        clrLog('applyColorToRanges', 'ranges=', ranges.length, 'color=', color);
+        const sorted = [...ranges].sort((a, b) => {
+            try { return b.compareBoundaryPoints(Range.START_TO_START, a); } catch (_) { return 0; }
+        });
+        for (let i = 0; i < sorted.length; i++) {
+            const range = sorted[i].cloneRange();
+            if (range.collapsed) continue;
+            const startParent = range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer.parentElement : range.startContainer;
+            const endParent = range.endContainer.nodeType === Node.TEXT_NODE ? range.endContainer.parentElement : range.endContainer;
+            const BLOCK_SEL = 'div, p, h1, h2, h3, h4, h5, h6';
+            const spansBlocks = !!(startParent?.closest?.(BLOCK_SEL) && endParent?.closest?.(BLOCK_SEL) && startParent.closest(BLOCK_SEL) !== endParent.closest(BLOCK_SEL));
+            const useWalker = spansBlocks;
+            clrLog('range', i, 'startParent.tag=', startParent?.tagName, 'spansBlocks=', spansBlocks);
+            if (!useWalker) try {
+                const span = document.createElement('span');
+                span.className = 'color-span-inline';
+                span.style.display = 'inline';
+                span.style.color = color;
+                span.appendChild(range.extractContents());
+                range.insertNode(span);
+                const spanParent = span.parentElement;
+                clrLog('FONT_COLOR try OK spanParent.tag=', spanParent?.tagName, 'class=', spanParent?.className, 'isScriptRowDirect=', spanParent?.classList?.contains?.('script-row-wrapper'), 'text=', JSON.stringify(span.textContent?.slice(0, 25)));
+                const r = document.createRange();
+                r.selectNodeContents(span);
+                newRanges.push(r);
+            } catch (err) {
+                clrLog('FONT_COLOR try threw', err?.message, '-> using walker fallback');
                 const toWrap = [];
                 const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
                 let node;
@@ -849,8 +1078,40 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (startOff > 0) target = node.splitText(startOff);
                     const len = endOff - startOff;
                     if (target.length > len && len > 0) target.splitText(len);
+                    if (typeof ensureTargetInCellContent === 'function') ensureTargetInCellContent(target);
                     const span = document.createElement('span');
                     span.className = 'color-span-inline';
+                    span.style.display = 'inline';
+                    span.style.color = color;
+                    target.parentNode.insertBefore(span, target);
+                    span.appendChild(target);
+                    const sp = span.parentElement;
+                    clrLog('FONT_COLOR walker spanParent.tag=', sp?.tagName, 'class=', sp?.className, 'isScriptRowDirect=', sp?.classList?.contains?.('script-row-wrapper'));
+                    const r = document.createRange();
+                    r.selectNodeContents(span);
+                    newRanges.push(r);
+                });
+            } else if (useWalker) {
+                const toWrap = [];
+                const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
+                let node;
+                while ((node = walker.nextNode())) {
+                    if (!range.intersectsNode(node)) continue;
+                    let startOff = 0, endOff = node.length;
+                    if (node === range.startContainer) startOff = range.startOffset;
+                    if (node === range.endContainer) endOff = range.endOffset;
+                    if (startOff >= endOff) continue;
+                    toWrap.push({ node, startOff, endOff });
+                }
+                toWrap.forEach(({ node, startOff, endOff }) => {
+                    let target = node;
+                    if (startOff > 0) target = node.splitText(startOff);
+                    const len = endOff - startOff;
+                    if (target.length > len && len > 0) target.splitText(len);
+                    if (typeof ensureTargetInCellContent === 'function') ensureTargetInCellContent(target);
+                    const span = document.createElement('span');
+                    span.className = 'color-span-inline';
+                    span.style.display = 'inline';
                     span.style.color = color;
                     target.parentNode.insertBefore(span, target);
                     span.appendChild(target);
@@ -858,42 +1119,59 @@ document.addEventListener('DOMContentLoaded', function() {
                     r.selectNodeContents(span);
                     newRanges.push(r);
                 });
-            });
-            if (container) {
-                removeRedundantBrInContainer(container);
-                requestAnimationFrame(() => removeRedundantBrInContainer(container));
             }
         }
         return newRanges;
     }
 
     function applyFontColorToTarget(color) {
+        clrLog('applyFontColorToTarget color=', color);
         const storedRanges = [...savedFontSelections];
         updateMultiSelectState();
         let rangesToApply = [];
-        if (!selectedFontTarget) {
-            const validStored = storedRanges.filter(r => {
-                try {
-                    return r && !r.collapsed && document.contains(r.startContainer) && teleprompterText.contains(r.commonAncestorContainer);
-                } catch (_) { return false; }
-            });
-            if (validStored.length > 0) {
-                rangesToApply = validStored;
-            } else {
-                const sel = window.getSelection();
-                if (sel.rangeCount) {
-                    const r = sel.getRangeAt(0);
-                    if (!r.collapsed && teleprompterText.contains(r.commonAncestorContainer)) {
-                        rangesToApply = [r];
-                    }
+        /* Prefer user's explicit selection over font-target matching; cap to single range to avoid stale multi-select applying to "all" */
+        const validStored = storedRanges.filter(r => {
+            try {
+                return r && !r.collapsed && document.contains(r.startContainer) && teleprompterText.contains(r.commonAncestorContainer);
+            } catch (_) { return false; }
+        });
+        if (validStored.length > 0) {
+            rangesToApply = [validStored[0]];
+        } else {
+            const sel = window.getSelection();
+            if (sel.rangeCount) {
+                const r = sel.getRangeAt(0);
+                if (!r.collapsed && teleprompterText.contains(r.commonAncestorContainer)) {
+                    rangesToApply = [r];
                 }
             }
+            if (rangesToApply.length === 0 && savedSelection && !savedSelection.collapsed && teleprompterText.contains(savedSelection.commonAncestorContainer) && document.contains(savedSelection.startContainer)) {
+                rangesToApply = [savedSelection.cloneRange()];
+            }
         }
+        clrLog('applyFontColorToTarget rangesToApply.len=', rangesToApply.length);
         if (rangesToApply.length > 0) {
-            const updated = applyColorToRanges(rangesToApply, color);
-            if (updated.length > 0) {
-                savedFontSelections = updated.map(r => r.cloneRange());
+            /* Same flow as bold/italic/underline/font size: wrapCellContentInBlock first, then apply via extractContents+insertNode */
+            if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+            const formattedSpan = applyFontColorToRangesSingle(rangesToApply, color);
+            flattenRedundantSpans();
+            if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+            if (formattedSpan) {
+                try {
+                    const r = document.createRange();
+                    r.selectNodeContents(formattedSpan);
+                    savedFontSelections = [r];
+                } catch (_) {}
                 updateMultiSelectState();
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        setTimeout(() => {
+                            restoreSelectionToNode(formattedSpan);
+                            invalidateTpRowBalanceKeyForElement(formattedSpan);
+                            scheduleRowShortColumnLineSpacing(true);
+                        }, 0);
+                    });
+                });
             }
         } else if (selectedFontTarget) {
             const { fontFamily, fontSize } = selectedFontTarget;
@@ -915,6 +1193,7 @@ document.addEventListener('DOMContentLoaded', function() {
             toWrap.forEach(textNode => {
                 const span = document.createElement('span');
                 span.className = 'color-span-inline';
+                span.style.display = 'inline';
                 span.style.color = color;
                 textNode.parentNode.insertBefore(span, textNode);
                 span.appendChild(textNode);
@@ -927,49 +1206,43 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function applyBackgroundColorToRanges(ranges, color) {
         const newRanges = [];
-        const sel = window.getSelection();
+        if (ranges.length === 0) return newRanges;
         teleprompterText.focus();
-        /* Use execCommand for single selection - browser handles DOM, avoids line breaks */
-        if (ranges.length === 1) {
-            try {
-                sel.removeAllRanges();
-                sel.addRange(ranges[0]);
-                document.execCommand('styleWithCSS', false, true);
-                const ok = document.execCommand('hiliteColor', false, color)
-                    || document.execCommand('backColor', false, color);
-                if (ok) {
-                    const r = sel.rangeCount ? sel.getRangeAt(0) : null;
-                    if (r && !r.collapsed) newRanges.push(r.cloneRange());
-                }
-            } catch (_) { /* fall through to manual */ }
-        }
-        if (newRanges.length === 0) {
-            let container = null;
-            if (ranges.length > 0) {
-                try { container = ranges[0].commonAncestorContainer; } catch (_) {}
-                if (container && container.nodeType === Node.TEXT_NODE) container = container.parentElement;
+        clrLog('applyBackgroundColorToRanges ranges=', ranges.length);
+        const sorted = [...ranges].sort((a, b) => {
+            try { return b.compareBoundaryPoints(Range.START_TO_START, a); } catch (_) { return 0; }
+        });
+        for (let i = 0; i < sorted.length; i++) {
+            const range = sorted[i].cloneRange();
+            if (range.collapsed) continue;
+            const startParent = range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer.parentElement : range.startContainer;
+            const BLOCK_SEL = 'div, p, h1, h2, h3, h4, h5, h6';
+            const startBlock = startParent?.closest?.(BLOCK_SEL);
+            const endParent = range.endContainer.nodeType === Node.TEXT_NODE ? range.endContainer.parentElement : range.endContainer;
+            const endBlock = endParent?.closest?.(BLOCK_SEL);
+            const spansBlocks = !!(startBlock && endBlock && startBlock !== endBlock);
+            clrLog('BG range', i, 'startParent=', startParent?.tagName, 'inCellContent=', !!startParent?.closest?.('.cell-content'), 'spansBlocks=', spansBlocks);
+            const useWalker = spansBlocks;
+            if (useWalker) {
+                clrLog('BG range spans blocks -> using walker');
             }
-            ranges.sort((a, b) => {
-                try { return b.compareBoundaryPoints(Range.START_TO_START, a); } catch (_) { return 0; }
-            });
-            ranges.forEach(range => {
-                const atStart = range.startOffset === 0;
-                const cursorNode = range.startContainer;
-                let prev = cursorNode.nodeType === Node.TEXT_NODE ? cursorNode.previousSibling : cursorNode.previousSibling;
-                let el = cursorNode.nodeType === Node.TEXT_NODE ? cursorNode.parentElement : cursorNode;
-                while (el && !prev && el !== teleprompterText) {
-                    prev = el.previousSibling;
-                    el = el.parentElement;
-                }
-                if (atStart && prev) {
-                    if (prev.nodeName === 'BR') {
-                        prev.remove();
-                        range.insertNode(document.createTextNode(' '));
-                    } else if (prev.nodeType === Node.ELEMENT_NODE && (!prev.textContent?.trim() || (prev.childNodes.length === 1 && prev.firstChild?.nodeName === 'BR'))) {
-                        prev.remove();
-                        range.insertNode(document.createTextNode(' '));
-                    }
-                }
+            if (!useWalker) try {
+                const span = document.createElement('span');
+                span.className = 'color-span-inline';
+                span.style.display = 'inline';
+                span.style.backgroundColor = color;
+                span.appendChild(range.extractContents());
+                range.insertNode(span);
+                const spanParent = span.parentElement;
+                const row = span.closest('.script-row-wrapper');
+                const isDirectChildOfRow = row && span.parentElement === row;
+                clrLog('BG try OK spanParent=', spanParent?.tagName, spanParent?.className, 'ancestry=', getAncestry(span), 'IS_DIRECT_CHILD_OF_ROW=', isDirectChildOfRow);
+                const r = document.createRange();
+                r.selectNodeContents(span);
+                newRanges.push(r);
+            } catch (err) {
+                clrLog('BG try threw', err?.message, '-> walker fallback');
+                /* Fallback: walker/split if range spans invalid boundaries */
                 const toWrap = [];
                 const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
                 let node;
@@ -986,8 +1259,40 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (startOff > 0) target = node.splitText(startOff);
                     const len = endOff - startOff;
                     if (target.length > len && len > 0) target.splitText(len);
+                    if (typeof ensureTargetInCellContent === 'function') ensureTargetInCellContent(target);
                     const span = document.createElement('span');
                     span.className = 'color-span-inline';
+                    span.style.display = 'inline';
+                    span.style.backgroundColor = color;
+                    target.parentNode.insertBefore(span, target);
+                    span.appendChild(target);
+                    const sp = span.parentElement;
+                    clrLog('BG walker spanParent.tag=', sp?.tagName, 'class=', sp?.className, 'isScriptRowDirect=', sp?.classList?.contains?.('script-row-wrapper'));
+                    const r = document.createRange();
+                    r.selectNodeContents(span);
+                    newRanges.push(r);
+                });
+            } else if (useWalker) {
+                const toWrap = [];
+                const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
+                let node;
+                while ((node = walker.nextNode())) {
+                    if (!range.intersectsNode(node)) continue;
+                    let startOff = 0, endOff = node.length;
+                    if (node === range.startContainer) startOff = range.startOffset;
+                    if (node === range.endContainer) endOff = range.endOffset;
+                    if (startOff >= endOff) continue;
+                    toWrap.push({ node, startOff, endOff });
+                }
+                toWrap.forEach(({ node, startOff, endOff }) => {
+                    let target = node;
+                    if (startOff > 0) target = node.splitText(startOff);
+                    const len = endOff - startOff;
+                    if (target.length > len && len > 0) target.splitText(len);
+                    if (typeof ensureTargetInCellContent === 'function') ensureTargetInCellContent(target);
+                    const span = document.createElement('span');
+                    span.className = 'color-span-inline';
+                    span.style.display = 'inline';
                     span.style.backgroundColor = color;
                     target.parentNode.insertBefore(span, target);
                     span.appendChild(target);
@@ -995,69 +1300,60 @@ document.addEventListener('DOMContentLoaded', function() {
                     r.selectNodeContents(span);
                     newRanges.push(r);
                 });
-            });
-            if (container) {
-                removeRedundantBrInContainer(container);
-                requestAnimationFrame(() => removeRedundantBrInContainer(container));
             }
         }
         return newRanges;
     }
 
     function applyBackgroundColorToTarget(color) {
+        clrLog('applyBackgroundColorToTarget color=', color);
         const storedRanges = [...savedFontSelections];
         updateMultiSelectState();
         let rangesToApply = [];
-        if (!selectedFontTarget) {
-            const validStored = storedRanges.filter(r => {
-                try {
-                    return r && !r.collapsed && document.contains(r.startContainer) && teleprompterText.contains(r.commonAncestorContainer);
-                } catch (_) { return false; }
-            });
-            if (validStored.length > 0) {
-                rangesToApply = validStored;
-            } else {
-                const sel = window.getSelection();
-                if (sel.rangeCount) {
-                    const r = sel.getRangeAt(0);
-                    if (!r.collapsed && teleprompterText.contains(r.commonAncestorContainer)) {
-                        rangesToApply = [r];
-                    }
+        /* Prefer user's explicit selection over font-target matching; cap to single range to avoid stale multi-select applying to "all" */
+        const validStored = storedRanges.filter(r => {
+            try {
+                return r && !r.collapsed && document.contains(r.startContainer) && teleprompterText.contains(r.commonAncestorContainer);
+            } catch (_) { return false; }
+        });
+        if (validStored.length > 0) {
+            rangesToApply = [validStored[0]];
+        } else {
+            const sel = window.getSelection();
+            if (sel.rangeCount) {
+                const r = sel.getRangeAt(0);
+                if (!r.collapsed && teleprompterText.contains(r.commonAncestorContainer)) {
+                    rangesToApply = [r];
                 }
             }
+            if (rangesToApply.length === 0 && savedSelection && !savedSelection.collapsed && teleprompterText.contains(savedSelection.commonAncestorContainer) && document.contains(savedSelection.startContainer)) {
+                rangesToApply = [savedSelection.cloneRange()];
+            }
         }
+        clrLog('applyBackgroundColorToTarget rangesToApply.len=', rangesToApply.length);
         if (rangesToApply.length > 0) {
-            const updated = applyBackgroundColorToRanges(rangesToApply, color);
+            /* Same flow as bold/italic/underline/font size: wrapCellContentInBlock first, then apply via extractContents+insertNode */
+            if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+            const formattedSpan = applyBackgroundColorToRangesSingle(rangesToApply, color);
             flattenRedundantSpans();
-            if (updated.length > 0) {
-                savedFontSelections = updated.map(r => r.cloneRange());
+            if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+            if (formattedSpan) {
+                try {
+                    const r = document.createRange();
+                    r.selectNodeContents(formattedSpan);
+                    savedFontSelections = [r];
+                } catch (_) {}
                 updateMultiSelectState();
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        setTimeout(() => {
+                            restoreSelectionToNode(formattedSpan);
+                            invalidateTpRowBalanceKeyForElement(formattedSpan);
+                            scheduleRowShortColumnLineSpacing(true);
+                        }, 0);
+                    });
+                });
             }
-        } else if (selectedFontTarget) {
-            const { fontFamily, fontSize } = selectedFontTarget;
-            const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
-            const toWrap = [];
-            let node;
-            while ((node = walker.nextNode())) {
-                if (!node.textContent.trim()) continue;
-                const parent = node.parentElement;
-                if (!parent) continue;
-                const style = window.getComputedStyle(parent);
-                const pFont = (style.fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
-                const pSize = style.fontSize || '';
-                if (pFont !== fontFamily || pSize !== fontSize) continue;
-                const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(node);
-                if (!colorsMatch(selectedFontTarget, effColor, effBg)) continue;
-                toWrap.push(node);
-            }
-            toWrap.forEach(textNode => {
-                const span = document.createElement('span');
-                span.className = 'color-span-inline';
-                span.style.backgroundColor = color;
-                textNode.parentNode.insertBefore(span, textNode);
-                span.appendChild(textNode);
-            });
-            flattenRedundantSpans();
         } else {
             teleprompterView.style.backgroundColor = color;
         }
@@ -1141,6 +1437,7 @@ document.addEventListener('DOMContentLoaded', function() {
             syncMirrorByPixels();
             if (typeof checkTopPillAndGoToPreviousFile === 'function') checkTopPillAndGoToPreviousFile();
             if (typeof checkBottomPillAndAdvanceToNextFile === 'function') checkBottomPillAndAdvanceToNextFile();
+            lastScrollTopForPillTrigger = teleprompterView.scrollTop;
             animationFrameId = requestAnimationFrame(move);
         };
         animationFrameId = requestAnimationFrame(move);
@@ -1505,6 +1802,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     console.log("🚀 Teleprompter Engine Initialized");
+    console.log("📝 Font debug: window.__fontSizeDebug = true then use fontReport()");
 
     requestAnimationFrame(() => refreshSelectFontTarget());
 
@@ -1536,9 +1834,27 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function applyFontToAllContent(fontVal, sizeVal) {
+        if (FONT_SIZE_DEBUG()) {
+            const all = teleprompterText.querySelectorAll('*');
+            let skipped = 0, applied = 0;
+            teleprompterText.querySelectorAll('*').forEach(el => {
+                if (el.classList?.contains('color-span-inline')) skipped++;
+                else applied++;
+            });
+            console.log('[FontSize] applyFontToAllContent', {
+                fontVal,
+                sizeVal,
+                totalElements: all.length,
+                applied,
+                skipped,
+                sampleTags: Array.from(all).slice(0, 8).map(e => e.tagName + (e.className ? '.' + String(e.className).split(/\s/)[0] : '')),
+            });
+        }
         if (fontVal) teleprompterText.style.fontFamily = fontVal;
         if (sizeVal) teleprompterText.style.fontSize = sizeVal + 'px';
         teleprompterText.querySelectorAll('*').forEach(el => {
+            /* Skip custom color spans – preserve highlight/color. Format spans get the new font/size when applying to all. */
+            if (el.classList?.contains('color-span-inline')) return;
             if (fontVal) el.style.fontFamily = fontVal;
             if (sizeVal) el.style.fontSize = sizeVal + 'px';
         });
@@ -1549,8 +1865,18 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!sizeVal) return;
         teleprompterText.style.fontSize = sizeVal + 'px';
         teleprompterText.querySelectorAll('*').forEach(el => {
+            if (el.classList?.contains('color-span-inline')) return;
             el.style.fontSize = sizeVal + 'px';
         });
+    }
+
+    /** Focus editor without scrolling the view (avoids jumping to top when applying from ribbon / font target). */
+    function focusTeleprompterForFontApply() {
+        try {
+            teleprompterText.focus({ preventScroll: true });
+        } catch (_) {
+            teleprompterText.focus();
+        }
     }
 
     function applyFontSettings() {
@@ -1561,48 +1887,80 @@ document.addEventListener('DOMContentLoaded', function() {
         const sizeVal = fontSizeSelect?.value;
         const targetToApply = selectedFontTarget ? { ...selectedFontTarget } : null;
 
+        const view = teleprompterView;
+        const maxScrollBefore = view ? Math.max(0, view.scrollHeight - view.clientHeight) : 0;
+        const scrollRatioPreserve = view && maxScrollBefore > 0 ? view.scrollTop / maxScrollBefore : 0;
+
         const doApply = () => {
             let rangesToApply = [];
-            if (!targetToApply) {
-                const validStored = storedRanges.filter(r => {
-                    try {
-                        return r && !r.collapsed && document.contains(r.startContainer) && teleprompterText.contains(r.commonAncestorContainer);
-                    } catch (_) { return false; }
-                });
-                if (validStored.length > 0) {
-                    rangesToApply = validStored;
-                } else {
-                    teleprompterText.focus();
-                    const sel = window.getSelection();
-                    const r = sel.rangeCount ? sel.getRangeAt(0) : null;
-                    if (r && !r.collapsed && teleprompterText.contains(r.commonAncestorContainer)) {
-                        rangesToApply = [r];
-                    }
-                }
+            const sel = window.getSelection();
+            const r = sel?.rangeCount ? sel.getRangeAt(0) : null;
+            const hasSelection = r && !r.collapsed && teleprompterText.contains(r.commonAncestorContainer);
+            const validStored = storedRanges.filter(r2 => {
+                try {
+                    return r2 && !r2.collapsed && document.contains(r2.startContainer) && teleprompterText.contains(r2.commonAncestorContainer);
+                } catch (_) { return false; }
+            });
+
+            /* Selection takes precedence: if user selected text, apply to it regardless of Select dropdown. */
+            if (hasSelection) {
+                if (validStored.length > 0) rangesToApply = validStored;
+                else rangesToApply = [r];
             }
+            focusTeleprompterForFontApply();
+
+            const pathTaken = rangesToApply.length > 0 ? 'applyToRanges' : (targetToApply ? 'applyToMatchingTarget' : 'applyToAllContent');
+            fontReport('doApply', {
+                lastFontChangeSource,
+                targetToApply: targetToApply ? { fontFamily: targetToApply.fontFamily, fontSize: targetToApply.fontSize } : null,
+                selectedFontTargetSet: !!selectedFontTarget,
+                selectFontTargetValue: selectFontTarget?.value ? '(set)' : '(empty)',
+                hasSelection,
+                rangesToApplyLen: rangesToApply.length,
+                pathTaken,
+                fontVal,
+                sizeVal,
+                scriptContainer: !!teleprompterText.querySelector('.script-container'),
+                rowCount: teleprompterText.querySelectorAll('.script-row-wrapper').length,
+            });
 
             if (rangesToApply.length > 0 && (fontFamilySelect || fontSizeSelect)) {
-                const preserveSize = lastFontChangeSource === 'family';
-                const preserveFamily = lastFontChangeSource === 'size';
+                fontReport('applyToRanges', { rangesLen: rangesToApply.length });
                 rangesToApply.sort((a, b) => {
                     try { return b.compareBoundaryPoints(Range.START_TO_START, a); } catch (_) { return 0; }
                 });
-                rangesToApply.forEach(range => {
+                /* Same flow as bold/italic/underline/color: wrapCellContentInBlock first, then apply via extractContents+insertNode */
+                if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+                const formattedSpan = lastFontChangeSource === 'family'
+                    ? applyFontFamilyToRangesSingle(rangesToApply, fontVal)
+                    : applyFontAndSizeToRanges(rangesToApply, fontVal, sizeVal, lastFontChangeSource === 'family', lastFontChangeSource === 'size');
+                if (formattedSpan) {
                     try {
-                        if (document.contains(range.startContainer)) {
-                            wrapSelectionInSpan(range, fontVal, sizeVal, preserveSize, preserveFamily);
-                        }
+                        const r = document.createRange();
+                        r.selectNodeContents(formattedSpan);
+                        savedFontSelections = [r];
                     } catch (_) {}
-                });
-                teleprompterText.focus();
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            setTimeout(() => restoreSelectionToNode(formattedSpan), 0);
+                        });
+                    });
+                }
+                focusTeleprompterForFontApply();
             } else if (targetToApply && (fontFamilySelect || fontSizeSelect)) {
+                fontReport('applyToMatchingTarget', { target: targetToApply.fontFamily + ' ' + targetToApply.fontSize });
+                if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
                 applyFontToMatchingTarget(targetToApply, fontVal, sizeVal);
+                requestAnimationFrame(() => refreshSelectFontTarget());
             } else if (!targetToApply && (fontFamilySelect || fontSizeSelect)) {
+                fontReport('applyToAllContent', { reason: 'no target, no ranges' });
                 applyFontToAllContent(fontVal || fontFamilySelect?.value, sizeVal || fontSizeSelect?.value);
             } else {
+                fontReport('applyToAllContent', { reason: 'else fallback' });
                 applyFontToAllContent(fontVal || fontFamilySelect?.value, sizeVal || fontSizeSelect?.value);
             }
             flattenRedundantSpans();
+            if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
             teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
                 row.style.minHeight = '';
                 row.style.height = '';
@@ -1614,22 +1972,47 @@ document.addEventListener('DOMContentLoaded', function() {
                     measureRowHeightsFromContent();
                     if (mirrorWindow && !mirrorWindow.closed) syncMirrorStyles();
                     syncEditorState();
+                    if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
+                        contentStore[currentFileIndex] = teleprompterText.innerHTML.trim();
+                    }
                     skipCaretSyncForFontSelects = false;
+                    if (view) {
+                        const maxAfter = Math.max(0, view.scrollHeight - view.clientHeight);
+                        view.scrollTop = Math.round(scrollRatioPreserve * maxAfter);
+                    }
                 });
             });
         };
 
         skipCaretSyncForFontSelects = true;
-        teleprompterText.focus();
+        focusTeleprompterForFontApply();
         requestAnimationFrame(() => {
             requestAnimationFrame(doApply);
         });
     }
+    const FMT_DEBUG = false; /* [FMT] troubleshooting – set true to debug */
+    const FONT_SIZE_DEBUG = () => (typeof window !== 'undefined' && window.__fontSizeDebug);
+    const fontReport = (path, extra = {}) => {
+        if (!FONT_SIZE_DEBUG()) return;
+        const fileName = (fileStore && fileStore[currentFileIndex]) ? fileStore[currentFileIndex].name : '(none)';
+        console.log('[FontSize] REPORT', {
+            path,
+            currentFileIndex,
+            fileName,
+            ...extra,
+        });
+    };
+    const fmtLog = (...a) => { if (FMT_DEBUG) console.log('[FMT]', ...a); };
     const isFontControl = (el) => el && (fontFamilySelect?.contains(el) || fontSizeSelect?.contains(el) || fontColorButton?.contains(el) || fontColorPanel?.contains(el) || bgColorButton?.contains(el) || bgColorPanel?.contains(el) || boldButton?.contains(el) || italicButton?.contains(el) || underlineButton?.contains(el) || document.getElementById('font-target-dropdown')?.contains(el) || selectFontTarget?.contains(el) || document.getElementById('btn-overview-toggle')?.contains(el));
     const saveSelectionWhenFocusingFontControl = (e) => {
         if (!isFontControl(e.target)) return;
+        const ev = e.type;
+        saveSelection(); /* Backup so format buttons can use it if savedFontSelections is empty */
         const sel = window.getSelection();
-        if (sel.rangeCount && sel.getRangeAt(0) && !sel.getRangeAt(0).collapsed && teleprompterText.contains(sel.anchorNode))
+        const hasSel = sel.rangeCount && sel.getRangeAt(0) && !sel.getRangeAt(0).collapsed;
+        const inEditor = hasSel && teleprompterText.contains(sel.anchorNode);
+        fmtLog(ev, 'sel.rangeCount=', sel.rangeCount, 'collapsed=', sel.rangeCount ? sel.getRangeAt(0).collapsed : '?', 'inEditor=', inEditor, 'savedFontSelections.len=', savedFontSelections.length);
+        if (hasSel && inEditor)
             saveFontSelectionFromEditor(false);
         else if (savedFontSelections.length === 0) saveFontSelectionFromEditor(false);
         updateMultiSelectHighlight();
@@ -1731,8 +2114,9 @@ document.addEventListener('DOMContentLoaded', function() {
     /* On paste, insert plain text only so pasted content does not bring span colors/font rules from other rows. */
     teleprompterText.addEventListener('paste', (e) => {
         e.preventDefault();
-        const text = (e.clipboardData || window.clipboardData)?.getData('text/plain') ?? '';
+        let text = (e.clipboardData || window.clipboardData)?.getData('text/plain') ?? '';
         if (text !== '') {
+            text = stripNumericAngleMarkers(text).replace(/-/g, UNICODE_NB_HYPHEN);
             document.execCommand('insertText', false, text);
         }
     });
@@ -1777,6 +2161,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     isOverviewMode = true;
                     document.body.classList.add('overview-mode');
                     btnOverviewToggle.classList.add('overview-active');
+                    if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
                 } else {
                     const rawRestore = savedFontSizeBeforeOverview || '80';
                     const restore = (rawRestore && rawRestore !== '12') ? rawRestore : '80';
@@ -1841,6 +2226,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 document.body.classList.add('overview-mode');
             }
             flattenRedundantSpans();
+            if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
             requestAnimationFrame(() => {
                 syncColumnWidths();
                 measureRowHeightsFromContent();
@@ -1899,6 +2285,13 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('pointerup', onPtrUp, true);
     document.addEventListener('pointercancel', () => { mouseDownInEditor = false; modifierHeldAtMouseDown = false; }, true);
     document.addEventListener('selectionchange', () => {
+        if (FMT_DEBUG) {
+            const s = window.getSelection();
+            const rc = s?.rangeCount ?? 0;
+            const col = rc ? s.getRangeAt(0).collapsed : null;
+            const ae = document.activeElement;
+            if (rc === 0 || (rc && col)) fmtLog('selectionchange: rangeCount=', rc, 'collapsed=', col, 'activeElement=', ae?.id || ae?.tagName);
+        }
         if (document.activeElement === teleprompterText) {
             updateFontSelectsFromCaret();
         }
@@ -1937,6 +2330,21 @@ document.addEventListener('DOMContentLoaded', function() {
         selectFontTarget.addEventListener('change', () => {
             try {
                 selectedFontTarget = selectFontTarget.value ? JSON.parse(selectFontTarget.value) : null;
+                /* Sync font family/size dropdowns to the selected target so user sees current values and changes apply correctly */
+                if (selectedFontTarget && (fontFamilySelect || fontSizeSelect)) {
+                    skipCaretSyncForFontSelects = true;
+                    const { fontFamily, fontSize } = selectedFontTarget;
+                    const sizePx = parseFloat(fontSize) || 0;
+                    if (fontFamilySelect && fontFamily && Array.from(fontFamilySelect.options).some(o => o.value === fontFamily)) {
+                        fontFamilySelect.value = fontFamily;
+                    }
+                    if (fontSizeSelect && sizePx > 0) {
+                        const opts = Array.from(fontSizeSelect.options).map(o => parseInt(o.value, 10)).filter(n => !isNaN(n));
+                        const nearest = opts.length ? opts.reduce((a, b) => Math.abs(a - sizePx) < Math.abs(b - sizePx) ? a : b) : null;
+                        if (nearest != null) fontSizeSelect.value = String(nearest);
+                    }
+                    setTimeout(() => { skipCaretSyncForFontSelects = false; }, 100);
+                }
             } catch (_) {
                 selectedFontTarget = null;
             }
@@ -2021,59 +2429,109 @@ document.addEventListener('DOMContentLoaded', function() {
     if (bgColorButton && bgColorPanel) bgColorButton.onclick = () => togglePanel(bgColorButton, bgColorPanel);
     if (fontColorButton && fontColorPanel) fontColorButton.onclick = () => togglePanel(fontColorButton, fontColorPanel);
 
-    function applyFormattingToRanges(ranges, tagName) {
-        const getCell = (node) => {
-            let n = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-            while (n && n !== teleprompterText) {
-                if (n.classList?.contains('script-column')) return n;
-                n = n.parentElement;
+    /** Ensures target text node is inside a cell-content (not direct flex child). Moves into last column if row-level stray. Avoids creating new columns. */
+    function ensureTargetInCellContent(target) {
+        let p = target.parentNode;
+        if (!p) return;
+        const flexContainers = ['script-row-wrapper', 'script-column', 'cell-locker'];
+        const isFlex = (el) => el && flexContainers.some(c => el.classList?.contains(c));
+        if (!isFlex(p)) return;
+        if (p.classList?.contains('script-row-wrapper')) {
+            const cols = p.querySelectorAll(':scope > .script-column');
+            let cellContent = cols.length > 0 ? (cols[cols.length - 1].querySelector('.cell-content') || cols[cols.length - 1].querySelector('.cell-locker .cell-content')) : null;
+            if (!cellContent && cols.length > 0) {
+                /* Create cell-content inside the last column instead of adding a new column */
+                const lastCol = cols[cols.length - 1];
+                const wrap = document.createElement('div');
+                wrap.className = 'cell-content';
+                while (lastCol.firstChild) wrap.appendChild(lastCol.firstChild);
+                lastCol.appendChild(wrap);
+                cellContent = wrap;
             }
+            if (cellContent) {
+                cellContent.appendChild(target);
+                return;
+            }
+            const col = document.createElement('div');
+            col.className = 'script-column';
+            const wrap = document.createElement('div');
+            wrap.className = 'cell-content';
+            wrap.appendChild(target);
+            col.appendChild(wrap);
+            p.appendChild(col);
+            return;
+        }
+        const wrap = document.createElement('div');
+        wrap.className = 'cell-content';
+        p.insertBefore(wrap, target);
+        wrap.appendChild(target);
+    }
+
+    function applyFormattingToRanges(ranges, cmd) {
+        if (ranges.length === 0) return null;
+        const range = ranges[0].cloneRange();
+        const sel = window.getSelection();
+        teleprompterText.focus();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        fmtLog('applyFormattingToRanges', cmd, 'range.collapsed=', range.collapsed);
+        /* Manual span wrap – execCommand is unreliable in this contenteditable layout */
+        try {
+            const styleMap = { bold: ['fontWeight', 'bold'], italic: ['fontStyle', 'italic'], underline: ['textDecoration', 'underline'] };
+            const [prop, val] = styleMap[cmd] || [];
+            if (!prop || range.collapsed) return null;
+            const span = document.createElement('span');
+            span.className = 'format-span-inline';
+            span.style[prop] = val;
+            span.appendChild(range.extractContents());
+            range.insertNode(span);
+            fmtLog('wrap OK, span.textContent=', JSON.stringify(span.textContent?.slice(0, 30)));
+            return span;
+        } catch (err) {
+            fmtLog('wrap threw', err);
+            document.execCommand(cmd, false, null);
             return null;
-        };
-        ranges.sort((a, b) => {
-            try { return b.compareBoundaryPoints(Range.START_TO_START, a); } catch (_) { return 0; }
-        });
-        ranges.forEach(range => {
-            try {
-                const startCell = getCell(range.startContainer);
-                const endCell = getCell(range.endContainer);
-                if (startCell != null && endCell != null && startCell !== endCell) return;
-                const toWrap = [];
-                const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
-                let node;
-                while ((node = walker.nextNode())) {
-                    if (!range.intersectsNode(node)) continue;
-                    let startOff = 0, endOff = node.length;
-                    if (node === range.startContainer) startOff = range.startOffset;
-                    if (node === range.endContainer) endOff = range.endOffset;
-                    if (startOff >= endOff) continue;
-                    toWrap.push({ node, startOff, endOff });
-                }
-                toWrap.forEach(({ node, startOff, endOff }) => {
-                    let target = node;
-                    if (startOff > 0) target = node.splitText(startOff);
-                    const len = endOff - startOff;
-                    if (target.length > len && len > 0) target.splitText(len);
-                    const parent = target.parentNode;
-                    if (parent && parent.tagName === tagName.toUpperCase() && parent.childNodes.length === 1) {
-                        parent.parentNode.insertBefore(target, parent);
-                        parent.remove();
-                    } else {
-                        const el = document.createElement(tagName);
-                        target.parentNode.insertBefore(el, target);
-                        el.appendChild(target);
-                    }
-                });
-            } catch (_) {}
-        });
+        }
+    }
+
+    function restoreSelectionToNode(node) {
+        fmtLog('restoreSelectionToNode called, node=', !!node, 'inDoc=', node && document.contains(node), 'activeEl=', document.activeElement?.id || document.activeElement?.className);
+        if (!node || !document.contains(node)) { fmtLog('restoreSelectionToNode SKIP (no node or detached)'); return; }
+        const sel = window.getSelection();
+        const r = document.createRange();
+        r.selectNodeContents(node);
+        sel.removeAllRanges();
+        sel.addRange(r);
+        teleprompterText.focus();
+        fmtLog('restoreSelectionToNode DONE, sel.rangeCount=', sel.rangeCount, 'collapsed=', sel.rangeCount ? sel.getRangeAt(0).collapsed : '?');
+    }
+
+    /** Restore selection to an exact range; falls back to the span node if the range is invalid after DOM changes. */
+    function restoreSelectionToRange(range, fallbackSpan) {
+        if (!range) return;
+        const sel = window.getSelection();
+        try {
+            if (document.contains(range.startContainer) && document.contains(range.endContainer)) {
+                sel.removeAllRanges();
+                sel.addRange(range.cloneRange());
+                teleprompterText.focus();
+                return;
+            }
+        } catch (_) {}
+        /* Fallback: use span ref (range may be invalid after flatten/wrap moved nodes) */
+        const span = fallbackSpan || (range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer.parentElement : range.startContainer);
+        if (span && document.contains(span) && teleprompterText.contains(span)) {
+            restoreSelectionToNode(span);
+        }
     }
 
     function applyFormatting(cmd) {
+        fmtLog('--- applyFormatting', cmd, 'activeEl=', document.activeElement?.id || document.activeElement?.tagName);
         pushUndoState();
-        const tagMap = { bold: 'b', italic: 'i', underline: 'u' };
-        const tagName = tagMap[cmd];
+        if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
         let ranges = [];
-        if (selectedFontTarget) {
+        /* Bold/italic/underline: use selection only, NOT font-target matching (which would format 100+ ranges) */
+        if (selectedFontTarget && !['bold', 'italic', 'underline'].includes(cmd)) {
             const { fontFamily, fontSize } = selectedFontTarget;
             const normalizeFont = (s) => (s || '').split(',')[0].trim().replace(/^["']|["']$/g, '').toLowerCase();
             const normalizeSize = (s) => String(s || '').trim();
@@ -2103,24 +2561,61 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
         teleprompterText.focus();
-        if (ranges.length > 0 && tagName) {
-            applyFormattingToRanges(ranges, tagName);
-        } else {
-            const sel = window.getSelection();
-            const toRestore = savedFontSelections.find(r => { try { return r && document.contains(r.startContainer); } catch (_) { return false; } });
-            if (toRestore) {
+        const sel = window.getSelection();
+        const toRestore = ranges.length > 0 ? ranges[0] : savedFontSelections.find(r => { try { return r && document.contains(r.startContainer); } catch (_) { return false; } });
+        if (toRestore) {
+            try {
                 sel.removeAllRanges();
                 sel.addRange(toRestore.cloneRange());
-            }
-            if (sel.rangeCount) document.execCommand(cmd, false, null);
+            } catch (_) {}
+        }
+        const rangesToApply = ranges.length > 0 ? ranges
+            : (sel.rangeCount ? [sel.getRangeAt(0).cloneRange()] : (savedSelection && document.contains(savedSelection.startContainer) ? [savedSelection.cloneRange()] : []));
+        const src = ranges.length > 0 ? 'fontTarget/savedFont' : (sel.rangeCount ? 'currentSel' : 'savedSelection');
+        fmtLog('rangesToApply.len=', rangesToApply.length, 'source=', src, 'sel.rangeCount=', sel.rangeCount);
+        let formattedSpan = null;
+        if (rangesToApply.length > 0) {
+            formattedSpan = applyFormattingToRanges(rangesToApply, cmd);
         }
         flattenRedundantSpans();
+        if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
         updateMultiSelectState();
         syncEditorState();
+        /* Restore selection last, after all post-processing, so user can apply more formatting */
+        if (formattedSpan) {
+            fmtLog('scheduling restore, formattedSpan OK');
+            try {
+                const r = document.createRange();
+                r.selectNodeContents(formattedSpan);
+                savedFontSelections = [r];
+            } catch (_) {}
+            /* Double rAF + setTimeout: run after any async focus/selection changes from the click */
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    setTimeout(() => {
+                        fmtLog('restore timer fired');
+                        restoreSelectionToNode(formattedSpan);
+                        invalidateTpRowBalanceKeyForElement(formattedSpan);
+                        scheduleRowShortColumnLineSpacing(true);
+                    }, 0);
+                });
+            });
+        } else {
+            fmtLog('no formattedSpan, skip restore');
+        }
     }
-    if (boldButton) boldButton.onclick = () => applyFormatting('bold');
-    if (italicButton) italicButton.onclick = () => applyFormatting('italic');
-    if (underlineButton) underlineButton.onclick = () => applyFormatting('underline');
+    [boldButton, italicButton, underlineButton].forEach((btn, i) => {
+        const cmd = ['bold', 'italic', 'underline'][i];
+        if (btn) {
+            btn.addEventListener('mousedown', (e) => {
+                fmtLog('btn mousedown', cmd, 'activeElBefore=', document.activeElement?.id || document.activeElement?.tagName, 'sel.rangeCount=', window.getSelection()?.rangeCount);
+                e.preventDefault();
+                e.stopPropagation();
+                btn.blur(); /* Prevent button from ever taking focus */
+                applyFormatting(cmd);
+            }, true); /* capture phase – run before any focus change */
+        }
+    });
 
     function handleColorBoxSelect(e) {
         const fc = e.target.closest('.color-options');
@@ -2155,6 +2650,7 @@ document.addEventListener('DOMContentLoaded', function() {
     teleprompterView.addEventListener('scroll', () => {
         if (typeof checkTopPillAndGoToPreviousFile === 'function') checkTopPillAndGoToPreviousFile();
         if (typeof checkBottomPillAndAdvanceToNextFile === 'function') checkBottomPillAndAdvanceToNextFile();
+        lastScrollTopForPillTrigger = teleprompterView.scrollTop;
         if (bookmarkHighlightRaf) return;
         bookmarkHighlightRaf = requestAnimationFrame(() => {
             bookmarkHighlightRaf = null;
@@ -2242,7 +2738,7 @@ document.addEventListener('DOMContentLoaded', function() {
             setTimeout(sendPendingMirrorPosition, 300);
             setTimeout(sendPendingMirrorPosition, 600);
         }
-        syncColumnWidths();
+        syncColumnWidths(true);
         refreshMirrorData();
         syncMirrorStyles();
     }
@@ -2603,6 +3099,261 @@ function indexToColumnLetter(colIndex) {
     }
 
     const ROW_COLOR_CLASSES = ['row-lines-same', 'row-col2-more', 'row-col3-more', 'row-col3-much-more', 'row-col2-one-more', 'row-col3-one-more'];
+    const ROW_STRETCH_MARKERS = ['row-stretch-col2', 'row-stretch-col3'];
+    const TP_ROW_BALANCE_KEY = 'data-tp-row-balance-key';
+    let tpLineBalanceDebounceTimer = null;
+
+    function invalidateTpRowBalanceKeyForElement(el) {
+        if (!el || !teleprompterText) return;
+        let p = el.nodeType === Node.TEXT_NODE ? el.parentElement : el;
+        while (p && p !== teleprompterText && p?.parentElement) {
+            if (p.classList?.contains('script-row-wrapper')) {
+                p.removeAttribute(TP_ROW_BALANCE_KEY);
+                break;
+            }
+            p = p.parentElement;
+        }
+    }
+
+    function clearTpLineBalanceStyles() {
+        teleprompterText.querySelectorAll('.cell-content[data-tp-line-balance]').forEach(el => {
+            el.removeAttribute('data-tp-line-balance');
+            el.style.removeProperty('line-height');
+        });
+        teleprompterText.querySelectorAll('.script-row-wrapper').forEach(r => r.removeAttribute(TP_ROW_BALANCE_KEY));
+    }
+
+    function rowBalanceContentWidthPx(col, locker) {
+        if (locker) return Math.max(1, Math.floor(locker.clientWidth));
+        return Math.max(1, Math.floor(col.getBoundingClientRect().width));
+    }
+
+    function clearRowBalanceLayoutProbe(cell) {
+        cell.style.removeProperty('flex');
+        cell.style.removeProperty('align-self');
+        cell.style.removeProperty('height');
+        cell.style.removeProperty('min-height');
+        cell.style.removeProperty('max-height');
+        cell.style.removeProperty('width');
+        cell.style.removeProperty('box-sizing');
+    }
+
+    /**
+     * Measure text block height at a given line-height with stretch disabled and width locked (same wrap as layout).
+     * Stretched flex items lie: scrollHeight ≈ clientHeight — never use that for the binary search.
+     */
+    function rowBalanceLockerAlignStart(locker) {
+        if (!locker) return null;
+        const prev = locker.style.getPropertyValue('align-items');
+        locker.style.setProperty('align-items', 'flex-start', 'important');
+        return prev;
+    }
+
+    function rowBalanceLockerAlignRestore(locker, prev) {
+        if (!locker) return;
+        if (prev && prev.trim() !== '') locker.style.setProperty('align-items', prev);
+        else locker.style.removeProperty('align-items');
+    }
+
+    function measureCellHeightAtLineHeightPx(cell, col, locker, lhPx) {
+        const w = rowBalanceContentWidthPx(col, locker);
+        const alignPrev = rowBalanceLockerAlignStart(locker);
+        cell.style.setProperty('line-height', lhPx + 'px', 'important');
+        cell.style.setProperty('flex', '0 0 auto', 'important');
+        cell.style.setProperty('align-self', 'flex-start', 'important');
+        cell.style.setProperty('height', 'auto', 'important');
+        cell.style.setProperty('min-height', '0', 'important');
+        cell.style.setProperty('max-height', 'none', 'important');
+        cell.style.setProperty('width', w + 'px', 'important');
+        cell.style.setProperty('box-sizing', 'border-box', 'important');
+        void cell.offsetHeight;
+        const h = Math.max(cell.offsetHeight, cell.scrollHeight);
+        rowBalanceLockerAlignRestore(locker, alignPrev);
+        return h;
+    }
+
+    /** Natural height at current (cleared) line-height — same probe as above without forcing lh here. */
+    function measureCellContentNaturalHeight(cell, col, locker) {
+        const w = rowBalanceContentWidthPx(col, locker);
+        const alignPrev = rowBalanceLockerAlignStart(locker);
+        cell.style.setProperty('flex', '0 0 auto', 'important');
+        cell.style.setProperty('align-self', 'flex-start', 'important');
+        cell.style.setProperty('height', 'auto', 'important');
+        cell.style.setProperty('min-height', '0', 'important');
+        cell.style.setProperty('max-height', 'none', 'important');
+        cell.style.setProperty('width', w + 'px', 'important');
+        cell.style.setProperty('box-sizing', 'border-box', 'important');
+        void cell.offsetHeight;
+        const natural = Math.ceil(Math.max(cell.offsetHeight, cell.scrollHeight));
+        clearRowBalanceLayoutProbe(cell);
+        rowBalanceLockerAlignRestore(locker, alignPrev);
+        return natural;
+    }
+
+    /** Fingerprint layout inputs for a row so we can keep line-height stable across redundant syncs. */
+    function buildTpRowBalanceKey(row, stretchCol, avail) {
+        const col2 = row.querySelector('.script-column:nth-child(2)');
+        const col3 = row.querySelector('.script-column:nth-child(3)');
+        const c2 = col2?.querySelector('.cell-content') || col2?.querySelector('.cell-locker');
+        const c3 = col3?.querySelector('.cell-content') || col3?.querySelector('.cell-locker');
+        const w2 = col2 ? Math.round(col2.getBoundingClientRect().width) : 0;
+        const w3 = col3 ? Math.round(col3.getBoundingClientRect().width) : 0;
+        const rowH = Math.round(row.getBoundingClientRect().height / 2) * 2;
+        const qAvail = Math.round(Math.max(0, avail) / 2) * 2;
+        const hl2 = (c2?.innerHTML || '').length;
+        const hl3 = (c3?.innerHTML || '').length;
+        const f12 = row.classList.contains('row-font-12') ? '1' : '0';
+        return [stretchCol, qAvail, rowH, w2, w3, hl2, hl3, f12].join('|');
+    }
+
+    /**
+     * Shorter column (by rendered height) gets extra line-spacing to fill the row. Skipped in Aa overview.
+     * Non-collapsed selection skews height metrics (bold/underline restore selects the whole span) — clear selection during measure, then restore.
+     */
+    function applyRowShortColumnLineSpacing() {
+        if (document.body.classList.contains('overview-mode')) return;
+
+        const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
+        let savedNonCollapsedRange = null;
+        if (sel && sel.rangeCount > 0 && teleprompterText) {
+            try {
+                const r = sel.getRangeAt(0);
+                if (!r.collapsed && teleprompterText.contains(r.commonAncestorContainer)) {
+                    savedNonCollapsedRange = r.cloneRange();
+                    sel.removeAllRanges();
+                    void teleprompterText.offsetHeight;
+                }
+            } catch (_) {}
+        }
+
+        try {
+            const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
+            if (rows.length === 0) return;
+            const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
+            if (maxCols !== 3) return;
+
+            /* Clear line-balance only on columns that are not the stretched one (avoids wiping then failing to re-apply after format changes). */
+            rows.forEach(row => {
+                const stretchCol = row.classList.contains('row-stretch-col2') ? 2 : (row.classList.contains('row-stretch-col3') ? 3 : 0);
+                if (!stretchCol) row.removeAttribute(TP_ROW_BALANCE_KEY);
+                for (const i of [2, 3]) {
+                    if (stretchCol === i) continue;
+                    const col = row.querySelector(`.script-column:nth-child(${i})`);
+                    if (!col || col.classList.contains('user-col-hidden')) continue;
+                    const locker = col.querySelector('.cell-locker');
+                    const cell = col.querySelector('.cell-content') || locker;
+                    if (cell?.hasAttribute('data-tp-line-balance')) {
+                        cell.removeAttribute('data-tp-line-balance');
+                        cell.style.removeProperty('line-height');
+                    }
+                }
+            });
+
+            rows.forEach(row => {
+                const stretchCol = row.classList.contains('row-stretch-col2') ? 2 : (row.classList.contains('row-stretch-col3') ? 3 : 0);
+                if (!stretchCol) return;
+                const col = row.querySelector(`.script-column:nth-child(${stretchCol})`);
+                if (!col || col.classList.contains('user-col-hidden')) return;
+                const locker = col.querySelector('.cell-locker');
+                const cell = col.querySelector('.cell-content') || locker;
+                if (!cell) return;
+                const text = (cell.innerText || '').trim();
+                if (!text) {
+                    row.removeAttribute(TP_ROW_BALANCE_KEY);
+                    return;
+                }
+                const container = locker || col;
+                const otherCol = row.querySelector(`.script-column:nth-child(${stretchCol === 2 ? 3 : 2})`);
+                const otherLocker = otherCol?.querySelector('.cell-locker');
+                const otherContainer = otherLocker || otherCol;
+                const rowBox = Math.floor(row.getBoundingClientRect().height);
+                const avail = Math.max(
+                    1,
+                    Math.floor(container.clientHeight),
+                    otherContainer ? Math.floor(otherContainer.clientHeight) : 0,
+                    rowBox - 2
+                ) - 1;
+                const balanceKey = buildTpRowBalanceKey(row, stretchCol, avail);
+                if (
+                    row.getAttribute(TP_ROW_BALANCE_KEY) === balanceKey &&
+                    cell.hasAttribute('data-tp-line-balance') &&
+                    (cell.style.getPropertyValue('line-height') || '').trim() !== ''
+                ) {
+                    return;
+                }
+
+                const hadBalance = cell.hasAttribute('data-tp-line-balance');
+                const prevLh = hadBalance ? (cell.style.getPropertyValue('line-height') || '').trim() : '';
+                cell.removeAttribute('data-tp-line-balance');
+                cell.style.removeProperty('line-height');
+                void cell.offsetHeight;
+                const natural = measureCellContentNaturalHeight(cell, col, locker);
+                void cell.offsetHeight;
+                if (natural >= avail - 2) {
+                    if (prevLh) {
+                        cell.style.setProperty('line-height', prevLh, 'important');
+                        cell.setAttribute('data-tp-line-balance', '1');
+                        row.setAttribute(TP_ROW_BALANCE_KEY, balanceKey);
+                    }
+                    return;
+                }
+
+                const cs = window.getComputedStyle(cell);
+                const fontPx = parseFloat(cs.fontSize) || 16;
+                let lo = parseFloat(cs.lineHeight);
+                if (Number.isNaN(lo) || lo < fontPx * 1.02) lo = fontPx * 1.15;
+                let hi = Math.max(lo + 1, avail * 2.5);
+
+                for (let iter = 0; iter < 30; iter++) {
+                    const mid = (lo + hi) / 2;
+                    const h = measureCellHeightAtLineHeightPx(cell, col, locker, mid);
+                    clearRowBalanceLayoutProbe(cell);
+                    cell.style.removeProperty('line-height');
+                    if (h > avail) hi = mid;
+                    else lo = mid;
+                }
+                cell.style.removeProperty('line-height');
+                void cell.offsetHeight;
+                cell.style.setProperty('line-height', lo + 'px', 'important');
+                cell.setAttribute('data-tp-line-balance', '1');
+                row.setAttribute(TP_ROW_BALANCE_KEY, balanceKey);
+            });
+        } finally {
+            if (savedNonCollapsedRange && sel) {
+                try {
+                    const ca = savedNonCollapsedRange.commonAncestorContainer;
+                    if (ca && document.contains(ca) && teleprompterText.contains(ca)) {
+                        sel.removeAllRanges();
+                        sel.addRange(savedNonCollapsedRange.cloneRange());
+                    }
+                } catch (_) {}
+            }
+        }
+    }
+
+    /**
+     * Debounced + triple rAF: coalesces rapid syncs. Per-row data-tp-row-balance-key skips redundant recompute.
+     * force=true: 0ms debounce (resize, load, mirror, ribbon). force=false: 100ms debounce.
+     */
+    function scheduleRowShortColumnLineSpacing(force) {
+        if (tpLineBalanceDebounceTimer) clearTimeout(tpLineBalanceDebounceTimer);
+        const delay = force ? 0 : 100;
+        tpLineBalanceDebounceTimer = setTimeout(() => {
+            tpLineBalanceDebounceTimer = null;
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => applyRowShortColumnLineSpacing());
+                });
+            });
+        }, delay);
+    }
+
+    /** Row red/green word count: whitespace-separated tokens; "+" with no space after it starts a new word (e.g. Christ+His → 2). Hyphens incl. U+2011 stay in one token. */
+    function countWordsForRowBalance(raw) {
+        const s = (raw ?? '').toString().trim();
+        if (!s) return 0;
+        return s.replace(/\+(\S)/g, '+ $1').split(/\s+/).filter(Boolean).length;
+    }
 
     function applyRowColors() {
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
@@ -2610,8 +3361,12 @@ function indexToColumnLetter(colIndex) {
 
         const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
         if (maxCols !== 3) {
-            rows.forEach(row => ROW_COLOR_CLASSES.forEach(c => row.classList.remove(c)));
+            rows.forEach(row => {
+                ROW_COLOR_CLASSES.forEach(c => row.classList.remove(c));
+                ROW_STRETCH_MARKERS.forEach(c => row.classList.remove(c));
+            });
             rowColorsCache = [];
+            clearTpLineBalanceStyles();
             return;
         }
 
@@ -2619,8 +3374,12 @@ function indexToColumnLetter(colIndex) {
         const r0cols = firstRow.querySelectorAll('.script-column');
         /* When col3 is unchecked by user (runlist), we are not comparing — clear all red/green. */
         if (r0cols[2]?.classList?.contains('user-col-hidden')) {
-            rows.forEach(row => ROW_COLOR_CLASSES.forEach(c => row.classList.remove(c)));
+            rows.forEach(row => {
+                ROW_COLOR_CLASSES.forEach(c => row.classList.remove(c));
+                ROW_STRETCH_MARKERS.forEach(c => row.classList.remove(c));
+            });
             rowColorsCache = [];
+            clearTpLineBalanceStyles();
             return;
         }
         /* In extend mode one content column has broadcast-hidden on main; temporarily show it so we can read text and recompute colors. */
@@ -2637,20 +3396,39 @@ function indexToColumnLetter(colIndex) {
             void teleprompterText.offsetHeight;
         }
 
+        /* Non-collapsed selection skews height like line-balance; clear for all row height reads in this pass. */
+        const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
+        let savedNonCollapsedRange = null;
+        if (sel && sel.rangeCount > 0 && teleprompterText) {
+            try {
+                const r = sel.getRangeAt(0);
+                if (!r.collapsed && teleprompterText.contains(r.commonAncestorContainer)) {
+                    savedNonCollapsedRange = r.cloneRange();
+                    sel.removeAllRanges();
+                    void teleprompterText.offsetHeight;
+                }
+            } catch (_) {}
+        }
+
         /* Left text column = col2 (green when more), right text column = col3 (red when more). DOM order: index 0 = numbers, 1 = left, 2 = right. */
         const WORD_DIFF_GLOW = 5;   /* word count difference >= this → glow */
         const WORD_DIFF_FILL = 10;  /* word count difference >= this → fill */
         const idxCol2 = Math.max(0, maxCols - 2);  /* left = col2 → green when more */
         const idxCol3 = maxCols - 1;               /* right = col3 → red when more */
+        /* Require this margin (px) to *change* which column is stretched; in the dead zone keep previous (avoids stretch toggling on bold/focus/sync). */
+        const STRETCH_HEIGHT_HYSTERESIS_PX = 4;
 
         const debugRowColors = typeof window !== 'undefined' && window.DEBUG_ROW_COLORS;
         if (debugRowColors && rows.length > 0) {
             console.log('[RowColors] DEBUG on. We compare idxCol2=' + idxCol2 + ' vs idxCol3=' + idxCol3 + '. Col3 more => red. Check "byIndex" to see which DOM index has your column-3 text.');
         }
 
+        try {
         rowColorsCache = [];
         rows.forEach((row, rowIndex) => {
+            const prevStretchCol = row.classList.contains('row-stretch-col2') ? 2 : (row.classList.contains('row-stretch-col3') ? 3 : 0);
             ROW_COLOR_CLASSES.forEach(c => row.classList.remove(c));
+            ROW_STRETCH_MARKERS.forEach(c => row.classList.remove(c));
             const cols = Array.from(row.children).filter(c => c.classList?.contains('script-column'));
             const n = cols.length;
             if (n < 2) {
@@ -2663,8 +3441,8 @@ function indexToColumnLetter(colIndex) {
             const text2 = (col2?.textContent ?? '').toString().trim();
             const text3 = (col3?.textContent ?? '').toString().trim();
 
-            const words2 = (text2.split(/\s+/).filter(Boolean)).length;
-            const words3 = (text3.split(/\s+/).filter(Boolean)).length;
+            const words2 = countWordsForRowBalance(text2);
+            const words3 = countWordsForRowBalance(text3);
             const wordDiff = Math.abs(words2 - words3);
             let cls;
             if (words2 === words3 || wordDiff < WORD_DIFF_GLOW) {
@@ -2676,6 +3454,31 @@ function indexToColumnLetter(colIndex) {
             }
             row.classList.add(cls);
             rowColorsCache.push(cls);
+            /* Tallest column sets row height; stretch the *other* column with line-spacing (word-count class is only for red/green). */
+            {
+                const locker2 = col2.querySelector('.cell-locker');
+                const c2 = col2.querySelector('.cell-content') || locker2;
+                const locker3 = col3.querySelector('.cell-locker');
+                const c3 = col3.querySelector('.cell-content') || locker3;
+                if (c2 && c3) {
+                    const t2 = (c2.innerText || '').trim();
+                    const t3 = (c3.innerText || '').trim();
+                    if (t2 && t3) {
+                        const h2 = measureCellContentNaturalHeight(c2, col2, locker2);
+                        const h3 = measureCellContentNaturalHeight(c3, col3, locker3);
+                        let stretchCol = 0;
+                        if (h3 > h2 + STRETCH_HEIGHT_HYSTERESIS_PX) stretchCol = 2;
+                        else if (h2 > h3 + STRETCH_HEIGHT_HYSTERESIS_PX) stretchCol = 3;
+                        else if (prevStretchCol === 2 || prevStretchCol === 3) stretchCol = prevStretchCol;
+                        else {
+                            if (h3 > h2) stretchCol = 2;
+                            else if (h2 > h3) stretchCol = 3;
+                        }
+                        if (stretchCol === 2) row.classList.add('row-stretch-col2');
+                        else if (stretchCol === 3) row.classList.add('row-stretch-col3');
+                    }
+                }
+            }
 
             /* Troubleshooting: when DEBUG_ROW_COLORS is true, log one full report for row 0 and whenever we assign green. */
             if (debugRowColors && (rowIndex === 0 || cls.startsWith('row-col2'))) {
@@ -2705,6 +3508,17 @@ function indexToColumnLetter(colIndex) {
                 });
             }
         });
+        } finally {
+            if (savedNonCollapsedRange && sel) {
+                try {
+                    const ca = savedNonCollapsedRange.commonAncestorContainer;
+                    if (ca && document.contains(ca) && teleprompterText.contains(ca)) {
+                        sel.removeAllRanges();
+                        sel.addRange(savedNonCollapsedRange.cloneRange());
+                    }
+                } catch (_) {}
+            }
+        }
         if (broadcastHiddenElements.length > 0) {
             broadcastHiddenElements.forEach(el => el.classList.add('broadcast-hidden'));
         }
@@ -2715,6 +3529,8 @@ function indexToColumnLetter(colIndex) {
         const cur = el.style.fontSize;
         if (cur && cur !== '12px' && cur !== '') return;
         el.style.fontSize = fontSizeVal;
+        /* Row line-balance sets line-height with !important on .cell-content; assigning 1.2 here strips it and kills stretch after bold/sync. */
+        if (el.hasAttribute?.('data-tp-line-balance')) return;
         el.style.lineHeight = lineHeightVal || '';
     }
 
@@ -2750,7 +3566,7 @@ function indexToColumnLetter(colIndex) {
         rowFont12Cache = [];
         rows.forEach(row => {
             const text = (row.innerText || '').trim();
-            const hasPipeV = text.includes('|v');
+            const hasPipeV = text.includes('|v') || row.getAttribute(TP_ROW_PIPEV_ATTR) === '1';
             if (hasPipeV) {
                 row.classList.add('row-font-12');
                 setRowFontSizeIfNotUserSet(row, '12px', '1.2');
@@ -2876,7 +3692,8 @@ function indexToColumnLetter(colIndex) {
                 });
                 const colorClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
                 const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
-                const rowClass = [colorClass, keywordPill].filter(Boolean).join(' ');
+                const stretchParts = ROW_STRETCH_MARKERS.filter(c => row.classList.contains(c));
+                const rowClass = [colorClass, keywordPill, ...stretchParts].filter(Boolean).join(' ');
                 const font12 = row.classList.contains('row-font-12');
                 return { cells, rowClass, font12 };
             });
@@ -2903,7 +3720,8 @@ function indexToColumnLetter(colIndex) {
                 });
                 const colorClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
                 const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
-                const rowClass = [colorClass, keywordPill].filter(Boolean).join(' ');
+                const stretchParts = ROW_STRETCH_MARKERS.filter(c => row.classList.contains(c));
+                const rowClass = [colorClass, keywordPill, ...stretchParts].filter(Boolean).join(' ');
                 const font12 = row.classList.contains('row-font-12');
                 return { cells, rowClass, font12 };
             });
@@ -2934,6 +3752,9 @@ function indexToColumnLetter(colIndex) {
                 topPill,
                 bottomPill
             }, '*');
+        }
+        if (rows.length > 0) {
+            scheduleRowShortColumnLineSpacing(true);
         }
     }
 
@@ -2990,7 +3811,33 @@ function indexToColumnLetter(colIndex) {
         }
     }
 
-    function syncColumnWidths() {
+    /** Usable width inside #teleprompter-text for the script grid (excludes horizontal padding / indicator gutter). */
+    function getTeleprompterContentWidthPx() {
+        if (!teleprompterText) return 0;
+        const cs = window.getComputedStyle(teleprompterText);
+        const pl = parseFloat(cs.paddingLeft) || 0;
+        const pr = parseFloat(cs.paddingRight) || 0;
+        return Math.max(0, Math.floor(teleprompterText.clientWidth - pl - pr));
+    }
+
+    /** First column is sized from cue-style cells only — not section labels like "Pause" in col1 of sparse rows. */
+    function isCueLikeFirstColumnText(raw) {
+        const t = (raw || '').trim();
+        if (!t) return false;
+        const head = t.split(/\s+/)[0] || t;
+        if (/^\|v\d+/i.test(head)) return true;
+        if (/^\d{1,6}$/.test(head)) return true;
+        if (/^v\d+$/i.test(head)) return true;
+        return false;
+    }
+
+    function firstColumnCueTokenForMeasure(raw) {
+        const t = (raw || '').trim();
+        if (!t) return '';
+        return (t.split(/\s+/)[0] || t).trim();
+    }
+
+    function syncColumnWidths(forceLineSpacing) {
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
         if (rows.length === 0) {
             applyBroadcastingVisibility();
@@ -3031,10 +3878,10 @@ function indexToColumnLetter(colIndex) {
         widths[0] = Math.ceil(digitsWidth + paddingWidth);
 
         const isBroadcasting = document.body.classList.contains('broadcasting');
-        const isXlsx = isCurrentFileXlsx();
+        /* XLSX & 3-column DOCX: col0 shrink-to-fit, cols 2 and 3 split remainder 50/50 (avoids docx path that gave col3 all rounding slack). */
+        const equalSplitThreeTextCols = (isCurrentFileXlsx() || isCurrentFileDocx()) && maxCols >= 3 && !isBroadcasting;
 
-        /* XLSX: col1 shrink-to-fit, cols 2 and 3 equal width */
-        if (isXlsx && maxCols >= 3 && !isBroadcasting) {
+        if (equalSplitThreeTextCols) {
             const probe = document.createElement('span');
             probe.style.position = 'absolute';
             probe.style.visibility = 'hidden';
@@ -3044,18 +3891,25 @@ function indexToColumnLetter(colIndex) {
             probe.style.fontSize = isOverviewMode ? '12px' : tf.fontSize;
             probe.style.lineHeight = isOverviewMode ? '1.2' : tf.lineHeight;
             document.body.appendChild(probe);
+            probe.textContent = '99';
+            const minCol0Floor = probe.getBoundingClientRect().width;
             let col0Max = 0;
             rows.forEach(row => {
                 const cols = row.querySelectorAll('.script-column');
+                if (cols.length < 3) return;
                 const cell = cols[0]?.querySelector('.cell-content') || cols[0]?.querySelector('.cell-locker') || cols[0];
-                const txt = (cell?.textContent || '').trim() || '0';
-                probe.textContent = txt;
+                const txt = (cell?.textContent || '').trim();
+                if (!isCueLikeFirstColumnText(txt)) return;
+                probe.textContent = firstColumnCueTokenForMeasure(txt) || txt;
                 col0Max = Math.max(col0Max, probe.getBoundingClientRect().width);
             });
             probe.remove();
-            /* Add buffer to prevent numbers wrapping from subpixel rounding */
-            widths[0] = Math.ceil(Math.max(col0Max, digitsWidth) + paddingWidth) + 8;
-            const xlsxRemaining = Math.max(0, (isBroadcasting && extendedFixedWidth != null && extendedFixedWidth > 0 ? extendedFixedWidth : teleprompterText.clientWidth) - widths[0]);
+            /* Tight floor: two-digit width (not 4×'0'); col0Max grows for |v### / longer cues; tiny subpixel buffer */
+            widths[0] = Math.ceil(Math.max(col0Max, minCol0Floor) + paddingWidth) + 2;
+            const gridInnerW = (isBroadcasting && extendedFixedWidth != null && extendedFixedWidth > 0)
+                ? extendedFixedWidth
+                : getTeleprompterContentWidthPx();
+            const xlsxRemaining = Math.max(0, gridInnerW - widths[0]);
             const half = Math.floor(xlsxRemaining / 2);
             widths[1] = half;
             widths[2] = xlsxRemaining - half;
@@ -3070,12 +3924,11 @@ function indexToColumnLetter(colIndex) {
         /* When extended use fixed width so table doesn't change on window resize. */
         const availableWidth = (isBroadcasting && extendedFixedWidth != null && extendedFixedWidth > 0)
             ? extendedFixedWidth
-            : teleprompterText.clientWidth;
+            : getTeleprompterContentWidthPx();
         const remaining = Math.max(availableWidth - widths[0], 0);
         let equalWidth = otherColCount > 0 ? Math.floor(remaining / (visibleColCount > 0 ? visibleColCount : 1)) : 0;
 
-        const useXlsxWidths = isXlsx && maxCols >= 3 && !isBroadcasting;
-        if (!useXlsxWidths && useVisibleColumns && visibleIndices) {
+        if (!equalSplitThreeTextCols && useVisibleColumns && visibleIndices) {
             const contentVisibleCount = visibleIndices.filter(i => i >= 1).length;
             /* In extend mode with 2+ content columns: main shows all visible except the last (mirror shows the last). */
             const mainVisibleIndices = (isBroadcasting && contentVisibleCount >= 2)
@@ -3096,7 +3949,7 @@ function indexToColumnLetter(colIndex) {
                 widths[j] = contentEqual;
                 if (k === contentIndices.length - 1) widths[j] += contentRemaining - (contentEqual * contentIndices.length);
             });
-        } else if (!useXlsxWidths) {
+        } else if (!equalSplitThreeTextCols) {
             for (let i = 1; i < widths.length; i += 1) {
                 widths[i] = (i < visibleColCount) ? equalWidth : 0;
             }
@@ -3134,7 +3987,7 @@ function indexToColumnLetter(colIndex) {
                     col.style.flex = width > 0 ? `0 0 ${width}px` : '';
                     col.style.width = width > 0 ? `${width}px` : '';
                     col.style.minWidth = '0';
-                } else if (!isBroadcasting && isLastVisible) {
+                } else if (!isBroadcasting && isLastVisible && !(equalSplitThreeTextCols && maxCols === 3 && idx === maxCols - 1)) {
                     /* Last visible column grows to fill so col 2 expands when col 3 is hidden */
                     col.style.flex = `1 1 0%`;
                     col.style.minWidth = '0';
@@ -3150,12 +4003,16 @@ function indexToColumnLetter(colIndex) {
             buildCharCountsPerRow();
             applyRowColors();
             applyRowFont12();
+            scheduleRowShortColumnLineSpacing(!!forceLineSpacing);
         }
     }
 
     /** Sync editor state to arrays (contentStore, charCountsPerRow, rowColorsCache) and mirror. Call after user actions (blur, save, etc.). */
     function syncEditorState() {
         if (typeof stripPipeVFromFirstColumn === 'function') stripPipeVFromFirstColumn();
+        if (typeof stripPipeVMarkersFromContentColumns === 'function') stripPipeVMarkersFromContentColumns();
+        if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+        if (typeof applyKeywordPills === 'function') applyKeywordPills();
         if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
             const html = teleprompterText.innerHTML.trim();
             contentStore[currentFileIndex] = (html === '<br>' || html === '') ? '' : html;
@@ -3178,6 +4035,9 @@ function indexToColumnLetter(colIndex) {
         if (isToolbarOrPanel(next)) return;
         syncEditorState();
     });
+    teleprompterText.addEventListener('focusin', () => {
+        scheduleRowShortColumnLineSpacing();
+    });
     document.addEventListener('click', (e) => {
         if (isToolbarOrPanel(e.target)) return;
         if (!teleprompterText.contains(e.target)) syncEditorState();
@@ -3188,6 +4048,8 @@ function indexToColumnLetter(colIndex) {
         clearTimeout(inputColorDebounce);
         inputColorDebounce = setTimeout(() => {
             if (typeof stripPipeVFromFirstColumn === 'function') stripPipeVFromFirstColumn();
+            if (typeof stripPipeVMarkersFromContentColumns === 'function') stripPipeVMarkersFromContentColumns();
+            if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
             refreshSelectFontTarget();
             applyKeywordPills();
             const rows = teleprompterText.querySelectorAll('.script-row-wrapper');
@@ -3995,6 +4857,82 @@ function resetPillTriggerState() {
     if (view) lastScrollTopForPillTrigger = view.scrollTop;
 }
 
+/** Convert DOCX/Mammoth HTML to the same structure as XLSX: script-container > script-row-wrapper > script-column > cell-content.
+ *  Ensures consistent behavior (formatting, layout) regardless of file type. */
+function convertDocxHtmlToXlsxStructure(html) {
+    if (!html || typeof html !== 'string' || !html.trim()) return html || '';
+    const temp = document.createElement('div');
+    temp.innerHTML = html;
+    const container = document.createElement('div');
+    container.className = 'script-container';
+    const BLOCK_TAGS = ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'];
+    const gatherBlocks = (parent) => {
+        const out = [];
+        for (const el of parent.children) {
+            if (el.nodeType !== Node.ELEMENT_NODE) continue;
+            const tag = el.tagName?.toUpperCase();
+            if (tag === 'TABLE') out.push({ type: 'table', el });
+            else if (BLOCK_TAGS.includes(tag)) out.push({ type: 'block', el });
+            else if (tag === 'BODY' || (tag === 'DIV' && !el.classList?.contains('script-container')))
+                out.push(...gatherBlocks(el));
+            else out.push({ type: 'block', el });
+        }
+        return out;
+    };
+    const blocks = gatherBlocks(temp);
+    if (blocks.length === 0) {
+        const rowDiv = document.createElement('div');
+        rowDiv.className = 'script-row-wrapper';
+        const colDiv = document.createElement('div');
+        colDiv.className = 'script-column';
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'cell-content';
+        contentDiv.innerHTML = (temp.innerText?.trim() || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') || '\u00A0';
+        colDiv.appendChild(contentDiv);
+        rowDiv.appendChild(colDiv);
+        container.appendChild(rowDiv);
+    }
+    for (const { type, el } of blocks) {
+        if (type === 'table') {
+            el.querySelectorAll('tr').forEach(tr => {
+                const rowDiv = document.createElement('div');
+                rowDiv.className = 'script-row-wrapper';
+                const allCells = Array.from(tr.querySelectorAll('td, th'));
+                const cells = allCells.slice(0, MAX_COLUMNS);
+                const extras = allCells.slice(MAX_COLUMNS);
+                const extraText = extras.map(c => (c.innerText || c.textContent || '').trim()).join(' ').trim();
+                cells.forEach((cell, i) => {
+                    const colDiv = document.createElement('div');
+                    colDiv.className = 'script-column';
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'cell-content';
+                    let html = cell.innerHTML || '';
+                    if (i === cells.length - 1 && extraText) {
+                        const safe = extraText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                        html = (html.trim() ? html.trim() + ' ' : '') + safe;
+                    }
+                    contentDiv.innerHTML = html;
+                    colDiv.appendChild(contentDiv);
+                    rowDiv.appendChild(colDiv);
+                });
+                container.appendChild(rowDiv);
+            });
+        } else {
+            const rowDiv = document.createElement('div');
+            rowDiv.className = 'script-row-wrapper';
+            const colDiv = document.createElement('div');
+            colDiv.className = 'script-column';
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'cell-content';
+            contentDiv.innerHTML = el.innerHTML;
+            colDiv.appendChild(contentDiv);
+            rowDiv.appendChild(colDiv);
+            container.appendChild(rowDiv);
+        }
+    }
+    return container.outerHTML;
+}
+
 /** Normalize HTML to max 3 columns. Merges extra cells into the 3rd. Returns { html, wasTrimmed }. */
 function normalizeContentToMax3Columns(html) {
     if (!html || typeof html !== 'string' || !html.trim()) return { html: html || '', wasTrimmed: false };
@@ -4029,6 +4967,34 @@ function normalizeContentToMax3Columns(html) {
     return { html: temp.innerHTML, wasTrimmed };
 }
 
+/** Unicode non-breaking hyphen (U+2011); regular hyphen U+002D still breaks at line wrap. */
+const UNICODE_NB_HYPHEN = '\u2011';
+
+/**
+ * Remove "<123>" and "</123>" markers (optional spaces). Also strips HTML-escaped forms &lt;123&gt;, &lt;/123&gt;.
+ */
+function stripNumericAngleMarkers(str) {
+    if (!str || typeof str !== 'string') return str;
+    return str
+        .replace(/&lt;\s*\/\s*\d+\s*&gt;/gi, '')
+        .replace(/&lt;\s*\d+\s*&gt;/g, '')
+        .replace(/<\s*\/\s*\d+\s*>/gi, '')
+        .replace(/<\s*\d+\s*>/g, '');
+}
+
+/** Replace ASCII hyphens in text nodes only (does not touch markup attributes like class names). */
+function replaceAsciiHyphensInTextNodes(root) {
+    if (!root) return;
+    const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    let n;
+    while ((n = walk.nextNode())) {
+        if (!n.nodeValue || n.nodeValue.indexOf('-') === -1) continue;
+        const el = n.parentElement;
+        if (el && el.closest && el.closest('script, style')) continue;
+        n.nodeValue = n.nodeValue.replace(/-/g, UNICODE_NB_HYPHEN);
+    }
+}
+
 async function processFileContent(file, index) {
     const extension = file.name.split('.').pop().toLowerCase();
     console.log(`Starting process for .${extension} at index ${index}`);
@@ -4043,6 +5009,7 @@ async function processFileContent(file, index) {
                 text = normalized;
                 if (wasTrimmed) alert(`"${file.name}" had more than ${MAX_COLUMNS} columns. Extra columns were merged into column ${MAX_COLUMNS}.`);
             }
+            text = stripNumericAngleMarkers(text);
             contentStore[slot] = text;
             console.log("Text/HTML content loaded successfully");
         } 
@@ -4070,7 +5037,9 @@ async function processFileContent(file, index) {
                         }
                         html += '<div class="script-row-wrapper">';
                         cells.forEach(val => {
-                            html += `<div class="script-column"><div class="cell-content">${(val || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div></div>`;
+                            let cellText = val || '';
+                            cellText = stripNumericAngleMarkers(cellText).replace(/-/g, UNICODE_NB_HYPHEN);
+                            html += `<div class="script-column"><div class="cell-content">${cellText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div></div>`;
                         });
                         html += '</div>';
                     });
@@ -4101,7 +5070,9 @@ async function processFileContent(file, index) {
                     .then(result => {
                         const currentIdx = fileStore.findIndex(f => f === file);
                         const slot = currentIdx >= 0 ? currentIdx : index;
-                        const { html, wasTrimmed } = normalizeContentToMax3Columns(result.value);
+                        const xlsxStructure = convertDocxHtmlToXlsxStructure(result.value);
+                        let { html, wasTrimmed } = normalizeContentToMax3Columns(xlsxStructure);
+                        html = stripNumericAngleMarkers(html);
                         contentStore[slot] = html;
                         if (wasTrimmed) alert(`"${file.name}" had more than ${MAX_COLUMNS} columns. Extra columns were merged into column ${MAX_COLUMNS}.`);
                         console.log("Docx converted successfully");
@@ -4171,6 +5142,32 @@ function stripPipeVFromFirstColumn() {
         const raw = (firstCol.textContent || '').trim();
         const cleaned = raw.replace(/^\|v(.*?)\|?$/, '$1').trim();
         if (cleaned !== raw) firstCol.textContent = cleaned;
+    });
+}
+
+const TP_ROW_PIPEV_ATTR = 'data-tp-row-pipev';
+/** Internal-only |v… tokens (e.g. Excel export) in script/cue columns — whole cell is just this token. */
+const TP_PIPEV_MARKER_ONLY = /^\|v(?:\u2011|-)?[A-Za-z0-9_.]+\|?$/;
+
+/**
+ * Replace marker-only content in columns after the line# column with nbsp so they don’t show on screen.
+ * Sets data-tp-row-pipev on the row so row-font-12 / white pill still apply after |v is removed from text.
+ */
+function stripPipeVMarkersFromContentColumns() {
+    if (!teleprompterText) return;
+    teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
+        const cols = row.querySelectorAll(':scope > .script-column');
+        for (let i = 1; i < cols.length; i++) {
+            const col = cols[i];
+            if (col.classList.contains('user-col-hidden') || col.classList.contains('broadcast-hidden')) continue;
+            const cell = col.querySelector('.cell-content') || col.querySelector('.cell-locker') || col;
+            const raw = (cell.textContent || '').trim();
+            if (!raw || raw === '\u00A0') continue;
+            if (TP_PIPEV_MARKER_ONLY.test(raw)) {
+                cell.textContent = '\u00A0';
+                row.setAttribute(TP_ROW_PIPEV_ATTR, '1');
+            }
+        }
     });
 }
 
@@ -4323,47 +5320,84 @@ function loadFileContent(file, index) {
         if (ext === 'docx' || ext === 'doc') {
             mammoth.convertToHtml({arrayBuffer: e.target.result})
                 .then(result => {
-                    contentStore[index] = result.value;
+                    const xlsxStructure = convertDocxHtmlToXlsxStructure(result.value);
+                    let { html } = normalizeContentToMax3Columns(xlsxStructure);
+                    html = stripNumericAngleMarkers(html);
+                    contentStore[index] = html;
                     if (currentFileIndex === index) {
-                        teleprompterText.innerHTML = result.value;
+                        teleprompterText.innerHTML = html;
                         delete teleprompterText.dataset.placeholder;
                         processTableColumns();
                         wrapCellContentInBlock();
+                        replaceAsciiHyphensInTextNodes(teleprompterText);
                         requestAnimationFrame(() => {
                             convertBkmkPlaceholdersToBookmarks();
                             updateBookmarkSidebar();
+                            replaceAsciiHyphensInTextNodes(teleprompterText);
                             if (currentFileIndex === index && index < contentStore.length)
                                 contentStore[index] = teleprompterText.innerHTML.trim();
                         });
                     }
                 });
         } else if (ext === 'xlsx' || ext === 'xls') {
-            const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, {type: 'array'});
-            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-            const html = XLSX.utils.sheet_to_html(firstSheet);
-            contentStore[index] = html;
-            if (currentFileIndex === index) {
-                teleprompterText.innerHTML = html;
-                delete teleprompterText.dataset.placeholder;
-                processTableColumns();
-                wrapCellContentInBlock();
-                requestAnimationFrame(() => {
-                    convertBkmkPlaceholdersToBookmarks();
-                    updateBookmarkSidebar();
-                    if (currentFileIndex === index && index < contentStore.length)
-                        contentStore[index] = teleprompterText.innerHTML.trim();
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                const range = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : { s: { c: 0, r: 0 }, e: { c: 0, r: 0 } };
+                const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                const allCols = [];
+                for (let c = range.s.c; c <= range.e.c; c++) allCols.push(c);
+                const maxCols = MAX_COLUMNS;
+                const selectedCols = allCols.slice(0, maxCols);
+                let html = '<div class="script-container">';
+                json.forEach((row) => {
+                    const cells = selectedCols.map(colIdx => row[colIdx] != null ? String(row[colIdx]).trim() : '');
+                    if (allCols.length > maxCols) {
+                        const extra = allCols.slice(maxCols).map(colIdx => row[colIdx] != null ? String(row[colIdx]).trim() : '').join(' ').trim();
+                        if (extra && cells.length >= maxCols) cells[maxCols - 1] = (cells[maxCols - 1] || '') + (cells[maxCols - 1] ? ' ' : '') + extra;
+                    }
+                    html += '<div class="script-row-wrapper">';
+                    cells.forEach(val => {
+                        let cellText = val || '';
+                        cellText = stripNumericAngleMarkers(cellText).replace(/-/g, UNICODE_NB_HYPHEN);
+                        html += `<div class="script-column"><div class="cell-content">${cellText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div></div>`;
+                    });
+                    html += '</div>';
                 });
+                html += '</div>';
+                let { html: normalized } = normalizeContentToMax3Columns(html);
+                normalized = stripNumericAngleMarkers(normalized);
+                contentStore[index] = normalized;
+                if (currentFileIndex === index) {
+                    teleprompterText.innerHTML = normalized;
+                    delete teleprompterText.dataset.placeholder;
+                    processTableColumns();
+                    wrapCellContentInBlock();
+                    replaceAsciiHyphensInTextNodes(teleprompterText);
+                    requestAnimationFrame(() => {
+                        convertBkmkPlaceholdersToBookmarks();
+                        updateBookmarkSidebar();
+                        replaceAsciiHyphensInTextNodes(teleprompterText);
+                        if (currentFileIndex === index && index < contentStore.length)
+                            contentStore[index] = teleprompterText.innerHTML.trim();
+                    });
+                }
+            } catch (err) {
+                console.error('❌ XLSX load error:', err);
             }
         } else {
-            const text = new TextDecoder().decode(e.target.result);
+            let text = new TextDecoder().decode(e.target.result);
+            text = stripNumericAngleMarkers(text);
             contentStore[index] = text;
             if (currentFileIndex === index) {
                 teleprompterText.innerHTML = text;
                 delete teleprompterText.dataset.placeholder;
+                replaceAsciiHyphensInTextNodes(teleprompterText);
                 requestAnimationFrame(() => {
                     convertBkmkPlaceholdersToBookmarks();
                     updateBookmarkSidebar();
+                    replaceAsciiHyphensInTextNodes(teleprompterText);
                     if (currentFileIndex === index && index < contentStore.length)
                         contentStore[index] = teleprompterText.innerHTML.trim();
                 });
@@ -4447,8 +5481,7 @@ function setActiveBookmarkByIndex(idx) {
 
 function updateBookmarkHighlightFromScroll() {
     const view = document.getElementById('teleprompter-view');
-    checkTopPillAndGoToPreviousFile();
-    checkBottomPillAndAdvanceToNextFile();
+    /* Filename pill triggers run from scroll listener + auto-scroll loop only; a 2nd pass here sees scrollDelta 0 */
     const bars = getSortedBookmarkDots();
     if (!view || bars.length === 0) return;
     if (bookmarkNavigationInProgress && pendingBookmarkTargetIndex >= 0) {
@@ -4490,12 +5523,21 @@ function checkTopPillAndGoToPreviousFile() {
     if (!hasPrev) return;
     const currentScrollTop = view.scrollTop;
     const scrollDelta = lastScrollTopForPillTrigger != null ? currentScrollTop - lastScrollTopForPillTrigger : 0;
-    const scrollingUp = (typeof scrollSpeed !== 'undefined' && scrollSpeed < 0) || (scrollDelta < 0);
-    if (!scrollingUp) return;
+    const playingBackward = typeof scrollSpeed !== 'undefined' && scrollSpeed < 0;
+    const manualTowardTop = scrollDelta < 0;
+    const scrollingTowardPrev = playingBackward || manualTowardTop;
+    if (!scrollingTowardPrev) return;
+
+    const viewRect = view.getBoundingClientRect();
     const indicatorY = wrapper.getBoundingClientRect().top + wrapper.getBoundingClientRect().height / 2;
     const rect = topPill.getBoundingClientRect();
-    const indicatorTouchingPill = indicatorY >= rect.top && indicatorY <= rect.bottom;
-    if (!indicatorTouchingPill) {
+    const pad = 22; /* px tolerance for sync line vs pill */
+    const indicatorOverlapsPill = indicatorY >= rect.top - pad && indicatorY <= rect.bottom + pad;
+    /* Fast wheel/trackpad can skip the overlap frame; whole pill still visible but entirely above sync line */
+    const pillVisibleInView = rect.bottom > viewRect.top + 6 && rect.top < viewRect.bottom - 6;
+    const pillScrolledPastSyncLine = rect.bottom < indicatorY - 8 && pillVisibleInView;
+
+    if (!indicatorOverlapsPill && !pillScrolledPastSyncLine) {
         topPillTriggerFired = false;
         return;
     }
@@ -4517,7 +5559,6 @@ function checkBottomPillAndAdvanceToNextFile() {
     if (!hasNext) return;
     const currentScrollTop = view.scrollTop;
     const scrollDelta = lastScrollTopForPillTrigger != null ? currentScrollTop - lastScrollTopForPillTrigger : 0;
-    lastScrollTopForPillTrigger = currentScrollTop;
     const scrollingDown = (typeof scrollSpeed !== 'undefined' && scrollSpeed > 0) || (scrollDelta > 0);
     if (!scrollingDown) return;
     const indicatorY = wrapper.getBoundingClientRect().top + wrapper.getBoundingClientRect().height / 2;
@@ -4894,6 +5935,63 @@ function wrapCellContentInBlock() {
     };
     teleprompterText.querySelectorAll('.script-column').forEach(col => wrap(col));
     teleprompterText.querySelectorAll('.cell-locker').forEach(cell => wrap(cell));
+    /* Rows with no script-column: wrap all direct content in script-column > cell-content */
+    teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
+        const cols = row.querySelectorAll(':scope > .script-column');
+        if (cols.length > 0) return;
+        const col = document.createElement('div');
+        col.className = 'script-column';
+        const content = document.createElement('div');
+        content.className = 'cell-content';
+        while (row.firstChild) content.appendChild(row.firstChild);
+        col.appendChild(content);
+        row.appendChild(col);
+    });
+    /* Move any direct children that aren't script-column (stray b, span) into the first cell */
+    teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
+        const cols = row.querySelectorAll(':scope > .script-column');
+        const firstCell = cols[0]?.querySelector('.cell-content');
+        if (!firstCell) return;
+        const bad = Array.from(row.children).filter(c => !c.classList?.contains('script-column'));
+        bad.forEach(el => firstCell.appendChild(el));
+    });
+    /* Direct TEXT under the row (e.g. corrupted HTML "…wrapper>35</div>") — row.children ignores text nodes; hoist into first cell */
+    teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
+        const cols = row.querySelectorAll(':scope > .script-column');
+        if (cols.length === 0) return;
+        const firstCell = cols[0].querySelector('.cell-content') || cols[0].querySelector('.cell-locker');
+        if (!firstCell) return;
+        const toMove = [];
+        row.childNodes.forEach(n => {
+            if (n.nodeType === Node.TEXT_NODE && (n.textContent || '').trim() !== '') toMove.push(n);
+        });
+        toMove.forEach(n => firstCell.insertBefore(n, firstCell.firstChild));
+    });
+    /* Pad short rows so every row matches the max column count in this script (fixes orphan line# rows after export/edits). */
+    const gridRows = teleprompterText.querySelectorAll('.script-container .script-row-wrapper');
+    if (gridRows.length > 0) {
+        let maxCols = 0;
+        gridRows.forEach(r => {
+            const n = r.querySelectorAll(':scope > .script-column').length;
+            if (n > maxCols) maxCols = n;
+        });
+        maxCols = Math.min(maxCols, MAX_COLUMNS);
+        if (maxCols > 1) {
+            gridRows.forEach(row => {
+                let n = row.querySelectorAll(':scope > .script-column').length;
+                while (n < maxCols) {
+                    const col = document.createElement('div');
+                    col.className = 'script-column';
+                    const cell = document.createElement('div');
+                    cell.className = 'cell-content';
+                    cell.textContent = '\u00A0';
+                    col.appendChild(cell);
+                    row.appendChild(col);
+                    n++;
+                }
+            });
+        }
+    }
 }
 
 const BKMK_PLACEHOLDER = '{BKMK}';
@@ -5089,6 +6187,70 @@ const KEYWORD_PILL_YELLOW_BRACKETS = /^\[.*\]$/;
 /** Matches "Name (00:00 – 18:41)" or "Brianna (1:23 - 5:00)" - speaker/time rows -> blue pill */
 const KEYWORD_PILL_BLUE_NAME_TIME = /^[A-Za-z][A-Za-z0-9\s\-'.]*\s*\([^)]+\)\s*$/;
 
+/** Rows inserted by ensureEndRowBeforeStaySwitchRows; stripped each pass so we do not duplicate. */
+const AUTO_END_PILL_ATTR = 'data-auto-end-pill';
+
+function getScriptRowContainer() {
+    if (!teleprompterText) return null;
+    return teleprompterText.querySelector('.script-container') || teleprompterText;
+}
+
+function buildEndRowFromStaySwitchTemplate(greenRow) {
+    const row = document.createElement('div');
+    row.className = Array.from(greenRow.classList).filter((c) => !c.startsWith('keyword-pill-')).join(' ');
+    if (!row.classList.contains('script-row-wrapper')) row.classList.add('script-row-wrapper');
+    const cols = greenRow.querySelectorAll(':scope > .script-column');
+    if (cols.length === 0) {
+        const col = document.createElement('div');
+        col.className = 'script-column';
+        const cell = document.createElement('div');
+        cell.className = 'cell-content';
+        cell.textContent = 'END';
+        col.appendChild(cell);
+        row.appendChild(col);
+        return row;
+    }
+    let placedEnd = false;
+    cols.forEach((col) => {
+        const nc = document.createElement('div');
+        nc.className = col.className;
+        const inner = document.createElement('div');
+        inner.className = 'cell-content';
+        const hiddenCol = col.classList.contains('user-col-hidden') || col.classList.contains('broadcast-hidden');
+        if (!placedEnd && !hiddenCol) {
+            inner.textContent = 'END';
+            placedEnd = true;
+        } else {
+            inner.textContent = '';
+        }
+        nc.appendChild(inner);
+        row.appendChild(nc);
+    });
+    return row;
+}
+
+/** Every file gets a red END row immediately before any STAY/SWITCH keyword row (script pills). */
+function ensureEndRowBeforeStaySwitchRows() {
+    const container = getScriptRowContainer();
+    if (!container) return;
+    container.querySelectorAll(`.script-row-wrapper[${AUTO_END_PILL_ATTR}]`).forEach((el) => el.remove());
+    const rows = Array.from(container.querySelectorAll(':scope > .script-row-wrapper'));
+    const insertBefore = [];
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const lower = (row.textContent || '').trim().toLowerCase();
+        if (!['stay', 'switch'].includes(lower)) continue;
+        const prev = rows[i - 1];
+        const prevIsEnd = prev && (prev.textContent || '').trim().toLowerCase() === 'end';
+        if (!prevIsEnd) insertBefore.push(row);
+    }
+    insertBefore.forEach((greenRow) => {
+        const nr = buildEndRowFromStaySwitchTemplate(greenRow);
+        nr.setAttribute(AUTO_END_PILL_ATTR, '1');
+        greenRow.parentNode.insertBefore(nr, greenRow);
+    });
+}
+
 function getInterpreterFromFilename(name) {
     if (!name || typeof name !== 'string') return '';
     const base = stripFileExtension(name);
@@ -5104,13 +6266,22 @@ function isCurrentFileXlsx() {
     return ext === 'xlsx' || ext === 'xls';
 }
 
+function isCurrentFileDocx() {
+    if (currentFileIndex < 0 || currentFileIndex >= fileStore.length) return false;
+    const name = fileStore[currentFileIndex].name;
+    if (!name || typeof name !== 'string') return false;
+    const ext = name.split('.').pop().toLowerCase();
+    return ext === 'docx' || ext === 'doc';
+}
+
 function applyKeywordPills() {
     if (!teleprompterText) return;
-    if (isCurrentFileXlsx()) return;
+    ensureEndRowBeforeStaySwitchRows();
     const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
     const currentInterpreter = (currentFileIndex >= 0 && fileStore[currentFileIndex]) ? getInterpreterFromFilename(fileStore[currentFileIndex].name) : '';
     const nextInterpreter = (currentFileIndex >= 0 && currentFileIndex + 1 < fileStore.length && fileStore[currentFileIndex + 1]) ? getInterpreterFromFilename(fileStore[currentFileIndex + 1].name) : '';
     const switchLabel = (nextInterpreter && nextInterpreter !== currentInterpreter) ? 'SWITCH' : 'STAY';
+    const xlsxOnlyPills = isCurrentFileXlsx();
 
     rows.forEach(row => {
         const raw = (row.textContent || '').trim();
@@ -5122,11 +6293,11 @@ function applyKeywordPills() {
         } else if (['switch', 'stay'].includes(lower)) {
             row.classList.add('keyword-pill-green');
             setFirstVisibleCellText(row, switchLabel);
-        } else if (KEYWORD_PILL_YELLOW_EXACT.includes(lower) || KEYWORD_PILL_YELLOW_VERSE.test(raw) || KEYWORD_PILL_YELLOW_NAME.test(raw) || KEYWORD_PILL_YELLOW_BRACKETS.test(raw)) {
+        } else if (!xlsxOnlyPills && (KEYWORD_PILL_YELLOW_EXACT.includes(lower) || KEYWORD_PILL_YELLOW_VERSE.test(raw) || KEYWORD_PILL_YELLOW_NAME.test(raw) || KEYWORD_PILL_YELLOW_BRACKETS.test(raw))) {
             row.classList.add('keyword-pill-yellow');
-        } else if (KEYWORD_PILL_BLUE_NAME_TIME.test(raw)) {
+        } else if (!xlsxOnlyPills && KEYWORD_PILL_BLUE_NAME_TIME.test(raw)) {
             row.classList.add('keyword-pill-blue');
-        } else if (raw.includes('|v')) {
+        } else if (row.getAttribute(TP_ROW_PIPEV_ATTR) === '1' || (!xlsxOnlyPills && raw.includes('|v'))) {
             row.classList.add('keyword-pill-white');
         }
         if (row.classList.contains('keyword-pill-red') || row.classList.contains('keyword-pill-yellow') || row.classList.contains('keyword-pill-green') || row.classList.contains('keyword-pill-blue') || row.classList.contains('keyword-pill-white')) {
@@ -5159,6 +6330,7 @@ function stripFileExtension(name) {
 function updateFilenamePills() {
     const topPill = document.getElementById('filename-pill-top');
     const bottomPill = document.getElementById('filename-pill-bottom');
+    const preStayEndPill = document.getElementById('pre-stay-end-pill');
     const staySwitchPill = document.getElementById('stay-switch-pill');
     const view = document.getElementById('teleprompter-view');
     if (!topPill || !bottomPill) return;
@@ -5183,7 +6355,18 @@ function updateFilenamePills() {
         bottomPill.classList.add('hidden');
         bottomPill.setAttribute('aria-hidden', 'true');
     }
-    /* Stay/Switch pill: show when next file exists (green STAY/SWITCH); when last file, show red END */
+    /* Red END above green STAY/SWITCH: END for every open file; green only when a next file exists */
+    if (preStayEndPill) {
+        if (hasCurrent) {
+            preStayEndPill.textContent = 'END';
+            preStayEndPill.classList.remove('hidden');
+            preStayEndPill.setAttribute('aria-hidden', 'false');
+        } else {
+            preStayEndPill.textContent = '';
+            preStayEndPill.classList.add('hidden');
+            preStayEndPill.setAttribute('aria-hidden', 'true');
+        }
+    }
     if (staySwitchPill) {
         if (hasNext) {
             const currentInterpreter = getInterpreterFromFilename(fileStore[currentFileIndex].name);
@@ -5192,11 +6375,6 @@ function updateFilenamePills() {
             const nextName = nextInterpreter || stripFileExtension(fileStore[currentFileIndex + 1].name) || '';
             staySwitchPill.textContent = nextName ? label + ' ' + nextName : label;
             staySwitchPill.classList.remove('hidden', 'end-pill');
-            staySwitchPill.setAttribute('aria-hidden', 'false');
-        } else if (hasCurrent) {
-            staySwitchPill.textContent = 'END';
-            staySwitchPill.classList.add('end-pill');
-            staySwitchPill.classList.remove('hidden');
             staySwitchPill.setAttribute('aria-hidden', 'false');
         } else {
             staySwitchPill.textContent = '';
@@ -5211,6 +6389,7 @@ function updateFilenamePills() {
         const fontSize = style.fontSize;
         const fontFamily = style.fontFamily;
         const pillsToSync = [topPill, bottomPill];
+        if (preStayEndPill && !preStayEndPill.classList.contains('hidden')) pillsToSync.push(preStayEndPill);
         if (staySwitchPill && !staySwitchPill.classList.contains('hidden')) pillsToSync.push(staySwitchPill);
         pillsToSync.forEach(p => {
             if (fontSize) p.style.fontSize = fontSize;
@@ -5248,6 +6427,7 @@ function shrinkAllPillsToFit() {
     const pills = [
         document.getElementById('filename-pill-top'),
         document.getElementById('filename-pill-bottom'),
+        document.getElementById('pre-stay-end-pill'),
         document.getElementById('stay-switch-pill')
     ].filter(Boolean);
     pills.forEach(p => {
@@ -5299,6 +6479,7 @@ function loadScriptToEditor(index, options) {
     if (currentFileIndex >= 0 && currentFileIndex < contentStore.length && currentFileIndex !== index) {
         const html = teleprompterText.innerHTML.trim();
         contentStore[currentFileIndex] = (html === '<br>' || html === '') ? '' : html;
+        if (window.__fontSizeDebug) console.log('[FontSize] REPORT loadScriptToEditor SAVE before switch', { fromIndex: currentFileIndex, fromName: fileStore[currentFileIndex]?.name, toIndex: index, toName: fileStore[index]?.name });
     }
 
     rowColorsCache = [];
@@ -5308,9 +6489,17 @@ function loadScriptToEditor(index, options) {
     if (row) row.classList.add('active');
 
     currentFileIndex = index;
-    const content = contentStore[index];
+    let content = contentStore[index];
+    if (typeof content === 'string' && content.length) {
+        const stripped = stripNumericAngleMarkers(content);
+        if (stripped !== content) contentStore[index] = stripped;
+        content = stripped;
+    }
     const contentHasBkmk = (content && typeof content === 'string') ? content.indexOf('{BKMK}') !== -1 : false;
     console.log('[BKMK] loadScriptToEditor index=', index, 'content length=', (content && content.length) || 0, 'content contains "{BKMK}":', contentHasBkmk);
+    /* Reset root font styles so previous file's fontSize/fontFamily don't bleed into this file */
+    teleprompterText.style.fontSize = '';
+    teleprompterText.style.fontFamily = '';
     teleprompterText.innerHTML = (content === '' || !content) ? '<br>' : content;
     delete teleprompterText.dataset.placeholder;
     processTableColumns();
@@ -5318,6 +6507,8 @@ function loadScriptToEditor(index, options) {
     removeUuidFromFirstColumn();
     stripPipeVFromFirstColumn();
     applyColumnVisibilityToEditor();
+    replaceAsciiHyphensInTextNodes(teleprompterText);
+    stripPipeVMarkersFromContentColumns();
     if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
         contentStore[currentFileIndex] = teleprompterText.innerHTML.trim();
     }
@@ -5335,21 +6526,26 @@ function loadScriptToEditor(index, options) {
             btnOverviewToggle.classList.remove('overview-active');
             document.body.classList.remove('overview-mode');
             fontSizeSelect.value = savedFontSizeBeforeOverview || '80';
-            lastFontChangeSource = 'size';
-            applyFontSizeOnlyToAllContent(fontSizeSelect.value);
+            /* Don't apply font size to all content on load – preserves format-span-inline / Select-item formatting saved in contentStore */
         }
     }
 
     teleprompterText.focus();
+    if (window.__fontSizeDebug) console.log('[FontSize] REPORT loadScriptToEditor LOADED', { index, fileName: fileStore[index]?.name, contentLen: (content && content.length) || 0, rootFontSize: teleprompterText.style.fontSize || '(none)', rootFontFamily: teleprompterText.style.fontFamily || '(none)' });
     requestAnimationFrame(() => {
         refreshSelectFontTarget();
-        syncColumnWidths();
+        syncColumnWidths(true);
         /* Replace {BKMK} with bookmark (red dot + number in list) after layout so formatting is unchanged */
         console.log('[BKMK] rAF: about to call convertBkmkPlaceholdersToBookmarks for file index', index);
         convertBkmkPlaceholdersToBookmarks();
-        applyKeywordPills();
         shrinkAllPillsToFit();
         updateBookmarkSidebar();
+        replaceAsciiHyphensInTextNodes(teleprompterText);
+        stripPipeVMarkersFromContentColumns();
+        wrapCellContentInBlock();
+        applyKeywordPills();
+        syncColumnWidths(true);
+        shrinkAllPillsToFit();
         if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
             contentStore[currentFileIndex] = teleprompterText.innerHTML.trim();
         }
@@ -5785,7 +6981,7 @@ function getMirrorStylePayload() {
                 if (rect.width > 0) contentWidthPx = rect.width;
             }
             if ((contentWidthPx == null || contentWidthPx <= 0) && cols.length > 1) {
-                const availableWidth = teleprompterText.clientWidth;
+                const availableWidth = getTeleprompterContentWidthPx();
                 const firstCol = cols[0];
                 const firstColWidth = firstCol ? firstCol.getBoundingClientRect().width : 0;
                 contentWidthPx = (availableWidth - firstColWidth) / (cols.length - 1);
@@ -5824,7 +7020,7 @@ window.addEventListener('resize', () => {
             window.resizeTo(extendedWindowWidth, extendedWindowHeight);
         }
     }
-    syncColumnWidths();
+    syncColumnWidths(true);
     syncMirrorStyles();
     if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
     requestAnimationFrame(() => shrinkAllPillsToFit());
