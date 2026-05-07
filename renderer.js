@@ -5373,9 +5373,10 @@ function fillMasterScriptTocPageNumbers(doc) {
         const y1 = yDoc(sec1);
         /*
          * Map where section 1 begins (y1 px from doc top) to ~page 2 when the TOC fits on page 1.
-         * Divisor ~1.52 matches Chrome print preview density better than y÷960 (section 3 was 7 vs actual 9).
+         * Larger divisor → smaller implied content height → higher TOC page numbers (matches Chrome print
+         * preview where headers/footers shrink each printed page). Tuned so rows track PDF page indices.
          */
-        const implied = y1 > 0 ? y1 / 1.52 : nominalContentH;
+        const implied = y1 > 0 ? y1 / 1.72 : nominalContentH;
         contentH = Math.min(nominalContentH - 48, Math.max(300, implied));
     }
     function pageFor(el) {
