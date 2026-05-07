@@ -1883,8 +1883,8 @@ body.overview-mode #teleprompter-text .script-row-wrapper.row-col3-one-more .scr
     line-height: 1;
     padding: 2px 4px;
     border-radius: 999px;
-    background: rgba(74, 158, 255, 0.2);
-    border: 1px solid rgba(74, 158, 255, 0.7);
-    color: #9fc8ff;
+    background: rgba(74, 158, 255, 0.52);
+    border: 1px solid rgba(102, 178, 255, 0.95);
+    color: #e8f2ff;
     pointer-events: none;
 }
