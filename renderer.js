@@ -4701,9 +4701,101 @@ function indexToColumnLetter(colIndex) {
 // 4. FILE & EXCEL MANAGEMENT (WITH LOGGING)
 // =========================================
 
-openFileButton.onclick = () => {
+const SUPPORTED_CONTENT_EXTENSIONS = ['.html', '.htm', '.txt', '.xlsx', '.xls', '.docx', '.doc'];
+const TELEPROMPTER_HTML_SUFFIX = '.teleprompter.html';
+const PRIORITY_BY_EXTENSION = {
+    '.html': 50,
+    '.htm': 45,
+    '.xlsx': 40,
+    '.xls': 35,
+    '.docx': 30,
+    '.doc': 25,
+    '.txt': 20
+};
+function getFileLowerName(file) {
+    return (file?.name || '').toLowerCase();
+}
+function getFileExtensionLower(fileName) {
+    const n = (fileName || '').toLowerCase();
+    const dot = n.lastIndexOf('.');
+    return dot >= 0 ? n.slice(dot) : '';
+}
+function isSupportedContentFile(file) {
+    const ext = getFileExtensionLower(file?.name || '');
+    return SUPPORTED_CONTENT_EXTENSIONS.includes(ext);
+}
+function getCanonicalBaseName(fileName) {
+    const n = (fileName || '').toLowerCase();
+    if (n.endsWith(TELEPROMPTER_HTML_SUFFIX)) {
+        return n.slice(0, -TELEPROMPTER_HTML_SUFFIX.length);
+    }
+    const ext = getFileExtensionLower(n);
+    return ext ? n.slice(0, -ext.length) : n;
+}
+function getSelectionRank(file) {
+    const lower = getFileLowerName(file);
+    if (lower.endsWith(TELEPROMPTER_HTML_SUFFIX)) return 100;
+    const ext = getFileExtensionLower(lower);
+    return PRIORITY_BY_EXTENSION[ext] || 0;
+}
+function selectPreferredContentFiles(files) {
+    const byBase = new Map();
+    for (const file of files) {
+        if (!isSupportedContentFile(file)) continue;
+        const base = getCanonicalBaseName(file.name);
+        const rank = getSelectionRank(file);
+        const current = byBase.get(base);
+        if (!current || rank > current.rank) {
+            byBase.set(base, { file, rank });
+        }
+    }
+    return Array.from(byBase.values()).map(v => v.file);
+}
+async function loadFilesIntoRunlist(files) {
+    let metadataApplied = false;
+    const contentCandidates = [];
+    for (const file of files) {
+        if (isEventMetadataFile(file)) {
+            const metadata = await readEventMetadataFromFile(file);
+            if (metadata) {
+                applyEventMetadataToForm(metadata);
+                metadataApplied = true;
+            }
+            continue;
+        }
+        contentCandidates.push(file);
+    }
+    const regularFiles = selectPreferredContentFiles(contentCandidates);
+    const countBefore = fileStore.length;
+    regularFiles.forEach(file => addFileToRunlist(file));
+    if (countBefore > 0 && fileStore.length > countBefore) {
+        sortRunlistIfNumericPrefix(countBefore);
+    }
+    if (metadataApplied) console.log('Event metadata loaded and form pre-populated.');
+}
+async function openFolderWithDirectoryPicker() {
+    if (!('showDirectoryPicker' in window)) return false;
+    try {
+        const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+        const files = [];
+        for await (const entry of dirHandle.values()) {
+            if (entry.kind !== 'file') continue; /* ignore nested folders by design */
+            const file = await entry.getFile();
+            files.push(file);
+        }
+        console.log(`Folder selected with ${files.length} top-level entries`);
+        await loadFilesIntoRunlist(files);
+        return true;
+    } catch (err) {
+        if (err && err.name === 'AbortError') return true;
+        console.warn('Directory picker failed; falling back to file input:', err);
+        return false;
+    }
+}
+openFileButton.onclick = async () => {
     console.log("📂 Open File button clicked");
-    fileOpener.click();
+    const handledByDirectoryPicker = await openFolderWithDirectoryPicker();
+    if (!handledByDirectoryPicker) fileOpener.click();
 };
 
 if (undoButton) undoButton.onclick = () => { if (!undo()) document.execCommand('undo'); };
@@ -4920,14 +5012,10 @@ async function saveCurrentFile() {
 
 saveButton.onclick = () => saveCurrentFile();
 
-fileOpener.onchange = (e) => {
+fileOpener.onchange = async (e) => {
     const files = Array.from(e.target.files);
     console.log(`Files selected: ${files.length}`, files);
-    const countBefore = fileStore.length;
-    files.forEach(file => addFileToRunlist(file));
-    if (countBefore > 0 && fileStore.length > countBefore) {
-        sortRunlistIfNumericPrefix(countBefore);
-    }
+    await loadFilesIntoRunlist(files);
     fileOpener.value = "";
 };
 
@@ -5000,6 +5088,89 @@ if (settingsOverlay) {
 const eventPlanOverlay = document.getElementById('event-plan-overlay');
 const btnEventPlanPrint = document.getElementById('btn-event-plan-print');
 const btnEventPlanClose = document.getElementById('btn-event-plan-close');
+const EVENT_METADATA_FILENAME = 'event_metadata.json';
+let eventMetadataSaveHandle = null;
+function getEventPlanFields() {
+    return {
+        titleEl: document.getElementById('event-plan-title'),
+        callTimeEl: document.getElementById('event-plan-call-time'),
+        runTimeEl: document.getElementById('event-plan-run-time')
+    };
+}
+function applyEventMetadataToForm(metadata) {
+    if (!metadata || typeof metadata !== 'object') return;
+    const { titleEl, callTimeEl, runTimeEl } = getEventPlanFields();
+    if (titleEl) titleEl.value = typeof metadata.eventTitle === 'string' ? metadata.eventTitle : '';
+    if (callTimeEl) callTimeEl.value = typeof metadata.eventDateCallTime === 'string' ? metadata.eventDateCallTime : '';
+    if (runTimeEl) runTimeEl.value = typeof metadata.runTime === 'string' ? metadata.runTime : '';
+}
+function collectEventMetadataFromForm() {
+    const { titleEl, callTimeEl, runTimeEl } = getEventPlanFields();
+    return {
+        eventTitle: titleEl ? titleEl.value.trim() : '',
+        eventDateCallTime: callTimeEl ? callTimeEl.value.trim() : '',
+        runTime: runTimeEl ? runTimeEl.value.trim() : ''
+    };
+}
+function isEventMetadataFile(file) {
+    return !!file && typeof file.name === 'string' && file.name.toLowerCase() === EVENT_METADATA_FILENAME;
+}
+async function readEventMetadataFromFile(file) {
+    if (!isEventMetadataFile(file)) return null;
+    try {
+        const raw = await file.text();
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        return {
+            eventTitle: typeof parsed.eventTitle === 'string' ? parsed.eventTitle : '',
+            eventDateCallTime: typeof parsed.eventDateCallTime === 'string' ? parsed.eventDateCallTime : '',
+            runTime: typeof parsed.runTime === 'string' ? parsed.runTime : ''
+        };
+    } catch (err) {
+        console.warn('Failed to read event metadata file:', err);
+        return null;
+    }
+}
+async function saveEventMetadataFile(metadata) {
+    if (!metadata || typeof metadata !== 'object') return;
+    const payload = JSON.stringify({
+        eventTitle: metadata.eventTitle || '',
+        eventDateCallTime: metadata.eventDateCallTime || '',
+        runTime: metadata.runTime || '',
+        updatedAt: new Date().toISOString()
+    }, null, 2);
+    const blob = new Blob([payload], { type: 'application/json' });
+    try {
+        if (!eventMetadataSaveHandle && 'showSaveFilePicker' in window) {
+            eventMetadataSaveHandle = await window.showSaveFilePicker({
+                suggestedName: EVENT_METADATA_FILENAME,
+                types: [{ description: 'Event metadata', accept: { 'application/json': ['.json'] } }]
+            });
+        }
+        if (eventMetadataSaveHandle) {
+            const writable = await eventMetadataSaveHandle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            return;
+        }
+    } catch (err) {
+        console.warn('Event metadata save via picker failed; falling back to download:', err);
+        eventMetadataSaveHandle = null;
+    }
+    if (typeof saveAs === 'function') {
+        saveAs(blob, EVENT_METADATA_FILENAME);
+        return;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = EVENT_METADATA_FILENAME;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+        URL.revokeObjectURL(a.href);
+        a.remove();
+    }, 250);
+}
 function openEventPlanOverlay() {
     if (!eventPlanOverlay) return;
     eventPlanOverlay.classList.remove('hidden');
@@ -5053,13 +5224,18 @@ function buildEventPlanHtml(files, title, callTime, runTime) {
             hasNumericOrder: false
         });
     }
-    const locationImgMap = { L: 'graphics/Left_Side.jpg', R: 'graphics/Right_side.jpg', LR: 'graphics/Middle.jpg' };
+    const locationImgMap = {
+        L: ['graphics/Left_side.jpg', 'graphics/Left_side.png', 'graphics/Left_Side.jpg'],
+        R: ['graphics/Right_side.jpg', 'graphics/Right_side.png'],
+        LR: ['graphics/Middle.jpg', 'graphics/Middle.png']
+    };
     const locationCell = (loc) => {
         if (!loc) return '<span>-</span>';
-        const imgFile = locationImgMap[loc];
+        const imgFiles = locationImgMap[loc];
         const escaped = String(loc).replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        if (imgFile) {
-            return '<img src="' + imgFile + '" alt="' + escaped + '" class="event-plan-loc-img" title="' + escaped + '">';
+        if (imgFiles && imgFiles.length) {
+            const sourceSet = imgFiles.map((src) => src + ' 1x').join(', ');
+            return '<img src="' + imgFiles[0] + '" srcset="' + sourceSet + '" alt="' + escaped + '" class="event-plan-loc-img" title="' + escaped + '">';
         }
         return '<span>' + escaped + '</span>';
     };
@@ -5272,17 +5448,16 @@ ${sectionHtml}
 }
 
 if (btnEventPlanPrint && eventPlanOverlay) {
-    btnEventPlanPrint.onclick = () => {
+    btnEventPlanPrint.onclick = async () => {
         if (!fileStore || fileStore.length === 0) {
             alert('No files in the Files list. Add files first.');
             return;
         }
-        const titleEl = document.getElementById('event-plan-title');
-        const callTimeEl = document.getElementById('event-plan-call-time');
-        const runTimeEl = document.getElementById('event-plan-run-time');
-        const title = titleEl ? titleEl.value.trim() : '';
-        const callTime = callTimeEl ? callTimeEl.value.trim() : '';
-        const runTime = runTimeEl ? runTimeEl.value.trim() : '';
+        const metadata = collectEventMetadataFromForm();
+        const title = metadata.eventTitle;
+        const callTime = metadata.eventDateCallTime;
+        const runTime = metadata.runTime;
+        await saveEventMetadataFile(metadata);
         const html = buildEventPlanHtml(fileStore, title, callTime, runTime);
         const w = window.open('', '_blank');
         if (!w) {
