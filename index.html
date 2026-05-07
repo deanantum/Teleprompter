@@ -20,7 +20,15 @@
 
         <header class="top-ribbon">
             <div class="top-ribbon-row top-ribbon-row-1">
-            <button id="btn-open-file" title="Open File"><i class="fa-solid fa-folder-open"></i></button>
+            <fieldset class="open-actions-group" aria-label="Open actions">
+                <legend>Open</legend>
+                <button id="btn-open-file" title="Open File(s)">
+                    <i class="fa-solid fa-file-lines" aria-hidden="true"></i>
+                </button>
+                <button id="btn-open-folder" title="Open Folder">
+                    <i class="fa-solid fa-folder-open" aria-hidden="true"></i>
+                </button>
+            </fieldset>
             <button id="btn-save" title="Save"><i class="fa-solid fa-save"></i></button>
             <div class="event-plan-dropdown" id="event-plan-dropdown" title="Event documents">
                 <button type="button" id="btn-event-plan-trigger" class="event-plan-trigger" title="Event Plan / Event Script"><i class="fa-solid fa-file-lines"></i></button>
@@ -271,7 +279,7 @@
     <div id="f2-prompt" class="hidden">Press F2 to use the mouse</div>
     <div id="mirror-placement-toast" class="mirror-placement-toast hidden" aria-live="polite"></div>
 
-    <input type="file" id="file-opener" multiple style="display: none;" accept=".txt,.html,.htm,.xlsx,.xls,.docx,.doc" />
+    <input type="file" id="file-opener" multiple style="display: none;" accept=".txt,.html,.htm,.xlsx,.xls,.docx,.doc,.json" />
     <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://unpkg.com/docx-preview@0.3.7/dist/docx-preview.js"></script>
     
