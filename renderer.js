@@ -5278,9 +5278,24 @@ function buildEventPlanHtml(files, title, callTime, runTime) {
         return '<span>' + escaped + '</span>';
     };
     const esc = (s) => (s == null || s === '') ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const getItemRowClass = (item) => {
+        const normalized = (item || '').trim().toLowerCase();
+        if (normalized === 'prayer') return 'event-plan-row-prayer';
+        if (normalized === 'music') return 'event-plan-row-music';
+        return '';
+    };
+    const getTelCellClass = (tel) => {
+        const normalized = (tel || '').trim().toLowerCase();
+        if (normalized === 'program' || normalized === 'black') return 'event-plan-tel-black';
+        return '';
+    };
     const tableRows = rows.map(r => {
-        const rowClass = r.hasNumericOrder ? 'event-plan-row-highlight' : '';
-        return `<tr class="${rowClass}"><td>${esc(r.file)}</td><td>${esc(r.item)}</td><td>${esc(r.assignment)}</td><td>${locationCell(r.location)}</td><td>${esc(r.interpreter)}</td><td>${esc(r.tel)}</td></tr>`;
+        const rowClasses = [];
+        if (r.hasNumericOrder) rowClasses.push('event-plan-row-highlight');
+        const itemClass = getItemRowClass(r.item);
+        if (itemClass) rowClasses.push(itemClass);
+        const telClass = getTelCellClass(r.tel);
+        return `<tr class="${rowClasses.join(' ')}"><td>${esc(r.file)}</td><td>${esc(r.item)}</td><td>${esc(r.assignment)}</td><td>${locationCell(r.location)}</td><td>${esc(r.interpreter)}</td><td class="${telClass}">${esc(r.tel)}</td></tr>`;
     }).join('');
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 .event-plan-print{font-family:Arial,sans-serif;color:#000;background:#fff;padding:0;margin:0;}
@@ -5291,6 +5306,9 @@ function buildEventPlanHtml(files, title, callTime, runTime) {
 .event-plan-table th{background:#fff;color:#000;border:1px solid #333;padding:8px 10px;text-align:left;font-weight:bold;}
 .event-plan-table td{border:1px solid #333;padding:8px 10px;}
 .event-plan-row-highlight{background:#d4e8f7;}
+.event-plan-row-prayer{background:#dbeafe;}
+.event-plan-row-music{background:#dcfce7;}
+.event-plan-tel-black{background:#000 !important;color:#fff !important;font-weight:bold;}
 .event-plan-loc-img{max-width:24px;max-height:24px;vertical-align:middle;}
 </style></head><body class="event-plan-print">
 <div class="event-plan-header">
