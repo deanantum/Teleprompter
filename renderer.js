@@ -5351,16 +5351,32 @@ function getPillClassForRow(raw, switchLabel, cells) {
 /**
  * Fill TOC page column in a Master Script popup document.
  * Inline scripts in document.write() popups are unreliable; the opener calls this after load / before print.
- * Uses letter page height minus 1in total vertical margin (matches @page 0.5in top+bottom).
+ *
+ * Effective printed page height is smaller than (11in − 1in margin) × 96px: Chrome/safari print preview
+ * reserves space for the browser header/footer band (date, title, URL, page x/y), so slicing y÷960px
+ * underestimates page indices (e.g. TOC shows 7 vs actual 9). We blend nominal CSS geometry with a
+ * calibration from section 1’s Y offset so the first file maps to page 2 when the TOC fits on page 1.
  */
 function fillMasterScriptTocPageNumbers(doc) {
     if (!doc || typeof doc.querySelectorAll !== 'function') return;
     const PX = 96;
-    const contentH = (11 - 1) * PX;
+    /* Nominal printable body height for Letter with 0.5in top+bottom @page margins */
+    const nominalContentH = (11 - 1) * PX;
     const win = doc.defaultView || window;
     function yDoc(el) {
         const r = el.getBoundingClientRect();
         return r.top + (win.pageYOffset || doc.documentElement.scrollTop || 0);
+    }
+    const sec1 = doc.getElementById('ms-section-1');
+    let contentH = nominalContentH;
+    if (sec1) {
+        const y1 = yDoc(sec1);
+        /*
+         * Map where section 1 begins (y1 px from doc top) to ~page 2 when the TOC fits on page 1.
+         * Divisor ~1.52 matches Chrome print preview density better than y÷960 (section 3 was 7 vs actual 9).
+         */
+        const implied = y1 > 0 ? y1 / 1.52 : nominalContentH;
+        contentH = Math.min(nominalContentH - 48, Math.max(300, implied));
     }
     function pageFor(el) {
         return Math.max(1, Math.floor(yDoc(el) / contentH) + 1);
