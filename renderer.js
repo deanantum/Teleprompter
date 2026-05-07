@@ -2716,8 +2716,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     alert('Popup blocked. Please allow popups to print.');
                     return;
                 }
-                w.document.write(html.replace('</body></html>', '<script>window.onload=function(){window.onafterprint=function(){window.close()};window.print()}<\/script></body></html>'));
+                w.document.write(html.replace('</body></html>', '<script>window.onload=function(){requestAnimationFrame(function(){requestAnimationFrame(function(){window.onafterprint=function(){window.close()};window.print();});});}<\/script></body></html>'));
                 w.document.close();
+                scheduleMasterScriptTocFill(w);
                 w.focus();
             }
         });
@@ -5347,6 +5348,49 @@ function getPillClassForRow(raw, switchLabel, cells) {
     return pill;
 }
 
+/**
+ * Fill TOC page column in a Master Script popup document.
+ * Inline scripts in document.write() popups are unreliable; the opener calls this after load / before print.
+ * Uses letter page height minus 1in total vertical margin (matches @page 0.5in top+bottom).
+ */
+function fillMasterScriptTocPageNumbers(doc) {
+    if (!doc || typeof doc.querySelectorAll !== 'function') return;
+    const PX = 96;
+    const contentH = (11 - 1) * PX;
+    const win = doc.defaultView || window;
+    function yDoc(el) {
+        const r = el.getBoundingClientRect();
+        return r.top + (win.pageYOffset || doc.documentElement.scrollTop || 0);
+    }
+    function pageFor(el) {
+        return Math.max(1, Math.floor(yDoc(el) / contentH) + 1);
+    }
+    doc.querySelectorAll('[data-ms-section]').forEach(function(row) {
+        const id = row.getAttribute('data-ms-section');
+        const sec = id ? doc.getElementById(id) : null;
+        const span = row.querySelector('.ms-toc-page-num');
+        if (span && sec) span.textContent = String(pageFor(sec));
+    });
+}
+
+function scheduleMasterScriptTocFill(win) {
+    if (!win || !win.document) return;
+    const doc = win.document;
+    const run = function() {
+        fillMasterScriptTocPageNumbers(doc);
+        try {
+            win.requestAnimationFrame(function() { fillMasterScriptTocPageNumbers(doc); });
+        } catch (_) {}
+        setTimeout(function() { fillMasterScriptTocPageNumbers(doc); }, 0);
+        setTimeout(function() { fillMasterScriptTocPageNumbers(doc); }, 150);
+        setTimeout(function() { fillMasterScriptTocPageNumbers(doc); }, 500);
+    };
+    win.addEventListener('beforeprint', run);
+    if (doc.readyState === 'complete') run();
+    else win.addEventListener('load', run);
+    run();
+}
+
 /** Build printable master script: all files combined with pill/color format (Aa-mode style). */
 function buildMasterScriptHtml() {
     const esc = (s) => (s == null || s === '') ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -5440,8 +5484,18 @@ function buildMasterScriptHtml() {
         sections.push({ header: name || 'Untitled', rows: sectionRows });
     }
 
-    const tocHtml = '<div class="ms-toc-page"><h2>Master Script – File List</h2><div class="ms-toc-list">' +
-        sections.map((s, i) => '<div class="ms-toc-item"><span class="ms-toc-num">' + (i + 1) + '</span>' + esc(s.header) + '</div>').join('') + '</div></div>';
+    const tocHtml = '<div class="ms-toc-page"><h2>Master Script – File List</h2>' +
+        '<table class="ms-toc-table" role="presentation">' +
+        '<tbody>' +
+        sections.map((s, i) => {
+            const secId = 'ms-section-' + (i + 1);
+            return '<tr class="ms-toc-row" data-ms-section="' + secId + '">' +
+                '<td class="ms-toc-cell-num"><span class="ms-toc-num">' + (i + 1) + '</span></td>' +
+                '<td class="ms-toc-cell-name"><a class="ms-toc-link" href="#' + secId + '">' + esc(s.header) + '</a></td>' +
+                '<td class="ms-toc-cell-page"><span class="ms-toc-page-num">—</span></td>' +
+                '</tr>';
+        }).join('') +
+        '</tbody></table></div>';
     const sectionHtml = sections.map((sec, secIdx) => {
         const secNum = secIdx + 1;
         const maxCols = sec.rows.length ? Math.max(...sec.rows.map(r => r.cells.length)) : 1;
@@ -5466,7 +5520,7 @@ function buildMasterScriptHtml() {
             }).join('');
             return '<tr class="ms-row' + pillCl + fontCl + singleCl + '">' + cellsHtml + '</tr>';
         }).join('');
-        return '<div class="ms-section"><div class="ms-file-header"><span class="ms-file-num">' + secNum + '</span>' + esc(sec.header) + '</div><table class="ms-table">' + colgroup + '<tbody>' + rowHtml + '</tbody></table></div>';
+        return '<div class="ms-section" id="ms-section-' + secNum + '"><div class="ms-file-header"><span class="ms-file-num">' + secNum + '</span>' + esc(sec.header) + '</div><table class="ms-table">' + colgroup + '<tbody>' + rowHtml + '</tbody></table></div>';
     }).join('');
 
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Master Script</title><style>
@@ -5474,10 +5528,14 @@ function buildMasterScriptHtml() {
 .ms-print{font-family:Arial,sans-serif;color:#000;background:#fff;padding:16px;margin:0;}
 .ms-toc-page{page-break-after:always;min-height:80vh;padding:24px 0;}
 .ms-toc-page h2{font-size:16px;margin:0 0 12px 0;}
-.ms-toc-list{font-size:14px;margin:0;}
-.ms-toc-item{padding:12px 14px;border-bottom:1px solid #333;line-height:1.5;font-size:18px;font-weight:600;}
-.ms-toc-item:last-child{border-bottom:1px solid #333;}
-.ms-toc-num{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;border-radius:50%;background:#c62828;color:#fff;font-size:14px;font-weight:700;margin-right:10px;vertical-align:middle;}
+.ms-toc-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:18px;font-weight:600;}
+.ms-toc-row td{border-bottom:1px solid #333;padding:12px 8px;vertical-align:middle;line-height:1.5;}
+.ms-toc-cell-num{width:44px;padding-right:6px;}
+.ms-toc-cell-name{width:auto;overflow:hidden;text-overflow:ellipsis;}
+.ms-toc-cell-page{width:4.5em;text-align:right;padding-left:10px;}
+.ms-toc-link{color:#000;text-decoration:none;font-weight:600;display:block;overflow-wrap:anywhere;word-break:break-word;}
+.ms-toc-page-num{display:inline-block;min-width:2ch;text-align:right;font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;color:#000;}
+.ms-toc-num{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;border-radius:50%;background:#c62828;color:#fff;font-size:14px;font-weight:700;vertical-align:middle;}
 .ms-section{margin-bottom:24px;}
 .ms-file-header{font-size:18px;font-weight:bold;margin:0 0 8px 0;padding:8px 0;border-bottom:2px solid #333;}
 .ms-file-num{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;border-radius:50%;background:#c62828;color:#fff;font-size:14px;font-weight:700;margin-right:10px;vertical-align:middle;}
@@ -5494,8 +5552,8 @@ function buildMasterScriptHtml() {
 .ms-pill-green,.ms-pill-green td{background-color:#22c55e !important;color:#000 !important;}
 .ms-pill-blue,.ms-pill-blue td{background-color:#2563eb !important;color:#fff !important;}
 .ms-pill-white,.ms-pill-white td{background-color:#000 !important;color:#fff !important;padding:2px 8px !important;line-height:1.1 !important;font-size:11px !important;}
-@page{size:letter;margin:0.5in;}
-@media print{html{width:100%;height:100%;} body{width:100% !important;max-width:7.5in !important;margin:0 auto !important;padding:0 !important;background:#fff !important;-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;box-sizing:border-box !important;} *{box-sizing:border-box !important;} .ms-print{width:100% !important;max-width:7.5in !important;padding:16px !important;margin:0 auto !important;} .ms-section{width:100% !important;max-width:100% !important;} .ms-table{width:100% !important;max-width:100% !important;min-width:0 !important;table-layout:fixed !important;} .ms-table td{overflow-wrap:break-word !important;word-wrap:break-word !important;word-break:break-all !important;white-space:normal !important;} .ms-row.ms-row-single-col td{width:100% !important;max-width:100% !important;}}
+@page{size:letter;margin:0.5in 0.5in 0.65in 0.5in;@bottom-center{content:"Page " counter(page);font-family:Arial,Helvetica,sans-serif;font-size:10pt;color:#000;}}
+@media print{html{width:100%;height:100%;} body{width:100% !important;max-width:7.5in !important;margin:0 auto !important;padding:0 !important;background:#fff !important;-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;box-sizing:border-box !important;} *{box-sizing:border-box !important;} .ms-print{width:100% !important;max-width:7.5in !important;padding:16px !important;margin:0 auto !important;} .ms-toc-table{width:100% !important;} .ms-toc-cell-page,.ms-toc-page-num{color:#000 !important;-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important;} .ms-section{width:100% !important;max-width:100% !important;} .ms-table{width:100% !important;max-width:100% !important;min-width:0 !important;table-layout:fixed !important;} .ms-table td{overflow-wrap:break-word !important;word-wrap:break-word !important;word-break:break-all !important;white-space:normal !important;} .ms-row.ms-row-single-col td{width:100% !important;max-width:100% !important;}}
 </style></head><body class="ms-print">
 <h1>Master Script</h1>
 ${tocHtml}
