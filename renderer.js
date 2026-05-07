@@ -3054,7 +3054,7 @@ document.addEventListener('DOMContentLoaded', function() {
         r.selectNodeContents(node);
         sel.removeAllRanges();
         sel.addRange(r);
-        teleprompterText.focus();
+        focusTeleprompterForFontApply();
         fmtLog('restoreSelectionToNode DONE, sel.rangeCount=', sel.rangeCount, 'collapsed=', sel.rangeCount ? sel.getRangeAt(0).collapsed : '?');
     }
 
@@ -3066,7 +3066,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (document.contains(range.startContainer) && document.contains(range.endContainer)) {
                 sel.removeAllRanges();
                 sel.addRange(range.cloneRange());
-                teleprompterText.focus();
+                focusTeleprompterForFontApply();
                 return;
             }
         } catch (_) {}
@@ -3079,6 +3079,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function applyFormatting(cmd) {
         fmtLog('--- applyFormatting', cmd, 'activeEl=', document.activeElement?.id || document.activeElement?.tagName);
+        suppressPillNavigationFor(1000);
+        const view = teleprompterView;
+        const lockedScrollTop = view ? view.scrollTop : 0;
+        const restoreLockedScroll = () => {
+            if (!view) return;
+            const maxScroll = Math.max(0, view.scrollHeight - view.clientHeight);
+            view.scrollTop = Math.max(0, Math.min(maxScroll, lockedScrollTop));
+        };
         pushUndoState();
         /* Prefer explicit selection; when none is selected, apply across all runs matching the selected Select-item. */
         let ranges = resolveRibbonExplicitRanges();
@@ -3104,7 +3112,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!rs.collapsed && document.contains(rs.startContainer) && document.contains(rs.endContainer) && teleprompterText.contains(rs.startContainer) && teleprompterText.contains(rs.endContainer)) rangesToApply = [rs.cloneRange()];
             } catch (_) {}
         }
-        teleprompterText.focus();
+        focusTeleprompterForFontApply();
         const sel = window.getSelection();
         const toRestore = rangesToApply.length > 0 ? rangesToApply[0] : savedFontSelections.find(r => { try { return r && document.contains(r.startContainer); } catch (_) { return false; } });
         if (toRestore) {
@@ -3131,6 +3139,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
         updateMultiSelectState();
         syncEditorState();
+        restoreLockedScroll();
         const bulkTargetMode = usingSelectedTargetRuns && !hadExplicitSelection;
         const globalAllMode = usingGlobalAllRuns && !hadExplicitSelection;
         if (bulkTargetMode || globalAllMode) {
@@ -3145,6 +3154,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 s.removeAllRanges();
             } catch (_) {}
             ribbonInteractionSnapshotRange = null;
+            restoreLockedScroll();
             return;
         }
         /* Restore selection last, after all post-processing, so user can apply more formatting */
@@ -3170,9 +3180,10 @@ document.addEventListener('DOMContentLoaded', function() {
                             const s = window.getSelection();
                             s.removeAllRanges();
                             s.addRange(r);
-                            teleprompterText.focus();
+                            focusTeleprompterForFontApply();
                             invalidateTpRowBalanceKeyForElement(formattedAfterStripTextNode.parentElement);
                             scheduleRowShortColumnLineSpacing(true);
+                            restoreLockedScroll();
                         } catch (_) {}
                     }, 0);
                 });
@@ -3192,6 +3203,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         restoreSelectionToNode(formattedSpan);
                         invalidateTpRowBalanceKeyForElement(formattedSpan);
                         scheduleRowShortColumnLineSpacing(true);
+                        restoreLockedScroll();
                     }, 0);
                 });
             });
@@ -6309,6 +6321,7 @@ function updateBookmarkHighlightFromScroll() {
 }
 
 function checkTopPillAndGoToPreviousFile() {
+    if (Date.now() < suppressPillNavigationUntil) return;
     const topPill = document.getElementById('filename-pill-top');
     const wrapper = document.getElementById('indicator-wrapper');
     const view = document.getElementById('teleprompter-view');
@@ -6345,6 +6358,7 @@ function checkTopPillAndGoToPreviousFile() {
 }
 
 function checkBottomPillAndAdvanceToNextFile() {
+    if (Date.now() < suppressPillNavigationUntil) return;
     const bottomPill = document.getElementById('filename-pill-bottom');
     const wrapper = document.getElementById('indicator-wrapper');
     const view = document.getElementById('teleprompter-view');
@@ -6385,6 +6399,14 @@ let pendingBookmarkNavTimeoutId = null;
 let bottomPillTriggerFired = false;
 let topPillTriggerFired = false;
 let lastScrollTopForPillTrigger = null;
+let suppressPillNavigationUntil = 0;
+
+function suppressPillNavigationFor(ms = 600) {
+    suppressPillNavigationUntil = Date.now() + ms;
+    bottomPillTriggerFired = false;
+    topPillTriggerFired = false;
+    if (teleprompterView) lastScrollTopForPillTrigger = teleprompterView.scrollTop;
+}
 
 function getBookmarkIndexAtY(clientY) {
     const cursorDots = teleprompterText ? Array.from(teleprompterText.querySelectorAll('.bookmark-cursor-dot')) : [];
