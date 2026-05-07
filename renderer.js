@@ -82,6 +82,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const boldButton = document.getElementById('btn-bold');
     const italicButton = document.getElementById('btn-italic');
     const underlineButton = document.getElementById('btn-underline');
+    const formatPickupButton = document.getElementById('btn-format-pickup');
     const extendMonitorButton = document.getElementById('btn-extend-monitor');
     const startButton = document.getElementById('btn-start');
     const stopButton = document.getElementById('btn-stop');
@@ -135,11 +136,22 @@ document.addEventListener('DOMContentLoaded', function() {
         sel.removeAllRanges();
         sel.addRange(range);
     }
+    function clearSelectedFontTargetSelection() {
+        if (!selectedFontTarget && !selectFontTarget?.value) return;
+        selectedFontTarget = null;
+        if (selectFontTarget) selectFontTarget.value = '';
+        const trigger = document.getElementById('font-target-trigger');
+        if (trigger) trigger.textContent = 'Select';
+        const listEl = document.getElementById('font-target-list');
+        if (listEl) listEl.classList.remove('open');
+    }
+
     teleprompterText.addEventListener('focus', clearPlaceholderIfActive);
     teleprompterView.addEventListener('click', () => {
         if (teleprompterText.dataset.placeholder === 'true') {
             clearPlaceholderIfActive();
         }
+        clearSelectedFontTargetSelection();
     });
 
     // =========================================
@@ -180,6 +192,10 @@ document.addEventListener('DOMContentLoaded', function() {
     let fileColumnVisibility = [];
     /** Per-file: true if first column is numeric (show as "ID" in runlist). */
     let fileFirstColIsId = [];
+    /** Per-file: show horizontal sync guide line (true by default). */
+    let fileShowSyncGuide = [];
+    let formattedHtmlSaveHandles = [];
+    let formattedHtmlSavedNames = [];
 
     let lastColumnWidthPx = null;
     let col2WidthPx = null;
@@ -194,6 +210,11 @@ document.addEventListener('DOMContentLoaded', function() {
     let mirrorReportedRowHeights = []; /* Mirror's natural row heights (col 3 only) – used when reassessing so we don't force mirror too tall */
     let selectedFontTarget = null; /* { fontFamily, fontSize, color?, backgroundColor? } when user selects from Select dropdown */
     let savedFontSelections = []; /* Array of cloned ranges for multi-select */
+    /** Non-collapsed range cloned on ribbon pointerdown/mousedown only (not mouseover). Survives hover collapsing the logical selection. */
+    let ribbonInteractionSnapshotRange = null;
+    let formatPickupArmed = false;
+    let formatPickupSnapshot = null;
+    let formatPickupAppliedOnce = false;
     let lastFontChangeSource = null; /* 'family' | 'size' - which dropdown triggered the change */
     let modifierHeldForAdd = false; /* Cmd/Ctrl held during mousedown = add to multi-selection */
     let isOverviewMode = false;
@@ -203,6 +224,55 @@ document.addEventListener('DOMContentLoaded', function() {
     const undoStack = [];
     const redoStack = [];
     const MAX_UNDO = 50;
+
+    function captureRibbonSelectionSnapshot() {
+        try {
+            const sel = window.getSelection();
+            if (!sel.rangeCount || sel.getRangeAt(0).collapsed) {
+                ribbonInteractionSnapshotRange = null;
+                return;
+            }
+            const r = sel.getRangeAt(0);
+            if (teleprompterText.contains(r.startContainer) && teleprompterText.contains(r.endContainer)) {
+                ribbonInteractionSnapshotRange = r.cloneRange();
+            } else {
+                ribbonInteractionSnapshotRange = null;
+            }
+        } catch (_) {
+            ribbonInteractionSnapshotRange = null;
+        }
+    }
+
+    /** Multi-select first; ribbon snapshot & savedSelection; last resort single stored region. Never use live getSelection here — it often expands to the whole cell. */
+    function resolveRibbonExplicitRanges() {
+        const validStored = savedFontSelections.filter(r => {
+            try {
+                return r && !r.collapsed && document.contains(r.startContainer) && document.contains(r.endContainer)
+                    && teleprompterText.contains(r.startContainer) && teleprompterText.contains(r.endContainer);
+            } catch (_) { return false; }
+        });
+        if (validStored.length > 1) {
+            try {
+                return validStored.map(r => r.cloneRange());
+            } catch (_) { /* fall through */ }
+        }
+        if (ribbonInteractionSnapshotRange) {
+            try {
+                const rs = ribbonInteractionSnapshotRange;
+                if (!rs.collapsed && document.contains(rs.startContainer) && document.contains(rs.endContainer) && teleprompterText.contains(rs.startContainer) && teleprompterText.contains(rs.endContainer)) {
+                    return [rs.cloneRange()];
+                }
+            } catch (_) { /* fall through */ }
+        }
+        if (savedSelection && !savedSelection.collapsed && teleprompterText.contains(savedSelection.startContainer) && teleprompterText.contains(savedSelection.endContainer) && document.contains(savedSelection.startContainer)) {
+            try { return [savedSelection.cloneRange()]; } catch (_) {}
+        }
+        /* Do not read live getSelection() here — after moving toward the ribbon it often expands to the whole block. */
+        if (validStored.length === 1) {
+            try { return [validStored[0].cloneRange()]; } catch (_) {}
+        }
+        return [];
+    }
 
     function saveFontSelectionFromEditor(addToMulti) {
         const sel = window.getSelection();
@@ -505,6 +575,51 @@ document.addEventListener('DOMContentLoaded', function() {
         return true;
     }
 
+    /** Match text runs by Select-item identity: same font family, size, text color, and highlight color. */
+    function collectAllTextRanges() {
+        const out = [];
+        const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+        while ((node = walker.nextNode())) {
+            if (!node.textContent || !node.textContent.trim()) continue;
+            const r = document.createRange();
+            r.setStart(node, 0);
+            r.setEnd(node, node.length);
+            out.push(r);
+        }
+        return out;
+    }
+
+    function collectRangesForSelectedFontTarget(target) {
+        if (!target) return [];
+        const normalizeFont = (v) => (v || '').split(',')[0].trim().replace(/^["']|["']$/g, '').toLowerCase();
+        const sizeNum = (v) => parseFloat(String(v || '').trim()) || 0;
+        const tFont = normalizeFont(target.fontFamily);
+        const tSizeNum = sizeNum(target.fontSize);
+        if (!tFont || tSizeNum <= 0) return [];
+        const out = [];
+        const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+        while ((node = walker.nextNode())) {
+            if (!node.textContent || !node.textContent.trim()) continue;
+            const parent = node.parentElement;
+            if (!parent) continue;
+            const style = window.getComputedStyle(parent);
+            const pFont = normalizeFont(style.fontFamily);
+            const pSizeNum = sizeNum(style.fontSize);
+            const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(node);
+            const flags = getTextStyleFlagsFromNode(node);
+            if (pFont !== tFont || Math.abs(pSizeNum - tSizeNum) >= 0.5) continue;
+            if (!colorsMatch(target, effColor, effBg)) continue;
+            if (!styleFlagsMatch(target, flags)) continue;
+            const r = document.createRange();
+            r.setStart(node, 0);
+            r.setEnd(node, node.length);
+            out.push(r);
+        }
+        return out;
+    }
+
     function unwrapFontFromMatchingTarget(target) {
         if (!target) return;
         const { fontFamily: targetFont, fontSize: targetSize } = target;
@@ -525,7 +640,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const pFont = normalizeFont(style.fontFamily);
             const pSizeNum = sizeNum(style.fontSize);
             const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(node);
-            if (tFont && tSizeNum && pFont === tFont && Math.abs(pSizeNum - tSizeNum) < 0.5 && colorsMatch(target, effColor, effBg)) {
+            const flags = getTextStyleFlagsFromNode(node);
+            if (tFont && tSizeNum && pFont === tFont && Math.abs(pSizeNum - tSizeNum) < 0.5 && colorsMatch(target, effColor, effBg) && styleFlagsMatch(target, flags)) {
                 matchingTextNodes.push(node);
             }
         }
@@ -555,7 +671,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function applyFontToMatchingTarget(target, newFontVal, newSizeVal, resetLineHeight) {
-        if (!target) return;
+        if (!target) return 0;
         const { fontFamily: targetFont, fontSize: targetSize } = target;
         if (FONT_SIZE_DEBUG()) console.log('[FontSize] applyFontToMatchingTarget', {
             targetFont,
@@ -567,7 +683,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const preserveFamily = lastFontChangeSource === 'size';
         const newFont = preserveFamily ? targetFont : (newFontVal || targetFont);
         const newSize = preserveSize ? targetSize : ((newSizeVal || '') + (newSizeVal ? 'px' : ''));
-        if (!newFont && !newSize) return;
+        if (!newFont && !newSize) return 0;
         const rootLineHeight = resetLineHeight ? (window.getComputedStyle(teleprompterText).lineHeight || '1.4') : null;
         const normalizeFont = (s) => (s || '').split(',')[0].trim().replace(/^["']|["']$/g, '').toLowerCase();
         const sizeNum = (s) => parseFloat(String(s || '').trim()) || 0;
@@ -584,7 +700,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const pFont = normalizeFont(style.fontFamily);
             const pSizeNum = sizeNum(style.fontSize);
             const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(node);
-            if (tFont && tSizeNum > 0 && pFont === tFont && Math.abs(pSizeNum - tSizeNum) < 0.5 && colorsMatch(target, effColor, effBg)) {
+            const flags = getTextStyleFlagsFromNode(node);
+            if (tFont && tSizeNum > 0 && pFont === tFont && Math.abs(pSizeNum - tSizeNum) < 0.5 && colorsMatch(target, effColor, effBg) && styleFlagsMatch(target, flags)) {
                 toWrap.push(node);
             }
         }
@@ -645,6 +762,59 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
         flattenRedundantSpans();
+        return toWrap.length;
+    }
+
+    /** After applyFontToMatchingTarget, advance selectedFontTarget so the next ribbon edit matches the same runs (DOM no longer has the old font/size). */
+    function syncSelectedFontTargetAfterRibbonApply(oldTarget, fontVal, sizeVal) {
+        if (!oldTarget) return;
+        const preserveSize = lastFontChangeSource === 'family';
+        const preserveFamily = lastFontChangeSource === 'size';
+        const newFont = preserveFamily ? oldTarget.fontFamily : (fontVal || oldTarget.fontFamily);
+        let newSize = oldTarget.fontSize;
+        if (!preserveSize) {
+            const sv = sizeVal || fontSizeSelect?.value || '';
+            newSize = sv ? (String(sv).endsWith('px') ? String(sv) : `${parseFloat(sv, 10)}px`) : oldTarget.fontSize;
+        }
+        const updated = { ...oldTarget, fontFamily: newFont, fontSize: newSize };
+        selectedFontTarget = updated;
+        if (selectFontTarget) {
+            const hasFontColor = isOpaqueColor(updated.color);
+            const hasBgColor = isOpaqueColor(updated.backgroundColor);
+            selectFontTarget.value = JSON.stringify({
+                fontFamily: updated.fontFamily,
+                fontSize: updated.fontSize,
+                color: hasFontColor ? updated.color : null,
+                backgroundColor: hasBgColor ? updated.backgroundColor : null,
+                bold: !!updated.bold,
+                italic: !!updated.italic,
+                underline: !!updated.underline,
+            });
+        }
+    }
+
+    function syncSelectedFontTargetStyleFlagAfterBulkFormatting(cmd, shouldStrip) {
+        if (!selectedFontTarget) return;
+        const nextValue = !shouldStrip;
+        const updated = { ...selectedFontTarget };
+        if (cmd === 'bold') updated.bold = nextValue;
+        if (cmd === 'italic') updated.italic = nextValue;
+        if (cmd === 'underline') updated.underline = nextValue;
+        selectedFontTarget = updated;
+        if (selectFontTarget) {
+            const hasFontColor = isOpaqueColor(updated.color);
+            const hasBgColor = isOpaqueColor(updated.backgroundColor);
+            selectFontTarget.value = JSON.stringify({
+                fontFamily: updated.fontFamily,
+                fontSize: updated.fontSize,
+                color: hasFontColor ? updated.color : null,
+                backgroundColor: hasBgColor ? updated.backgroundColor : null,
+                bold: !!updated.bold,
+                italic: !!updated.italic,
+                underline: !!updated.underline,
+            });
+        }
+        requestAnimationFrame(() => refreshSelectFontTarget());
     }
 
     function flattenRedundantSpans() {
@@ -737,6 +907,40 @@ document.addEventListener('DOMContentLoaded', function() {
         const style = window.getComputedStyle(el);
         return { color: (style.color || '').trim(), backgroundColor: (style.backgroundColor || '').trim() };
     }
+    function getTextStyleFlagsFromNode(textNode) {
+        let el = textNode?.parentElement;
+        if (!el) return { bold: false, italic: false, underline: false };
+        const isStructural = (n) => n === teleprompterText || n?.classList?.contains('script-row-wrapper') || n?.classList?.contains('script-column') || n?.classList?.contains('cell-locker') || n?.classList?.contains('cell-content');
+        let bold = false;
+        let italic = false;
+        let underline = false;
+        while (el && !isStructural(el)) {
+            const style = window.getComputedStyle(el);
+            const fw = style.fontWeight || '';
+            const fwNum = parseInt(fw, 10);
+            if ((!isNaN(fwNum) && fwNum >= 600) || fw === 'bold' || fw === 'bolder' || el.tagName === 'B' || el.tagName === 'STRONG') {
+                bold = true;
+            }
+            if ((style.fontStyle || '') === 'italic' || el.tagName === 'I' || el.tagName === 'EM') {
+                italic = true;
+            }
+            const deco = (style.textDecorationLine || style.textDecoration || '');
+            if (deco.includes('underline') || el.tagName === 'U') {
+                underline = true;
+            }
+            el = el.parentElement;
+        }
+        return { bold, italic, underline };
+    }
+
+    function styleFlagsMatch(target, flags) {
+        if (!target) return true;
+        if (typeof target.bold === 'boolean' && !!target.bold !== !!flags.bold) return false;
+        if (typeof target.italic === 'boolean' && !!target.italic !== !!flags.italic) return false;
+        if (typeof target.underline === 'boolean' && !!target.underline !== !!flags.underline) return false;
+        return true;
+    }
+
 
     /** Select menu lists only ribbon-applied runs (color/highlight/font-size/family), not row defaults (Aa 12px, body size). */
     function textNodeQualifiesForFontTargetList(textNode) {
@@ -764,10 +968,19 @@ document.addEventListener('DOMContentLoaded', function() {
             const fontFamily = (style.fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
             const fontSize = style.fontSize || '';
             const { color, backgroundColor } = getEffectiveColorsFromNode(node);
+            const flags = getTextStyleFlagsFromNode(node);
             const colorNorm = normalizeColorForKey(color);
             const bgNorm = normalizeColorForKey(backgroundColor);
-            const key = fontFamily + '|' + fontSize + '|' + colorNorm + '|' + bgNorm;
-            if (!pairs.has(key)) pairs.set(key, { fontFamily, fontSize, color: color || (style.color || '').trim(), backgroundColor: backgroundColor || (style.backgroundColor || '').trim() });
+            const key = fontFamily + '|' + fontSize + '|' + colorNorm + '|' + bgNorm + '|' + (flags.bold ? '1' : '0') + (flags.italic ? '1' : '0') + (flags.underline ? '1' : '0');
+            if (!pairs.has(key)) pairs.set(key, {
+                fontFamily,
+                fontSize,
+                color: color || (style.color || '').trim(),
+                backgroundColor: backgroundColor || (style.backgroundColor || '').trim(),
+                bold: !!flags.bold,
+                italic: !!flags.italic,
+                underline: !!flags.underline,
+            });
         }
         return Array.from(pairs.values()).sort((a, b) => {
             const isUntouched = (x) => {
@@ -833,7 +1046,16 @@ document.addEventListener('DOMContentLoaded', function() {
         const fontFamily = (style.fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
         const fontSize = style.fontSize || '';
         const { color, backgroundColor } = getEffectiveColorsFromElement(node);
-        return { fontFamily, fontSize, color: (color || '').trim(), backgroundColor: (backgroundColor || '').trim() };
+        const flags = getTextStyleFlagsFromNode(node.nodeType === Node.TEXT_NODE ? node : (node.firstChild && node.firstChild.nodeType === Node.TEXT_NODE ? node.firstChild : { parentElement: node }));
+        return {
+            fontFamily,
+            fontSize,
+            color: (color || '').trim(),
+            backgroundColor: (backgroundColor || '').trim(),
+            bold: !!flags.bold,
+            italic: !!flags.italic,
+            underline: !!flags.underline,
+        };
     }
 
     /** List + trigger label: font + size only; colors use swatches (no hex in text). */
@@ -841,6 +1063,52 @@ document.addEventListener('DOMContentLoaded', function() {
         const sizeNum = parseInt(fontSize, 10) || fontSize;
         return `${fontFamily} ${sizeNum}`;
     }
+    function appendFontTargetDecorations(container, hasFontColor, hasBgColor, color, backgroundColor, bold, italic, underline) {
+        if (!container) return;
+        if (hasFontColor || hasBgColor) {
+            const sw = document.createElement('span');
+            sw.className = 'font-target-swatches';
+            if (hasBgColor) {
+                const s = document.createElement('span');
+                s.className = 'font-target-swatch font-target-swatch-bg';
+                s.style.backgroundColor = backgroundColor;
+                s.title = 'Background color';
+                sw.appendChild(s);
+            }
+            if (hasFontColor) {
+                const s = document.createElement('span');
+                s.className = 'font-target-swatch font-target-swatch-text';
+                s.style.backgroundColor = color;
+                s.title = 'Text color';
+                sw.appendChild(s);
+            }
+            container.appendChild(sw);
+        }
+        if (bold || italic || underline) {
+            const fmt = document.createElement('span');
+            fmt.className = 'font-target-flags';
+            if (bold) {
+                const b = document.createElement('span');
+                b.className = 'font-target-flag';
+                b.textContent = 'B';
+                fmt.appendChild(b);
+            }
+            if (italic) {
+                const i = document.createElement('span');
+                i.className = 'font-target-flag';
+                i.textContent = 'I';
+                fmt.appendChild(i);
+            }
+            if (underline) {
+                const u = document.createElement('span');
+                u.className = 'font-target-flag';
+                u.textContent = 'U';
+                fmt.appendChild(u);
+            }
+            container.appendChild(fmt);
+        }
+    }
+
 
     function refreshSelectFontTarget() {
         if (!selectFontTarget) return;
@@ -849,6 +1117,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!trigger || !listEl) return;
         const current = selectFontTarget.value;
         const opts = collectUniqueFontSizes();
+        let matchedCurrent = false;
         selectFontTarget.innerHTML = '<option value="">Select</option>';
         listEl.innerHTML = '';
         trigger.textContent = 'Select';
@@ -863,11 +1132,11 @@ document.addEventListener('DOMContentLoaded', function() {
             selectFontTarget.dispatchEvent(new Event('change'));
         });
         listEl.appendChild(clearItem);
-        opts.forEach(({ fontFamily, fontSize, color, backgroundColor }) => {
+        opts.forEach(({ fontFamily, fontSize, color, backgroundColor, bold, italic, underline }) => {
             const label = fontTargetMenuLabel(fontFamily, fontSize);
             const hasFontColor = isOpaqueColor(color);
             const hasBgColor = isOpaqueColor(backgroundColor);
-            const val = JSON.stringify({ fontFamily, fontSize, color: hasFontColor ? color : null, backgroundColor: hasBgColor ? backgroundColor : null });
+            const val = JSON.stringify({ fontFamily, fontSize, color: hasFontColor ? color : null, backgroundColor: hasBgColor ? backgroundColor : null, bold: !!bold, italic: !!italic, underline: !!underline });
             const opt = document.createElement('option');
             opt.value = val;
             opt.textContent = label;
@@ -875,53 +1144,20 @@ document.addEventListener('DOMContentLoaded', function() {
             const item = document.createElement('div');
             item.className = 'font-target-item';
             item.dataset.value = val;
-            item.title = 'All ribbon-formatted text with this font, size, and colors. Plain row text is not in this list.';
+            item.title = 'All ribbon-formatted text with this font, size, colors, and B/I/U. Plain row text is not in this list.';
             const labelSpan = document.createElement('span');
             labelSpan.className = 'font-target-label';
             labelSpan.textContent = label;
             item.appendChild(labelSpan);
-            if (hasFontColor || hasBgColor) {
-                const swatches = document.createElement('span');
-                swatches.className = 'font-target-swatches';
-                if (hasBgColor) {
-                    const sq = document.createElement('span');
-                    sq.className = 'font-target-swatch font-target-swatch-bg';
-                    sq.style.backgroundColor = backgroundColor;
-                    sq.title = 'Background color';
-                    swatches.appendChild(sq);
-                }
-                if (hasFontColor) {
-                    const sq = document.createElement('span');
-                    sq.className = 'font-target-swatch font-target-swatch-text';
-                    sq.style.backgroundColor = color;
-                    sq.title = 'Text color';
-                    swatches.appendChild(sq);
-                }
-                item.appendChild(swatches);
-            }
+            appendFontTargetDecorations(item, hasFontColor, hasBgColor, color, backgroundColor, !!bold, !!italic, !!underline);
             if (current === val) {
+                matchedCurrent = true;
                 opt.selected = true;
                 trigger.innerHTML = '';
                 const tLabel = document.createElement('span');
                 tLabel.textContent = label;
                 trigger.appendChild(tLabel);
-                if (hasFontColor || hasBgColor) {
-                    const sw = document.createElement('span');
-                    sw.className = 'font-target-swatches';
-                    if (hasBgColor) {
-                        const s = document.createElement('span');
-                        s.className = 'font-target-swatch font-target-swatch-bg';
-                        s.style.backgroundColor = backgroundColor;
-                        sw.appendChild(s);
-                    }
-                    if (hasFontColor) {
-                        const s = document.createElement('span');
-                        s.className = 'font-target-swatch font-target-swatch-text';
-                        s.style.backgroundColor = color;
-                        sw.appendChild(s);
-                    }
-                    trigger.appendChild(sw);
-                }
+                appendFontTargetDecorations(trigger, hasFontColor, hasBgColor, color, backgroundColor, !!bold, !!italic, !!underline);
             }
             item.addEventListener('click', () => {
                 selectFontTarget.value = val;
@@ -929,51 +1165,72 @@ document.addEventListener('DOMContentLoaded', function() {
                 const tLabel = document.createElement('span');
                 tLabel.textContent = label;
                 trigger.appendChild(tLabel);
-                if (hasFontColor || hasBgColor) {
-                    const sw = document.createElement('span');
-                    sw.className = 'font-target-swatches';
-                    if (hasBgColor) {
-                        const s = document.createElement('span');
-                        s.className = 'font-target-swatch font-target-swatch-bg';
-                        s.style.backgroundColor = backgroundColor;
-                        sw.appendChild(s);
-                    }
-                    if (hasFontColor) {
-                        const s = document.createElement('span');
-                        s.className = 'font-target-swatch font-target-swatch-text';
-                        s.style.backgroundColor = color;
-                        sw.appendChild(s);
-                    }
-                    trigger.appendChild(sw);
-                }
+                appendFontTargetDecorations(trigger, hasFontColor, hasBgColor, color, backgroundColor, !!bold, !!italic, !!underline);
                 listEl.classList.remove('open');
                 selectFontTarget.dispatchEvent(new Event('change'));
             });
             listEl.appendChild(item);
         });
+        if (!matchedCurrent && selectedFontTarget) {
+            const label = fontTargetMenuLabel(selectedFontTarget.fontFamily || '', selectedFontTarget.fontSize || '');
+            const hasFontColor = isOpaqueColor(selectedFontTarget.color);
+            const hasBgColor = isOpaqueColor(selectedFontTarget.backgroundColor);
+            const val = JSON.stringify({
+                fontFamily: selectedFontTarget.fontFamily || '',
+                fontSize: selectedFontTarget.fontSize || '',
+                color: hasFontColor ? selectedFontTarget.color : null,
+                backgroundColor: hasBgColor ? selectedFontTarget.backgroundColor : null,
+                bold: !!selectedFontTarget.bold,
+                italic: !!selectedFontTarget.italic,
+                underline: !!selectedFontTarget.underline,
+            });
+            const fallbackOpt = document.createElement('option');
+            fallbackOpt.value = val;
+            fallbackOpt.textContent = label;
+            fallbackOpt.selected = true;
+            selectFontTarget.appendChild(fallbackOpt);
+            selectFontTarget.value = val;
+            trigger.innerHTML = '';
+            const tLabel = document.createElement('span');
+            tLabel.textContent = label;
+            trigger.appendChild(tLabel);
+            appendFontTargetDecorations(
+                trigger,
+                hasFontColor,
+                hasBgColor,
+                selectedFontTarget.color,
+                selectedFontTarget.backgroundColor,
+                !!selectedFontTarget.bold,
+                !!selectedFontTarget.italic,
+                !!selectedFontTarget.underline
+            );
+            return;
+        }
+
         if (!selectFontTarget.value) {
             const atCaret = getFormatAtCaretOrSelection();
             if (atCaret && opts.length > 0) {
                 const hasFontColor = isOpaqueColor(atCaret.color);
                 const hasBgColor = isOpaqueColor(atCaret.backgroundColor);
-                const wantVal = JSON.stringify({ fontFamily: atCaret.fontFamily, fontSize: atCaret.fontSize, color: hasFontColor ? atCaret.color : null, backgroundColor: hasBgColor ? atCaret.backgroundColor : null });
-                let match = opts.find(({ fontFamily, fontSize, color, backgroundColor }) => {
+                const wantVal = JSON.stringify({ fontFamily: atCaret.fontFamily, fontSize: atCaret.fontSize, color: hasFontColor ? atCaret.color : null, backgroundColor: hasBgColor ? atCaret.backgroundColor : null, bold: !!atCaret.bold, italic: !!atCaret.italic, underline: !!atCaret.underline });
+                let match = opts.find(({ fontFamily, fontSize, color, backgroundColor, bold, italic, underline }) => {
                     const hasC = isOpaqueColor(color);
                     const hasB = isOpaqueColor(backgroundColor);
-                    const v = JSON.stringify({ fontFamily, fontSize, color: hasC ? color : null, backgroundColor: hasB ? backgroundColor : null });
+                    const v = JSON.stringify({ fontFamily, fontSize, color: hasC ? color : null, backgroundColor: hasB ? backgroundColor : null, bold: !!bold, italic: !!italic, underline: !!underline });
                     return v === wantVal;
                 });
                 if (!match && normalizeColorForKey) {
-                    match = opts.find(({ fontFamily, fontSize, color, backgroundColor }) => {
+                    match = opts.find(({ fontFamily, fontSize, color, backgroundColor, bold, italic, underline }) => {
                         return fontFamily === atCaret.fontFamily && fontSize === atCaret.fontSize &&
                             normalizeColorForKey(color || '') === normalizeColorForKey(atCaret.color || '') &&
-                            normalizeColorForKey(backgroundColor || '') === normalizeColorForKey(atCaret.backgroundColor || '');
+                            normalizeColorForKey(backgroundColor || '') === normalizeColorForKey(atCaret.backgroundColor || '') &&
+                            !!bold === !!atCaret.bold && !!italic === !!atCaret.italic && !!underline === !!atCaret.underline;
                     });
                 }
                 if (match) {
-                    const { fontFamily, fontSize, color, backgroundColor } = match;
+                    const { fontFamily, fontSize, color, backgroundColor, bold, italic, underline } = match;
                     const label = fontTargetMenuLabel(fontFamily, fontSize);
-                    const val = JSON.stringify({ fontFamily, fontSize, color: isOpaqueColor(color) ? color : null, backgroundColor: isOpaqueColor(backgroundColor) ? backgroundColor : null });
+                    const val = JSON.stringify({ fontFamily, fontSize, color: isOpaqueColor(color) ? color : null, backgroundColor: isOpaqueColor(backgroundColor) ? backgroundColor : null, bold: !!bold, italic: !!italic, underline: !!underline });
                     selectFontTarget.value = val;
                     trigger.innerHTML = '';
                     const tLabel = document.createElement('span');
@@ -1126,29 +1383,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function applyFontColorToTarget(color) {
         clrLog('applyFontColorToTarget color=', color);
-        const storedRanges = [...savedFontSelections];
         updateMultiSelectState();
-        let rangesToApply = [];
-        /* Prefer user's explicit selection over font-target matching; cap to single range to avoid stale multi-select applying to "all" */
-        const validStored = storedRanges.filter(r => {
-            try {
-                return r && !r.collapsed && document.contains(r.startContainer) && teleprompterText.contains(r.commonAncestorContainer);
-            } catch (_) { return false; }
-        });
-        if (validStored.length > 0) {
-            rangesToApply = [validStored[0]];
-        } else {
-            const sel = window.getSelection();
-            if (sel.rangeCount) {
-                const r = sel.getRangeAt(0);
-                if (!r.collapsed && teleprompterText.contains(r.commonAncestorContainer)) {
-                    rangesToApply = [r];
-                }
-            }
-            if (rangesToApply.length === 0 && savedSelection && !savedSelection.collapsed && teleprompterText.contains(savedSelection.commonAncestorContainer) && document.contains(savedSelection.startContainer)) {
-                rangesToApply = [savedSelection.cloneRange()];
-            }
-        }
+        const explicit = resolveRibbonExplicitRanges();
+        const rangesToApply = explicit.length > 0 ? [explicit[0]] : [];
         clrLog('applyFontColorToTarget rangesToApply.len=', rangesToApply.length);
         if (rangesToApply.length > 0) {
             /* Same flow as bold/italic/underline/font size: wrapCellContentInBlock first, then apply via extractContents+insertNode */
@@ -1174,22 +1411,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
             }
         } else if (selectedFontTarget) {
-            const { fontFamily, fontSize } = selectedFontTarget;
-            const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
-            const toWrap = [];
-            let node;
-            while ((node = walker.nextNode())) {
-                if (!node.textContent.trim()) continue;
-                const parent = node.parentElement;
-                if (!parent) continue;
-                const style = window.getComputedStyle(parent);
-                const pFont = (style.fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
-                const pSize = style.fontSize || '';
-                if (pFont !== fontFamily || pSize !== fontSize) continue;
-                const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(node);
-                if (!colorsMatch(selectedFontTarget, effColor, effBg)) continue;
-                toWrap.push(node);
-            }
+            const matchedRanges = collectRangesForSelectedFontTarget(selectedFontTarget);
+            const toWrap = matchedRanges.map(r => r.startContainer).filter(n => n && n.nodeType === Node.TEXT_NODE);
             toWrap.forEach(textNode => {
                 const span = document.createElement('span');
                 span.className = 'color-span-inline';
@@ -1198,9 +1421,43 @@ document.addEventListener('DOMContentLoaded', function() {
                 textNode.parentNode.insertBefore(span, textNode);
                 span.appendChild(textNode);
             });
+            if (toWrap.length > 0 && selectedFontTarget) {
+                const updated = { ...selectedFontTarget, color };
+                selectedFontTarget = updated;
+                if (selectFontTarget) {
+                    const hasFontColor = isOpaqueColor(updated.color);
+                    const hasBgColor = isOpaqueColor(updated.backgroundColor);
+                    selectFontTarget.value = JSON.stringify({
+                        fontFamily: updated.fontFamily,
+                        fontSize: updated.fontSize,
+                        color: hasFontColor ? updated.color : null,
+                        backgroundColor: hasBgColor ? updated.backgroundColor : null,
+                        bold: !!updated.bold,
+                        italic: !!updated.italic,
+                        underline: !!updated.underline,
+                    });
+                }
+                requestAnimationFrame(() => refreshSelectFontTarget());
+            }
         } else {
-            teleprompterText.style.color = color;
+            const allRanges = collectAllTextRanges();
+            if (allRanges.length > 0) {
+                if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+                applyColorToRanges(allRanges, color);
+                flattenRedundantSpans();
+                if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+                /* Global apply should not leave a selected span behind. */
+                savedFontSelections = [];
+                try {
+                    const sel = window.getSelection();
+                    sel.removeAllRanges();
+                } catch (_) {}
+                updateMultiSelectState();
+            } else {
+                teleprompterText.style.color = color;
+            }
         }
+        ribbonInteractionSnapshotRange = null;
         syncEditorState();
     }
 
@@ -1305,31 +1562,19 @@ document.addEventListener('DOMContentLoaded', function() {
         return newRanges;
     }
 
+    function applyNoSelectionGlobalFill(color) {
+        const fill = color || '#000000';
+        teleprompterView.style.backgroundColor = fill;
+        teleprompterText.style.backgroundColor = fill;
+        teleprompterText.style.setProperty('--global-fill-color', fill);
+        teleprompterText.classList.add('global-fill-active');
+    }
+
     function applyBackgroundColorToTarget(color) {
         clrLog('applyBackgroundColorToTarget color=', color);
-        const storedRanges = [...savedFontSelections];
         updateMultiSelectState();
-        let rangesToApply = [];
-        /* Prefer user's explicit selection over font-target matching; cap to single range to avoid stale multi-select applying to "all" */
-        const validStored = storedRanges.filter(r => {
-            try {
-                return r && !r.collapsed && document.contains(r.startContainer) && teleprompterText.contains(r.commonAncestorContainer);
-            } catch (_) { return false; }
-        });
-        if (validStored.length > 0) {
-            rangesToApply = [validStored[0]];
-        } else {
-            const sel = window.getSelection();
-            if (sel.rangeCount) {
-                const r = sel.getRangeAt(0);
-                if (!r.collapsed && teleprompterText.contains(r.commonAncestorContainer)) {
-                    rangesToApply = [r];
-                }
-            }
-            if (rangesToApply.length === 0 && savedSelection && !savedSelection.collapsed && teleprompterText.contains(savedSelection.commonAncestorContainer) && document.contains(savedSelection.startContainer)) {
-                rangesToApply = [savedSelection.cloneRange()];
-            }
-        }
+        const explicit = resolveRibbonExplicitRanges();
+        const rangesToApply = explicit.length > 0 ? [explicit[0]] : [];
         clrLog('applyBackgroundColorToTarget rangesToApply.len=', rangesToApply.length);
         if (rangesToApply.length > 0) {
             /* Same flow as bold/italic/underline/font size: wrapCellContentInBlock first, then apply via extractContents+insertNode */
@@ -1354,9 +1599,40 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                 });
             }
+        } else if (selectedFontTarget) {
+            const matchedRanges = collectRangesForSelectedFontTarget(selectedFontTarget);
+            const toWrap = matchedRanges.map(r => r.startContainer).filter(n => n && n.nodeType === Node.TEXT_NODE);
+            toWrap.forEach(textNode => {
+                const span = document.createElement('span');
+                span.className = 'color-span-inline';
+                span.style.display = 'inline';
+                span.style.backgroundColor = color;
+                textNode.parentNode.insertBefore(span, textNode);
+                span.appendChild(textNode);
+            });
+            if (toWrap.length > 0) {
+                const updated = { ...selectedFontTarget, backgroundColor: color };
+                selectedFontTarget = updated;
+                if (selectFontTarget) {
+                    const hasFontColor = isOpaqueColor(updated.color);
+                    const hasBgColor = isOpaqueColor(updated.backgroundColor);
+                    selectFontTarget.value = JSON.stringify({
+                        fontFamily: updated.fontFamily,
+                        fontSize: updated.fontSize,
+                        color: hasFontColor ? updated.color : null,
+                        backgroundColor: hasBgColor ? updated.backgroundColor : null,
+                        bold: !!updated.bold,
+                        italic: !!updated.italic,
+                        underline: !!updated.underline,
+                    });
+                }
+                requestAnimationFrame(() => refreshSelectFontTarget());
+            }
         } else {
-            teleprompterView.style.backgroundColor = color;
+            /* No explicit selection and no Select-item target: fill the view/grid layers (not text highlights). */
+            applyNoSelectionGlobalFill(color);
         }
+        ribbonInteractionSnapshotRange = null;
         syncEditorState();
     }
 
@@ -1881,7 +2157,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function applyFontSettings() {
         pushUndoState();
-        const storedRanges = [...savedFontSelections];
         updateMultiSelectState();
         const fontVal = fontFamilySelect?.value;
         const sizeVal = fontSizeSelect?.value;
@@ -1892,21 +2167,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const scrollRatioPreserve = view && maxScrollBefore > 0 ? view.scrollTop / maxScrollBefore : 0;
 
         const doApply = () => {
-            let rangesToApply = [];
-            const sel = window.getSelection();
-            const r = sel?.rangeCount ? sel.getRangeAt(0) : null;
-            const hasSelection = r && !r.collapsed && teleprompterText.contains(r.commonAncestorContainer);
-            const validStored = storedRanges.filter(r2 => {
-                try {
-                    return r2 && !r2.collapsed && document.contains(r2.startContainer) && teleprompterText.contains(r2.commonAncestorContainer);
-                } catch (_) { return false; }
-            });
-
-            /* Selection takes precedence: if user selected text, apply to it regardless of Select dropdown. */
-            if (hasSelection) {
-                if (validStored.length > 0) rangesToApply = validStored;
-                else rangesToApply = [r];
-            }
+            const rangesToApply = resolveRibbonExplicitRanges();
+            const hasSelection = rangesToApply.length > 0;
             focusTeleprompterForFontApply();
 
             const pathTaken = rangesToApply.length > 0 ? 'applyToRanges' : (targetToApply ? 'applyToMatchingTarget' : 'applyToAllContent');
@@ -1950,7 +2212,8 @@ document.addEventListener('DOMContentLoaded', function() {
             } else if (targetToApply && (fontFamilySelect || fontSizeSelect)) {
                 fontReport('applyToMatchingTarget', { target: targetToApply.fontFamily + ' ' + targetToApply.fontSize });
                 if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
-                applyFontToMatchingTarget(targetToApply, fontVal, sizeVal);
+                const matchedCount = applyFontToMatchingTarget(targetToApply, fontVal, sizeVal);
+                if (matchedCount > 0) syncSelectedFontTargetAfterRibbonApply(targetToApply, fontVal, sizeVal);
                 requestAnimationFrame(() => refreshSelectFontTarget());
             } else if (!targetToApply && (fontFamilySelect || fontSizeSelect)) {
                 fontReport('applyToAllContent', { reason: 'no target, no ranges' });
@@ -1982,6 +2245,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 });
             });
+            ribbonInteractionSnapshotRange = null;
         };
 
         skipCaretSyncForFontSelects = true;
@@ -2003,11 +2267,17 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     };
     const fmtLog = (...a) => { if (FMT_DEBUG) console.log('[FMT]', ...a); };
-    const isFontControl = (el) => el && (fontFamilySelect?.contains(el) || fontSizeSelect?.contains(el) || fontColorButton?.contains(el) || fontColorPanel?.contains(el) || bgColorButton?.contains(el) || bgColorPanel?.contains(el) || boldButton?.contains(el) || italicButton?.contains(el) || underlineButton?.contains(el) || document.getElementById('font-target-dropdown')?.contains(el) || selectFontTarget?.contains(el) || document.getElementById('btn-overview-toggle')?.contains(el));
+    const isFontControl = (el) => el && (fontFamilySelect?.contains(el) || fontSizeSelect?.contains(el) || fontColorButton?.contains(el) || fontColorPanel?.contains(el) || bgColorButton?.contains(el) || bgColorPanel?.contains(el) || boldButton?.contains(el) || italicButton?.contains(el) || underlineButton?.contains(el) || formatPickupButton?.contains(el) || document.getElementById('font-target-dropdown')?.contains(el) || selectFontTarget?.contains(el) || document.getElementById('btn-overview-toggle')?.contains(el));
     const saveSelectionWhenFocusingFontControl = (e) => {
         if (!isFontControl(e.target)) return;
+        /* mouseover must not call saveSelection — moving toward the ribbon often collapses or changes the browser selection before click. */
+        if (e.type === 'mouseover') {
+            updateMultiSelectHighlight();
+            return;
+        }
         const ev = e.type;
         saveSelection(); /* Backup so format buttons can use it if savedFontSelections is empty */
+        captureRibbonSelectionSnapshot();
         const sel = window.getSelection();
         const hasSel = sel.rangeCount && sel.getRangeAt(0) && !sel.getRangeAt(0).collapsed;
         const inEditor = hasSel && teleprompterText.contains(sel.anchorNode);
@@ -2017,6 +2287,14 @@ document.addEventListener('DOMContentLoaded', function() {
         else if (savedFontSelections.length === 0) saveFontSelectionFromEditor(false);
         updateMultiSelectHighlight();
     };
+    window.addEventListener('pointerdown', (e) => {
+        if (!isFontControl(e.target)) return;
+        captureRibbonSelectionSnapshot();
+    }, true);
+    window.addEventListener('mousedown', (e) => {
+        if (!isFontControl(e.target)) return;
+        captureRibbonSelectionSnapshot();
+    }, true);
     const saveSelectionOnEditorBlur = (e) => {
         const next = e.relatedTarget;
         const ribbon = document.querySelector('.top-ribbon');
@@ -2264,6 +2542,25 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!mouseDownInEditor) return;
         mouseDownInEditor = false;
         const sel = window.getSelection();
+        const modifierHeldNow = !!(e && (e.metaKey || e.ctrlKey)) || modifierKeyCurrentlyPressed;
+        const hasSelectionRange = !!(sel.rangeCount && !sel.getRangeAt(0).collapsed && teleprompterText.contains(sel.getRangeAt(0).commonAncestorContainer));
+
+        /* Format pickup exit/apply rules:
+           - First apply: no modifier required.
+           - After first apply: require Cmd/Ctrl for each subsequent apply.
+           - Any click/highlight without modifier after first apply exits mode immediately. */
+        if (formatPickupArmed && formatPickupSnapshot) {
+            if (!hasSelectionRange) {
+                if (formatPickupAppliedOnce && !modifierHeldNow) {
+                    formatPickupArmed = false;
+                    formatPickupSnapshot = null;
+                    formatPickupAppliedOnce = false;
+                    updateFormatPickupButtonState();
+                }
+                return;
+            }
+        }
+
         if (!sel.rangeCount) return;
         const r = sel.getRangeAt(0);
         if (r.collapsed || !teleprompterText.contains(r.commonAncestorContainer)) return;
@@ -2276,8 +2573,37 @@ document.addEventListener('DOMContentLoaded', function() {
                 savedFontSelections = [r.cloneRange()];
             }
             updateMultiSelectState();
-            if (document.activeElement === teleprompterText || teleprompterText.contains(document.activeElement)) {
-                selectedFontTarget = null;
+            /* Keep Select-item active across formatting changes; clear it only on explicit teleprompter-view click. */
+            if (formatPickupArmed && formatPickupSnapshot) {
+                if (formatPickupAppliedOnce && !modifierHeldNow) {
+                    formatPickupArmed = false;
+                    formatPickupSnapshot = null;
+                    formatPickupAppliedOnce = false;
+                    updateFormatPickupButtonState();
+                    return;
+                }
+                pushUndoState();
+                if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+                const applied = applyFormatSnapshotToRange(r.cloneRange(), formatPickupSnapshot);
+                flattenRedundantSpans();
+                if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+                if (applied) {
+                    formatPickupAppliedOnce = true;
+                    const rr = document.createRange();
+                    rr.selectNodeContents(applied);
+                    savedFontSelections = [rr];
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            setTimeout(() => {
+                                restoreSelectionToNode(applied);
+                                invalidateTpRowBalanceKeyForElement(applied);
+                                scheduleRowShortColumnLineSpacing(true);
+                            }, 0);
+                        });
+                    });
+                }
+                syncEditorState();
+                updateFormatPickupButtonState();
             }
         } catch (_) {}
     };
@@ -2400,10 +2726,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!selectedFontTarget) return;
             pushUndoState();
             unwrapFontFromMatchingTarget(selectedFontTarget);
-            selectFontTarget.value = '';
-            selectedFontTarget = null;
-            const trigger = document.getElementById('font-target-trigger');
-            if (trigger) trigger.textContent = 'Select';
+            clearSelectedFontTargetSelection();
             teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
                 row.style.minHeight = '';
                 row.style.height = '';
@@ -2467,31 +2790,260 @@ document.addEventListener('DOMContentLoaded', function() {
         wrap.appendChild(target);
     }
 
-    function applyFormattingToRanges(ranges, cmd) {
-        if (ranges.length === 0) return null;
-        const range = ranges[0].cloneRange();
-        const sel = window.getSelection();
-        teleprompterText.focus();
-        sel.removeAllRanges();
-        sel.addRange(range);
-        fmtLog('applyFormattingToRanges', cmd, 'range.collapsed=', range.collapsed);
-        /* Manual span wrap – execCommand is unreliable in this contenteditable layout */
+    function unwrapElementKeepingChildren(el) {
+        const p = el.parentElement;
+        if (!p || !teleprompterText.contains(p)) return;
+        while (el.firstChild) p.insertBefore(el.firstChild, el);
+        el.remove();
+    }
+
+    /** Text nodes fully covered by range (same contract as color walkers). */
+    function getTextNodesInRange(range) {
+        const out = [];
+        if (!range || range.collapsed || !teleprompterText.contains(range.startContainer) || !teleprompterText.contains(range.endContainer)) return out;
+        const root = range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+            ? range.commonAncestorContainer.parentElement
+            : range.commonAncestorContainer;
+        if (!root || !teleprompterText.contains(root)) return out;
+        if (range.startContainer === range.endContainer && range.startContainer.nodeType === Node.TEXT_NODE) {
+            out.push(range.startContainer);
+            return out;
+        }
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+        let n;
+        while ((n = walker.nextNode())) {
+            if (!range.intersectsNode(n)) continue;
+            out.push(n);
+        }
+        return out;
+    }
+
+    function isCmdActiveAtTextNode(textNode, cmd) {
+        const el = textNode.parentElement;
+        if (!el || !teleprompterText.contains(el)) return false;
+        const s = window.getComputedStyle(el);
+        if (cmd === 'bold') {
+            const w = s.fontWeight;
+            const n = parseInt(w, 10);
+            return (n >= 600 && !isNaN(n)) || w === 'bold' || w === 'bolder';
+        }
+        if (cmd === 'italic') return s.fontStyle === 'italic';
+        if (cmd === 'underline') {
+            const line = s.textDecorationLine || '';
+            const full = s.textDecoration || '';
+            return line.includes('underline') || full.includes('underline');
+        }
+        return false;
+    }
+
+    /** Strip iff every non-empty text node in every range already has this formatting (toggle off). */
+    function shouldStripFormatting(ranges, cmd) {
+        let sawText = false;
+        for (let i = 0; i < ranges.length; i++) {
+            let range;
+            try { range = ranges[i].cloneRange(); } catch (_) { continue; }
+            const nodes = getTextNodesInRange(range);
+            for (let j = 0; j < nodes.length; j++) {
+                const tn = nodes[j];
+                if (!tn.textContent || !tn.textContent.trim()) continue;
+                sawText = true;
+                if (!isCmdActiveAtTextNode(tn, cmd)) return false;
+            }
+        }
+        return sawText;
+    }
+
+    function cleanupFormatSpanIfBarren(el) {
+        if (!el || el.tagName !== 'SPAN' || !el.classList?.contains('format-span-inline')) return;
+        const st = el.style;
+        const w = st.fontWeight;
+        const heavy = w && w !== 'normal' && w !== '400' && (parseInt(w, 10) >= 600 || w === 'bold');
+        const italic = st.fontStyle === 'italic';
+        const ul = (st.textDecoration && st.textDecoration !== 'none') || (st.textDecorationLine && st.textDecorationLine !== 'none');
+        const hasFont = !!(st.fontFamily || st.fontSize);
+        if (!heavy && !italic && !ul && !hasFont) unwrapElementKeepingChildren(el);
+    }
+
+    function stripCmdFromTextNode(textNode, cmd) {
+        let el = textNode.parentElement;
+        while (el && el !== teleprompterText && teleprompterText.contains(el)) {
+            const parent = el.parentElement;
+            if (cmd === 'bold' && (el.tagName === 'B' || el.tagName === 'STRONG')) {
+                unwrapElementKeepingChildren(el);
+                el = textNode.parentElement;
+                continue;
+            }
+            if (cmd === 'italic' && (el.tagName === 'I' || el.tagName === 'EM')) {
+                unwrapElementKeepingChildren(el);
+                el = textNode.parentElement;
+                continue;
+            }
+            if (cmd === 'underline' && el.tagName === 'U') {
+                unwrapElementKeepingChildren(el);
+                el = textNode.parentElement;
+                continue;
+            }
+            if (el.classList?.contains('format-span-inline')) {
+                if (cmd === 'bold') el.style.fontWeight = '';
+                if (cmd === 'italic') el.style.fontStyle = '';
+                if (cmd === 'underline') {
+                    el.style.textDecoration = '';
+                    el.style.textDecorationLine = '';
+                }
+                cleanupFormatSpanIfBarren(el);
+            }
+            el = parent;
+        }
+    }
+
+    function stripFormattingFromRanges(ranges, cmd) {
+        const forward = [...ranges].filter(r => {
+            try {
+                return r && !r.collapsed && teleprompterText.contains(r.startContainer) && teleprompterText.contains(r.endContainer);
+            } catch (_) { return false; }
+        }).sort((a, b) => {
+            try { return a.compareBoundaryPoints(Range.START_TO_START, b); } catch (_) { return 0; }
+        });
+        let firstTextNode = null;
+        for (let i = 0; i < forward.length; i++) {
+            let range;
+            try { range = forward[i].cloneRange(); } catch (_) { continue; }
+            const nodes = getTextNodesInRange(range);
+            for (let j = 0; j < nodes.length; j++) {
+                const tn = nodes[j];
+                if (!tn.textContent?.trim()) continue;
+                if (!firstTextNode) firstTextNode = tn;
+                stripCmdFromTextNode(tn, cmd);
+            }
+        }
+        return firstTextNode;
+    }
+
+    function updateFormatPickupButtonState() {
+        if (!formatPickupButton) return;
+        formatPickupButton.classList.toggle('format-pickup-active', !!formatPickupArmed);
+        document.body.classList.toggle('format-pickup-mode', !!formatPickupArmed);
+        teleprompterView.classList.toggle('format-pickup-mode', !!formatPickupArmed);
+        teleprompterText.classList.toggle('format-pickup-mode', !!formatPickupArmed);
+    }
+
+    function getFormatSnapshotFromRange(range) {
+        if (!range || range.collapsed) return null;
+        const nodes = getTextNodesInRange(range);
+        const tn = nodes.find(n => n && (n.textContent || '').trim().length > 0);
+        if (!tn) return null;
+        const el = tn.parentElement;
+        if (!el) return null;
+        const style = window.getComputedStyle(el);
+        const fontFamily = (style.fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
+        const fontSize = style.fontSize || '';
+        const { color, backgroundColor } = getEffectiveColorsFromNode(tn);
+        const weightRaw = style.fontWeight || '';
+        const weightNum = parseInt(weightRaw, 10);
+        const bold = (!isNaN(weightNum) && weightNum >= 600) || weightRaw === 'bold' || weightRaw === 'bolder';
+        const italic = (style.fontStyle || '') === 'italic';
+        const deco = (style.textDecorationLine || style.textDecoration || '');
+        const underline = deco.includes('underline');
+        return {
+            fontFamily,
+            fontSize,
+            color: normalizeColorForKey(color),
+            backgroundColor: normalizeColorForKey(backgroundColor),
+            bold,
+            italic,
+            underline
+        };
+    }
+
+    function getFormatSnapshotFromSelectedTarget() {
+        if (!selectedFontTarget) return null;
+        return {
+            fontFamily: selectedFontTarget.fontFamily || '',
+            fontSize: selectedFontTarget.fontSize || '',
+            color: normalizeColorForKey(selectedFontTarget.color || ''),
+            backgroundColor: normalizeColorForKey(selectedFontTarget.backgroundColor || ''),
+            bold: typeof selectedFontTarget.bold === 'boolean' ? !!selectedFontTarget.bold : false,
+            italic: typeof selectedFontTarget.italic === 'boolean' ? !!selectedFontTarget.italic : false,
+            underline: typeof selectedFontTarget.underline === 'boolean' ? !!selectedFontTarget.underline : false,
+        };
+    }
+
+    function applyFormatSnapshotToRange(range, snap) {
+        if (!range || range.collapsed || !snap) return null;
+        const r = range.cloneRange();
+        const span = document.createElement('span');
+        span.className = 'format-span-inline color-span-inline';
+        span.style.display = 'inline';
+        if (snap.fontFamily) span.style.fontFamily = snap.fontFamily;
+        if (snap.fontSize) span.style.fontSize = String(snap.fontSize).endsWith('px') ? String(snap.fontSize) : `${snap.fontSize}px`;
+        if (snap.bold !== null) span.style.fontWeight = snap.bold ? 'bold' : 'normal';
+        if (snap.italic !== null) span.style.fontStyle = snap.italic ? 'italic' : 'normal';
+        if (snap.underline !== null) {
+            span.style.textDecoration = snap.underline ? 'underline' : 'none';
+            span.style.textDecorationLine = snap.underline ? 'underline' : 'none';
+        }
+        if (snap.color) span.style.color = snap.color;
+        if (snap.backgroundColor) span.style.backgroundColor = snap.backgroundColor;
         try {
-            const styleMap = { bold: ['fontWeight', 'bold'], italic: ['fontStyle', 'italic'], underline: ['textDecoration', 'underline'] };
-            const [prop, val] = styleMap[cmd] || [];
-            if (!prop || range.collapsed) return null;
-            const span = document.createElement('span');
-            span.className = 'format-span-inline';
-            span.style[prop] = val;
-            span.appendChild(range.extractContents());
-            range.insertNode(span);
-            fmtLog('wrap OK, span.textContent=', JSON.stringify(span.textContent?.slice(0, 30)));
+            span.appendChild(r.extractContents());
+            r.insertNode(span);
             return span;
-        } catch (err) {
-            fmtLog('wrap threw', err);
-            document.execCommand(cmd, false, null);
+        } catch (_) {
             return null;
         }
+    }
+
+    function applyFormattingToRanges(ranges, cmd, forceStrip = null) {
+        if (ranges.length === 0) return null;
+        const styleMap = { bold: ['fontWeight', 'bold'], italic: ['fontStyle', 'italic'], underline: ['textDecoration', 'underline'] };
+        const [prop, val] = styleMap[cmd] || [];
+        if (!prop) return null;
+        teleprompterText.focus();
+        const sorted = [...ranges].filter(r => {
+            try {
+                return r && !r.collapsed && document.contains(r.startContainer) && document.contains(r.endContainer)
+                    && teleprompterText.contains(r.startContainer) && teleprompterText.contains(r.endContainer);
+            } catch (_) { return false; }
+        }).sort((a, b) => {
+            try { return b.compareBoundaryPoints(Range.START_TO_START, a); } catch (_) { return 0; }
+        });
+        if (sorted.length === 0) return null;
+        let stripFirstTextNode = null;
+        let spanFirstInDocument = null;
+        const considerFirstSpan = (span) => {
+            if (!span) return;
+            if (!spanFirstInDocument) {
+                spanFirstInDocument = span;
+                return;
+            }
+            const pos = span.compareDocumentPosition(spanFirstInDocument);
+            if (pos & Node.DOCUMENT_POSITION_FOLLOWING) spanFirstInDocument = span;
+        };
+        /* Use extractContents per range so partial selections inside one long text node stay partial (never setStart(0)/setEnd(length)). */
+        for (let i = 0; i < sorted.length; i++) {
+            const range = sorted[i].cloneRange();
+            if (range.collapsed) continue;
+            const stripThis = (forceStrip === null) ? shouldStripFormatting([range], cmd) : !!forceStrip;
+            fmtLog('applyFormattingToRanges', cmd, 'range', i, 'strip=', stripThis);
+            if (stripThis) {
+                const tn = stripFormattingFromRanges([range], cmd);
+                if (tn && !stripFirstTextNode) stripFirstTextNode = tn;
+                continue;
+            }
+            try {
+                const span = document.createElement('span');
+                span.className = 'format-span-inline';
+                span.style.display = 'inline';
+                span.style[prop] = val;
+                span.appendChild(range.extractContents());
+                range.insertNode(span);
+                considerFirstSpan(span);
+                fmtLog('wrap OK extractContents', i, span.textContent?.slice?.(0, 40));
+            } catch (err) {
+                fmtLog('wrap threw', err);
+            }
+        }
+        return stripFirstTextNode || spanFirstInDocument;
     }
 
     function restoreSelectionToNode(node) {
@@ -2528,61 +3080,104 @@ document.addEventListener('DOMContentLoaded', function() {
     function applyFormatting(cmd) {
         fmtLog('--- applyFormatting', cmd, 'activeEl=', document.activeElement?.id || document.activeElement?.tagName);
         pushUndoState();
-        if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
-        let ranges = [];
-        /* Bold/italic/underline: use selection only, NOT font-target matching (which would format 100+ ranges) */
-        if (selectedFontTarget && !['bold', 'italic', 'underline'].includes(cmd)) {
-            const { fontFamily, fontSize } = selectedFontTarget;
-            const normalizeFont = (s) => (s || '').split(',')[0].trim().replace(/^["']|["']$/g, '').toLowerCase();
-            const normalizeSize = (s) => String(s || '').trim();
-            const walker = document.createTreeWalker(teleprompterText, NodeFilter.SHOW_TEXT, null, false);
-            let node;
-            while ((node = walker.nextNode())) {
-                if (!node.textContent.trim()) continue;
-                const parent = node.parentElement;
-                if (!parent) continue;
-                const style = window.getComputedStyle(parent);
-                const pFont = normalizeFont(style.fontFamily);
-                const pSize = normalizeSize(style.fontSize);
-                const tFont = normalizeFont(fontFamily);
-                const tSize = normalizeSize(fontSize);
-                const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(node);
-                if (tFont && tSize && pFont === tFont && pSize === tSize && colorsMatch(selectedFontTarget, effColor, effBg)) {
-                    const r = document.createRange();
-                    r.setStart(node, 0);
-                    r.setEnd(node, node.length);
-                    ranges.push(r);
-                }
-            }
+        /* Prefer explicit selection; when none is selected, apply across all runs matching the selected Select-item. */
+        let ranges = resolveRibbonExplicitRanges();
+        const hadExplicitSelection = ranges.length > 0;
+        let usingSelectedTargetRuns = false;
+        let usingGlobalAllRuns = false;
+        if (ranges.length === 0 && selectedFontTarget) {
+            ranges = collectRangesForSelectedFontTarget(selectedFontTarget);
+            usingSelectedTargetRuns = ranges.length > 0;
         }
-        if (ranges.length === 0 && savedFontSelections.length > 0) {
-            ranges = savedFontSelections.filter(r => {
-                try { return r && document.contains(r.startContainer); } catch (_) { return false; }
-            });
+        if (ranges.length === 0 && !selectedFontTarget) {
+            ranges = collectAllTextRanges();
+            usingGlobalAllRuns = ranges.length > 0;
+        }
+        /* Build rangesToApply before focus() — focusing can expand selection to the whole block in some browsers. */
+        let rangesToApply = ranges.length > 0 ? ranges.map(r => { try { return r.cloneRange(); } catch (_) { return null; } }).filter(Boolean) : [];
+        if (rangesToApply.length === 0 && savedSelection && !savedSelection.collapsed && teleprompterText.contains(savedSelection.startContainer) && teleprompterText.contains(savedSelection.endContainer) && document.contains(savedSelection.startContainer)) {
+            try { rangesToApply = [savedSelection.cloneRange()]; } catch (_) {}
+        }
+        if (rangesToApply.length === 0 && ribbonInteractionSnapshotRange) {
+            try {
+                const rs = ribbonInteractionSnapshotRange;
+                if (!rs.collapsed && document.contains(rs.startContainer) && document.contains(rs.endContainer) && teleprompterText.contains(rs.startContainer) && teleprompterText.contains(rs.endContainer)) rangesToApply = [rs.cloneRange()];
+            } catch (_) {}
         }
         teleprompterText.focus();
         const sel = window.getSelection();
-        const toRestore = ranges.length > 0 ? ranges[0] : savedFontSelections.find(r => { try { return r && document.contains(r.startContainer); } catch (_) { return false; } });
+        const toRestore = rangesToApply.length > 0 ? rangesToApply[0] : savedFontSelections.find(r => { try { return r && document.contains(r.startContainer); } catch (_) { return false; } });
         if (toRestore) {
             try {
                 sel.removeAllRanges();
                 sel.addRange(toRestore.cloneRange());
             } catch (_) {}
         }
-        const rangesToApply = ranges.length > 0 ? ranges
-            : (sel.rangeCount ? [sel.getRangeAt(0).cloneRange()] : (savedSelection && document.contains(savedSelection.startContainer) ? [savedSelection.cloneRange()] : []));
-        const src = ranges.length > 0 ? 'fontTarget/savedFont' : (sel.rangeCount ? 'currentSel' : 'savedSelection');
+        const src = rangesToApply.length ? (usingSelectedTargetRuns && !hadExplicitSelection ? 'selectedTargetRuns' : 'rangesToApply') : 'none';
         fmtLog('rangesToApply.len=', rangesToApply.length, 'source=', src, 'sel.rangeCount=', sel.rangeCount);
         let formattedSpan = null;
+        let formattedAfterStripTextNode = null;
+        if (rangesToApply.length > 0 && typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+        let forceStrip = null;
         if (rangesToApply.length > 0) {
-            formattedSpan = applyFormattingToRanges(rangesToApply, cmd);
+            forceStrip = (usingSelectedTargetRuns && !hadExplicitSelection)
+                ? shouldStripFormatting(rangesToApply, cmd)
+                : null;
+            const fmtOut = applyFormattingToRanges(rangesToApply, cmd, forceStrip);
+            if (fmtOut && fmtOut.nodeType === Node.TEXT_NODE) formattedAfterStripTextNode = fmtOut;
+            else formattedSpan = fmtOut;
         }
         flattenRedundantSpans();
         if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
         updateMultiSelectState();
         syncEditorState();
+        const bulkTargetMode = usingSelectedTargetRuns && !hadExplicitSelection;
+        const globalAllMode = usingGlobalAllRuns && !hadExplicitSelection;
+        if (bulkTargetMode || globalAllMode) {
+            /* For Select-item bulk updates (and no-selection global-all updates),
+               don't leave a highlighted range behind.
+               Residual saved ranges make the next ribbon action apply only to that tiny span. */
+            if (bulkTargetMode) syncSelectedFontTargetStyleFlagAfterBulkFormatting(cmd, !!forceStrip);
+            savedFontSelections = [];
+            updateMultiSelectState();
+            try {
+                const s = window.getSelection();
+                s.removeAllRanges();
+            } catch (_) {}
+            ribbonInteractionSnapshotRange = null;
+            return;
+        }
         /* Restore selection last, after all post-processing, so user can apply more formatting */
-        if (formattedSpan) {
+        /* flattenRedundantSpans may merge wrappers and detach the strip text node reference */
+        if (formattedAfterStripTextNode && !document.contains(formattedAfterStripTextNode)) {
+            formattedAfterStripTextNode = null;
+        }
+        if (formattedAfterStripTextNode && document.contains(formattedAfterStripTextNode)) {
+            fmtLog('scheduling restore after strip, text node OK');
+            try {
+                const r = document.createRange();
+                r.setStart(formattedAfterStripTextNode, 0);
+                r.setEnd(formattedAfterStripTextNode, formattedAfterStripTextNode.length);
+                savedFontSelections = [r];
+            } catch (_) {}
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    setTimeout(() => {
+                        try {
+                            const r = document.createRange();
+                            r.setStart(formattedAfterStripTextNode, 0);
+                            r.setEnd(formattedAfterStripTextNode, formattedAfterStripTextNode.length);
+                            const s = window.getSelection();
+                            s.removeAllRanges();
+                            s.addRange(r);
+                            teleprompterText.focus();
+                            invalidateTpRowBalanceKeyForElement(formattedAfterStripTextNode.parentElement);
+                            scheduleRowShortColumnLineSpacing(true);
+                        } catch (_) {}
+                    }, 0);
+                });
+            });
+        } else if (formattedSpan) {
             fmtLog('scheduling restore, formattedSpan OK');
             try {
                 const r = document.createRange();
@@ -2603,7 +3198,25 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             fmtLog('no formattedSpan, skip restore');
         }
+        ribbonInteractionSnapshotRange = null;
     }
+    if (formatPickupButton) {
+        formatPickupButton.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            formatPickupButton.blur();
+            let snap = null;
+            const explicit = resolveRibbonExplicitRanges();
+            if (explicit.length > 0) snap = getFormatSnapshotFromRange(explicit[0]);
+            if (!snap) snap = getFormatSnapshotFromSelectedTarget();
+            if (!snap) return;
+            formatPickupSnapshot = snap;
+            formatPickupArmed = true;
+            formatPickupAppliedOnce = false;
+            updateFormatPickupButtonState();
+        }, true);
+    }
+
     [boldButton, italicButton, underlineButton].forEach((btn, i) => {
         const cmd = ['bold', 'italic', 'underline'][i];
         if (btn) {
@@ -2800,7 +3413,15 @@ document.addEventListener('DOMContentLoaded', function() {
     // =========================================
     function saveSelection() {
         const sel = window.getSelection();
-        savedSelection = (sel.rangeCount > 0) ? sel.getRangeAt(0) : null;
+        if (!sel.rangeCount) {
+            savedSelection = null;
+            return;
+        }
+        try {
+            savedSelection = sel.getRangeAt(0).cloneRange();
+        } catch (_) {
+            savedSelection = null;
+        }
     }
 
     function restoreSelection() {
@@ -4076,6 +4697,104 @@ openFileButton.onclick = () => {
 if (undoButton) undoButton.onclick = () => { if (!undo()) document.execCommand('undo'); };
 if (redoButton) redoButton.onclick = () => { if (!redo()) document.execCommand('redo'); };
 
+function isHtmlFilename(name) {
+    return /\.html?$/i.test(name || '');
+}
+
+function getRunlistDisplayName(name) {
+    if (!name || typeof name !== 'string') return '';
+    const firstDot = name.indexOf('.');
+    return firstDot > 0 ? name.slice(0, firstDot) : name;
+}
+
+function detectColumnMetadataFromHtml(html) {
+    const defaults = { columnCount: 0, columnVisibility: [], firstColIsId: false };
+    if (!html || typeof html !== 'string') return defaults;
+    const temp = document.createElement('div');
+    temp.innerHTML = html;
+    const rows = Array.from(temp.querySelectorAll('.script-row-wrapper'));
+    if (rows.length === 0) return defaults;
+    const columnCount = Math.max(0, Math.min(MAX_COLUMNS, ...rows.map(r => r.querySelectorAll('.script-column').length)));
+    if (columnCount <= 0) return defaults;
+    const columnVisibility = [];
+    for (let i = 0; i < columnCount; i++) {
+        const colsAtIndex = rows
+            .map(r => r.querySelectorAll('.script-column')[i])
+            .filter(Boolean);
+        if (colsAtIndex.length === 0) {
+            columnVisibility.push(true);
+            continue;
+        }
+        const allHidden = colsAtIndex.every(col => col.classList.contains('user-col-hidden'));
+        columnVisibility.push(!allHidden);
+    }
+    const firstColumnCells = rows
+        .map(r => r.querySelectorAll('.script-column')[0])
+        .filter(Boolean)
+        .map(col => (col.querySelector('.cell-content') || col).innerText || '')
+        .map(s => s.trim())
+        .filter(Boolean);
+    const firstColIsId = firstColumnCells.length > 0 && firstColumnCells.every(v => /^\d+$/.test(v));
+    return { columnCount, columnVisibility, firstColIsId };
+}
+
+function parseTeleprompterHtmlSavePayload(text) {
+    const fallback = { html: text || '', metadata: null };
+    if (!text || typeof text !== 'string') return fallback;
+    const match = text.match(/<!--\s*TP_META:([\s\S]*?)\s*-->/i);
+    if (!match) return fallback;
+    try {
+        const metadata = JSON.parse(decodeURIComponent((match[1] || '').trim()));
+        const html = text.replace(match[0], '');
+        return { html, metadata };
+    } catch {
+        return fallback;
+    }
+}
+
+function serializeTeleprompterHtmlSavePayload(fileIndex, html) {
+    const inferred = detectColumnMetadataFromHtml(html);
+    const count = Math.max(0, Math.min(MAX_COLUMNS, fileColumnCount[fileIndex] || inferred.columnCount || 0));
+    const visSrc = Array.isArray(fileColumnVisibility[fileIndex]) && fileColumnVisibility[fileIndex].length
+        ? fileColumnVisibility[fileIndex]
+        : inferred.columnVisibility;
+    const visibility = Array.from({ length: count }, (_, i) => visSrc[i] !== false);
+    const metadata = {
+        version: 1,
+        columnCount: count,
+        columnVisibility: visibility,
+        firstColIsId: !!(fileFirstColIsId[fileIndex] || inferred.firstColIsId),
+        showSyncGuide: fileShowSyncGuide[fileIndex] !== false
+    };
+    const encoded = encodeURIComponent(JSON.stringify(metadata));
+    return `<!-- TP_META:${encoded} -->\n${html || ''}`;
+}
+
+function getFormattedHtmlSuggestedName(name) {
+    const base = stripFileExtension(name || 'script');
+    return `${base}.teleprompter.html`;
+}
+
+function hasFormattedHtmlSave(index) {
+    const file = fileStore[index];
+    if (file && isHtmlFilename(file.name)) return true;
+    return !!formattedHtmlSaveHandles[index] || !!formattedHtmlSavedNames[index];
+}
+
+function updateRunlistRowHtmlBadge(index) {
+    if (!runlistContainer || index < 0) return;
+    const row = runlistContainer.querySelector(`.runlist-row[data-index="${index}"]`);
+    if (!row) return;
+    const existing = row.querySelector('.runlist-html-badge');
+    if (existing) existing.remove();
+    if (!hasFormattedHtmlSave(index)) return;
+    const badge = document.createElement('span');
+    badge.className = 'runlist-html-badge';
+    badge.textContent = 'HTML';
+    badge.title = 'Saved as formatted HTML';
+    row.appendChild(badge);
+}
+
 async function saveCurrentFile() {
     if (currentFileIndex < 0 || currentFileIndex >= fileStore.length) return;
     syncEditorState();
@@ -4085,6 +4804,45 @@ async function saveCurrentFile() {
     const html = teleprompterText.innerHTML.trim();
     contentStore[currentFileIndex] = (html === '<br>' || html === '') ? '' : html;
 
+    const htmlPayload = serializeTeleprompterHtmlSavePayload(currentFileIndex, contentStore[currentFileIndex]);
+    if (!isHtmlFilename(file.name)) {
+        const htmlBlob = new Blob([htmlPayload], { type: 'text/html' });
+        let suggestedName = formattedHtmlSavedNames[currentFileIndex] || getFormattedHtmlSuggestedName(file.name);
+        let handle = formattedHtmlSaveHandles[currentFileIndex] || null;
+        try {
+            if (!handle && 'showSaveFilePicker' in window) {
+                handle = await window.showSaveFilePicker({
+                    suggestedName,
+                    types: [{ description: 'Teleprompter HTML', accept: { 'text/html': ['.html'] } }]
+                });
+                formattedHtmlSaveHandles[currentFileIndex] = handle;
+                formattedHtmlSavedNames[currentFileIndex] = handle.name || suggestedName;
+            }
+            if (handle) {
+                const writable = await handle.createWritable();
+                await writable.write(htmlBlob);
+                await writable.close();
+            } else if (typeof saveAs === 'function') {
+                saveAs(htmlBlob, suggestedName);
+                formattedHtmlSavedNames[currentFileIndex] = suggestedName;
+            } else {
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(htmlBlob);
+                a.download = suggestedName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(a.href), 100);
+                formattedHtmlSavedNames[currentFileIndex] = suggestedName;
+            }
+            updateRunlistRowHtmlBadge(currentFileIndex);
+            return;
+        } catch (err) {
+            if (err.name !== 'AbortError') console.error('Save failed:', err);
+            return;
+        }
+    }
+
     let blob;
     let suggestedName = file.name;
 
@@ -4092,7 +4850,7 @@ async function saveCurrentFile() {
         const text = teleprompterText.innerText || '';
         blob = new Blob([text], { type: 'text/plain' });
     } else if (ext === 'html' || ext === 'htm') {
-        blob = new Blob([contentStore[currentFileIndex]], { type: 'text/html' });
+        blob = new Blob([htmlPayload], { type: 'text/html' });
     } else if (ext === 'xlsx' || ext === 'xls') {
         const container = teleprompterText.querySelector('.script-container');
         const rows = [];
@@ -4170,16 +4928,19 @@ function moveFileInRunlist(direction) {
     [fileColumnCount[currentFileIndex], fileColumnCount[newIndex]] = [fileColumnCount[newIndex], fileColumnCount[currentFileIndex]];
     [fileColumnVisibility[currentFileIndex], fileColumnVisibility[newIndex]] = [fileColumnVisibility[newIndex], fileColumnVisibility[currentFileIndex]];
     [fileFirstColIsId[currentFileIndex], fileFirstColIsId[newIndex]] = [fileFirstColIsId[newIndex], fileFirstColIsId[currentFileIndex]];
+    [fileShowSyncGuide[currentFileIndex], fileShowSyncGuide[newIndex]] = [fileShowSyncGuide[newIndex], fileShowSyncGuide[currentFileIndex]];
+    [formattedHtmlSaveHandles[currentFileIndex], formattedHtmlSaveHandles[newIndex]] = [formattedHtmlSaveHandles[newIndex], formattedHtmlSaveHandles[currentFileIndex]];
+    [formattedHtmlSavedNames[currentFileIndex], formattedHtmlSavedNames[newIndex]] = [formattedHtmlSavedNames[newIndex], formattedHtmlSavedNames[currentFileIndex]];
     const rows = Array.from(runlistContainer.querySelectorAll('.runlist-row'));
     [rows[currentFileIndex], rows[newIndex]] = [rows[newIndex], rows[currentFileIndex]];
     runlistContainer.innerHTML = '';
     rows.forEach((row, i) => {
         row.dataset.index = i;
         const nameEl = row.querySelector('.file-name');
-        if (nameEl) nameEl.textContent = fileStore[i].name;
+        if (nameEl) nameEl.textContent = getRunlistDisplayName(fileStore[i].name);
         row.onclick = (e) => {
             if (runlistJustDragged) { runlistJustDragged = false; return; }
-            if (e.target.closest('.runlist-column-toggles') || e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle')) return;
+            if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]')) return;
             loadScriptToEditor(i);
         };
         const closeBtn = row.querySelector('.runlist-close');
@@ -4647,15 +5408,20 @@ function addFileToRunlist(file) {
     fileColumnCount.push(0);
     fileColumnVisibility.push([]);
     fileFirstColIsId.push(false);
+    fileShowSyncGuide.push(true);
+    formattedHtmlSaveHandles.push(null);
+    formattedHtmlSavedNames.push('');
 
     const row = document.createElement('div');
     row.className = 'runlist-row';
     row.dataset.index = index;
-    row.innerHTML = `<span class="runlist-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</span><div class="runlist-row-left"><span class="file-name">${file.name}</span><div class="runlist-column-toggles"></div></div><button type="button" class="runlist-close" title="Close file" aria-label="Close file">×</button>`;
+    row.innerHTML = `<span class="runlist-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</span><div class="runlist-row-left"><span class="file-name"></span><div class="runlist-column-toggles"></div></div><button type="button" class="runlist-close" title="Close file" aria-label="Close file">×</button>`;
+    const nameEl = row.querySelector('.file-name');
+    if (nameEl) nameEl.textContent = getRunlistDisplayName(file.name);
 
     row.onclick = (e) => {
         if (runlistJustDragged) { runlistJustDragged = false; return; }
-        if (e.target.closest('.runlist-column-toggles') || e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle')) return;
+        if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]')) return;
         console.log(`Row clicked: loading index ${index}`);
         loadScriptToEditor(index);
     };
@@ -4670,6 +5436,7 @@ function addFileToRunlist(file) {
     attachRunlistRowDrag(row, index);
 
     runlistContainer.appendChild(row);
+    updateRunlistRowHtmlBadge(index);
     processFileContent(file, index);
     resetPillTriggerState();
     updateFilenamePills();
@@ -4702,6 +5469,9 @@ function moveRunlistRow(fromIndex, toIndex) {
     move(fileColumnCount);
     move(fileColumnVisibility);
     move(fileFirstColIsId);
+    move(fileShowSyncGuide);
+    move(formattedHtmlSaveHandles);
+    move(formattedHtmlSavedNames);
     const rows = Array.from(runlistContainer.querySelectorAll('.runlist-row'));
     const draggedRow = rows[fromIndex];
     if (draggedRow) {
@@ -4713,10 +5483,10 @@ function moveRunlistRow(fromIndex, toIndex) {
     reindexed.forEach((r, i) => {
         r.dataset.index = String(i);
         const nameEl = r.querySelector('.file-name');
-        if (nameEl) nameEl.textContent = fileStore[i].name;
+        if (nameEl) nameEl.textContent = getRunlistDisplayName(fileStore[i].name);
         r.onclick = (e) => {
             if (runlistJustDragged) { runlistJustDragged = false; return; }
-            if (e.target.closest('.runlist-column-toggles') || e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle')) return;
+            if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]')) return;
             loadScriptToEditor(i);
         };
         const closeBtn = r.querySelector('.runlist-close');
@@ -4741,16 +5511,19 @@ function removeFileFromRunlist(index) {
     fileColumnCount.splice(index, 1);
     fileColumnVisibility.splice(index, 1);
     fileFirstColIsId.splice(index, 1);
+    fileShowSyncGuide.splice(index, 1);
+    formattedHtmlSaveHandles.splice(index, 1);
+    formattedHtmlSavedNames.splice(index, 1);
     const row = runlistContainer.querySelector(`.runlist-row[data-index="${index}"]`);
     if (row) row.remove();
     const rows = Array.from(runlistContainer.querySelectorAll('.runlist-row'));
     rows.forEach((r, i) => {
         r.dataset.index = String(i);
         const nameEl = r.querySelector('.file-name');
-        if (nameEl) nameEl.textContent = fileStore[i].name;
+        if (nameEl) nameEl.textContent = getRunlistDisplayName(fileStore[i].name);
         r.onclick = (e) => {
             if (runlistJustDragged) { runlistJustDragged = false; return; }
-            if (e.target.closest('.runlist-column-toggles') || e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle')) return;
+            if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]')) return;
             loadScriptToEditor(i);
         };
         const closeBtn = r.querySelector('.runlist-close');
@@ -4760,6 +5533,7 @@ function removeFileFromRunlist(index) {
     });
     if (fileStore.length === 0) {
         currentFileIndex = -1;
+        applyCurrentFileSyncGuideVisibility();
         teleprompterText.innerHTML = '<br>';
         delete teleprompterText.dataset.placeholder;
         document.querySelectorAll('.runlist-row').forEach(r => r.classList.remove('active'));
@@ -4799,6 +5573,9 @@ function sortRunlistIfNumericPrefix(countBefore) {
     const newFileColumnCount = indices.map(i => fileColumnCount[i]);
     const newFileColumnVisibility = indices.map(i => fileColumnVisibility[i]);
     const newFileFirstColIsId = indices.map(i => fileFirstColIsId[i]);
+    const newFileShowSyncGuide = indices.map(i => fileShowSyncGuide[i]);
+    const newFormattedHtmlSaveHandles = indices.map(i => formattedHtmlSaveHandles[i]);
+    const newFormattedHtmlSavedNames = indices.map(i => formattedHtmlSavedNames[i]);
     fileStore.length = 0;
     fileStore.push(...newFileStore);
     contentStore.length = 0;
@@ -4809,6 +5586,12 @@ function sortRunlistIfNumericPrefix(countBefore) {
     fileColumnVisibility.push(...newFileColumnVisibility);
     fileFirstColIsId.length = 0;
     fileFirstColIsId.push(...newFileFirstColIsId);
+    fileShowSyncGuide.length = 0;
+    fileShowSyncGuide.push(...newFileShowSyncGuide);
+    formattedHtmlSaveHandles.length = 0;
+    formattedHtmlSaveHandles.push(...newFormattedHtmlSaveHandles);
+    formattedHtmlSavedNames.length = 0;
+    formattedHtmlSavedNames.push(...newFormattedHtmlSavedNames);
     const newCurrentIndex = currentName ? newFileStore.findIndex(f => f.name === currentName) : -1;
     currentFileIndex = newCurrentIndex >= 0 ? newCurrentIndex : 0;
     runlistContainer.innerHTML = '';
@@ -4816,10 +5599,12 @@ function sortRunlistIfNumericPrefix(countBefore) {
         const row = document.createElement('div');
         row.className = 'runlist-row';
         row.dataset.index = String(i);
-        row.innerHTML = `<span class="runlist-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</span><div class="runlist-row-left"><span class="file-name">${file.name}</span><div class="runlist-column-toggles"></div></div><button type="button" class="runlist-close" title="Close file" aria-label="Close file">×</button>`;
+        row.innerHTML = `<span class="runlist-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</span><div class="runlist-row-left"><span class="file-name"></span><div class="runlist-column-toggles"></div></div><button type="button" class="runlist-close" title="Close file" aria-label="Close file">×</button>`;
+        const nameEl = row.querySelector('.file-name');
+        if (nameEl) nameEl.textContent = getRunlistDisplayName(file.name);
         row.onclick = (e) => {
             if (runlistJustDragged) { runlistJustDragged = false; return; }
-            if (e.target.closest('.runlist-column-toggles') || e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle')) return;
+            if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]')) return;
             loadScriptToEditor(i);
         };
         const closeBtn = row.querySelector('.runlist-close');
@@ -5005,9 +5790,20 @@ async function processFileContent(file, index) {
             const currentIdx = fileStore.findIndex(f => f === file);
             const slot = currentIdx >= 0 ? currentIdx : index;
             if (extension === 'html') {
+                const parsed = parseTeleprompterHtmlSavePayload(text);
+                text = parsed.html;
                 const { html: normalized, wasTrimmed } = normalizeContentToMax3Columns(text);
                 text = normalized;
                 if (wasTrimmed) alert(`"${file.name}" had more than ${MAX_COLUMNS} columns. Extra columns were merged into column ${MAX_COLUMNS}.`);
+                const inferred = detectColumnMetadataFromHtml(text);
+                const meta = parsed.metadata && typeof parsed.metadata === 'object' ? parsed.metadata : null;
+                const count = Math.max(0, Math.min(MAX_COLUMNS, Number(meta?.columnCount) || inferred.columnCount || 0));
+                const visSrc = Array.isArray(meta?.columnVisibility) ? meta.columnVisibility : inferred.columnVisibility;
+                fileColumnCount[slot] = count;
+                fileColumnVisibility[slot] = Array.from({ length: count }, (_, i) => visSrc?.[i] !== false);
+                fileFirstColIsId[slot] = !!(meta?.firstColIsId ?? inferred.firstColIsId);
+                fileShowSyncGuide[slot] = meta?.showSyncGuide !== false;
+                updateRunlistRowColumnToggles(slot);
             }
             text = stripNumericAngleMarkers(text);
             contentStore[slot] = text;
@@ -5074,6 +5870,8 @@ async function processFileContent(file, index) {
                         let { html, wasTrimmed } = normalizeContentToMax3Columns(xlsxStructure);
                         html = stripNumericAngleMarkers(html);
                         contentStore[slot] = html;
+                        fileShowSyncGuide[slot] = fileShowSyncGuide[slot] !== false;
+                        updateRunlistRowColumnToggles(slot);
                         if (wasTrimmed) alert(`"${file.name}" had more than ${MAX_COLUMNS} columns. Extra columns were merged into column ${MAX_COLUMNS}.`);
                         console.log("Docx converted successfully");
                         loadScriptToEditor(slot);
@@ -5561,10 +6359,16 @@ function checkBottomPillAndAdvanceToNextFile() {
     const scrollDelta = lastScrollTopForPillTrigger != null ? currentScrollTop - lastScrollTopForPillTrigger : 0;
     const scrollingDown = (typeof scrollSpeed !== 'undefined' && scrollSpeed > 0) || (scrollDelta > 0);
     if (!scrollingDown) return;
+
+    const viewRect = view.getBoundingClientRect();
     const indicatorY = wrapper.getBoundingClientRect().top + wrapper.getBoundingClientRect().height / 2;
     const rect = bottomPill.getBoundingClientRect();
-    const indicatorTouchingPill = indicatorY >= rect.top && indicatorY <= rect.bottom;
-    if (!indicatorTouchingPill) {
+    const pad = 22; /* mirror top-pill tolerance */
+    const indicatorOverlapsPill = indicatorY >= rect.top - pad && indicatorY <= rect.bottom + pad;
+    const pillVisibleInView = rect.bottom > viewRect.top + 6 && rect.top < viewRect.bottom - 6;
+    const pillScrolledPastSyncLine = rect.top > indicatorY + 8 && pillVisibleInView;
+
+    if (!indicatorOverlapsPill && !pillScrolledPastSyncLine) {
         bottomPillTriggerFired = false;
         return;
     }
@@ -6133,49 +6937,72 @@ function applyColumnVisibilityToEditor() {
     }
 }
 
+function applyCurrentFileSyncGuideVisibility() {
+    const syncGuide = document.getElementById('sync-guide');
+    if (!syncGuide) return;
+    const show = currentFileIndex < 0 ? true : (fileShowSyncGuide[currentFileIndex] !== false);
+    syncGuide.style.display = show ? 'block' : 'none';
+}
+
 function updateRunlistRowColumnToggles(fileIndex) {
     const row = runlistContainer && fileIndex >= 0 ? runlistContainer.querySelector(`.runlist-row[data-index="${fileIndex}"]`) : null;
+    if (row) updateRunlistRowHtmlBadge(fileIndex);
     const togglesEl = row ? row.querySelector('.runlist-column-toggles') : null;
     if (!togglesEl) return;
     togglesEl.innerHTML = '';
     const n = fileColumnCount[fileIndex] || 0;
     const vis = fileColumnVisibility[fileIndex];
-    if (n <= 0 || !vis) return;
-    for (let i = 0; i < n; i++) {
-        const label = document.createElement('label');
-        label.className = 'runlist-col-toggle';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = vis[i] !== false;
-        cb.dataset.colIndex = String(i);
-        cb.addEventListener('change', (e) => {
-            e.stopPropagation();
-            const colIndex = parseInt(cb.dataset.colIndex, 10);
-            if (!fileColumnVisibility[fileIndex]) return;
-            fileColumnVisibility[fileIndex][colIndex] = cb.checked;
-            /* Ensure the file whose toggles we changed is shown in the teleprompter */
-            if (currentFileIndex !== fileIndex) {
-                loadScriptToEditor(fileIndex);
-                return;
-            }
-            teleprompterText.querySelectorAll('.script-row-wrapper').forEach(r => {
-                const cols = r.querySelectorAll('.script-column');
-                if (cols[colIndex]) cols[colIndex].classList.toggle('user-col-hidden', !cb.checked);
+    const showColumnToggles = n > 1 && !!vis;
+    if (showColumnToggles) {
+        for (let i = 0; i < n; i++) {
+            const label = document.createElement('label');
+            label.className = 'runlist-col-toggle';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = vis[i] !== false;
+            cb.dataset.colIndex = String(i);
+            cb.addEventListener('change', (e) => {
+                e.stopPropagation();
+                const colIndex = parseInt(cb.dataset.colIndex, 10);
+                if (!fileColumnVisibility[fileIndex]) return;
+                fileColumnVisibility[fileIndex][colIndex] = cb.checked;
+                /* Ensure the file whose toggles we changed is shown in the teleprompter */
+                if (currentFileIndex !== fileIndex) {
+                    loadScriptToEditor(fileIndex);
+                    return;
+                }
+                teleprompterText.querySelectorAll('.script-row-wrapper').forEach(r => {
+                    const cols = r.querySelectorAll('.script-column');
+                    if (cols[colIndex]) cols[colIndex].classList.toggle('user-col-hidden', !cb.checked);
+                });
+                syncColumnWidths();
+                if (document.body.classList.contains('broadcasting')) {
+                    if (broadcastEditMode) syncRowHeightsFromMainInBroadcastEditMode();
+                    else measureRowHeightsWithProbeForBroadcasting();
+                    if (mirrorWindow && !mirrorWindow.closed) refreshMirrorData();
+                } else if (mirrorWindow && !mirrorWindow.closed) {
+                    refreshMirrorData();
+                }
             });
-            syncColumnWidths();
-            if (document.body.classList.contains('broadcasting')) {
-                if (broadcastEditMode) syncRowHeightsFromMainInBroadcastEditMode();
-                else measureRowHeightsWithProbeForBroadcasting();
-                if (mirrorWindow && !mirrorWindow.closed) refreshMirrorData();
-            } else if (mirrorWindow && !mirrorWindow.closed) {
-                refreshMirrorData();
-            }
-        });
-        label.appendChild(cb);
-        const labelText = (i === 0 && fileFirstColIsId[fileIndex]) ? 'ID' : String(i + 1);
-        label.appendChild(document.createTextNode(' ' + labelText));
-        togglesEl.appendChild(label);
+            label.appendChild(cb);
+            const labelText = (i === 0 && fileFirstColIsId[fileIndex]) ? 'ID' : String(i + 1);
+            label.appendChild(document.createTextNode(' ' + labelText));
+            togglesEl.appendChild(label);
+        }
     }
+    const lineLabel = document.createElement('label');
+    lineLabel.className = 'runlist-col-toggle runlist-line-toggle';
+    const lineCb = document.createElement('input');
+    lineCb.type = 'checkbox';
+    lineCb.checked = fileShowSyncGuide[fileIndex] !== false;
+    lineCb.addEventListener('change', (e) => {
+        e.stopPropagation();
+        fileShowSyncGuide[fileIndex] = lineCb.checked;
+        if (currentFileIndex === fileIndex) applyCurrentFileSyncGuideVisibility();
+    });
+    lineLabel.appendChild(lineCb);
+    lineLabel.appendChild(document.createTextNode(' Line'));
+    togglesEl.appendChild(lineLabel);
 }
 
 const KEYWORD_PILL_RED = ['end', 'full screen', 'stop', 'out'];
@@ -6324,7 +7151,8 @@ function setFirstVisibleCellText(row, text) {
 function stripFileExtension(name) {
     if (!name || typeof name !== 'string') return '';
     const lastDot = name.lastIndexOf('.');
-    return lastDot > 0 ? name.slice(0, lastDot) : name;
+    const base = lastDot > 0 ? name.slice(0, lastDot) : name;
+    return base.replace(/\.teleprompter$/i, '');
 }
 
 function updateFilenamePills() {
@@ -6489,6 +7317,7 @@ function loadScriptToEditor(index, options) {
     if (row) row.classList.add('active');
 
     currentFileIndex = index;
+    applyCurrentFileSyncGuideVisibility();
     let content = contentStore[index];
     if (typeof content === 'string' && content.length) {
         const stripped = stripNumericAngleMarkers(content);
