@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // 1. ELEMENT SELECTORS
     // =========================================
     const openFileButton = document.getElementById('btn-open-file');
+    const openFolderButton = document.getElementById('btn-open-folder');
     const toggleRunlistButton = document.getElementById('btn-toggle-runlist');
     const fileOpener = document.getElementById('file-opener');
     const runlistContainer = document.querySelector('.runlist-files');
@@ -4792,11 +4793,37 @@ async function openFolderWithDirectoryPicker() {
         return false;
     }
 }
+function openFolderWithInputFallback() {
+    if (!fileOpener) return false;
+    fileOpener.dataset.pickMode = 'folder';
+    fileOpener.setAttribute('webkitdirectory', '');
+    fileOpener.setAttribute('directory', '');
+    fileOpener.removeAttribute('accept');
+    fileOpener.click();
+    return true;
+}
+function resetFileOpenerToFileMode() {
+    if (!fileOpener) return;
+    fileOpener.dataset.pickMode = 'file';
+    fileOpener.removeAttribute('webkitdirectory');
+    fileOpener.removeAttribute('directory');
+    fileOpener.setAttribute('accept', '.txt,.html,.htm,.xlsx,.xls,.docx,.doc,.json');
+}
 openFileButton.onclick = async () => {
     console.log("📂 Open File button clicked");
-    const handledByDirectoryPicker = await openFolderWithDirectoryPicker();
-    if (!handledByDirectoryPicker) fileOpener.click();
+    resetFileOpenerToFileMode();
+    fileOpener.click();
 };
+if (openFolderButton) {
+    openFolderButton.onclick = async () => {
+        console.log("📁 Open Folder button clicked");
+        const handledByDirectoryPicker = await openFolderWithDirectoryPicker();
+        if (!handledByDirectoryPicker) {
+            const handledByInputFallback = openFolderWithInputFallback();
+            if (!handledByInputFallback) alert('Folder selection is not supported in this browser. Use Open File instead.');
+        }
+    };
+}
 
 if (undoButton) undoButton.onclick = () => { if (!undo()) document.execCommand('undo'); };
 if (redoButton) redoButton.onclick = () => { if (!redo()) document.execCommand('redo'); };
@@ -5015,7 +5042,18 @@ saveButton.onclick = () => saveCurrentFile();
 fileOpener.onchange = async (e) => {
     const files = Array.from(e.target.files);
     console.log(`Files selected: ${files.length}`, files);
-    await loadFilesIntoRunlist(files);
+    const pickMode = fileOpener.dataset.pickMode || 'file';
+    let filesToLoad = files;
+    if (pickMode === 'folder') {
+        filesToLoad = files.filter((file) => {
+            const rel = (file.webkitRelativePath || '').replace(/\\/g, '/');
+            if (!rel) return true;
+            const parts = rel.split('/').filter(Boolean);
+            return parts.length <= 2; /* selected-folder root files only */
+        });
+    }
+    await loadFilesIntoRunlist(filesToLoad);
+    resetFileOpenerToFileMode();
     fileOpener.value = "";
 };
 
