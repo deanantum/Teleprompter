@@ -2134,26 +2134,14 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function refreshLayoutAfterScriptFontChange() {
-        teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
-            row.style.minHeight = '';
-            row.style.height = '';
-        });
-        measuredRowHeights = [];
+        clearScriptRowLayoutLocks();
         void teleprompterText.offsetHeight;
         if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
         if (document.body.classList.contains('broadcasting')) {
-            syncColumnWidths(true);
             applyBroadcastMainViewportWidth();
+            syncColumnWidths(true);
+            reassessRowHeightsFromActualLayout();
             applyRowShortColumnLineSpacing();
-            const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
-            measuredRowHeights = measureBroadcastRowHeights(rows);
-            rows.forEach((row, i) => {
-                const h = measuredRowHeights[i];
-                if (h > 0) {
-                    row.style.minHeight = h + 'px';
-                    row.style.height = h + 'px';
-                }
-            });
             if (mirrorWindow && !mirrorWindow.closed) {
                 refreshMirrorData();
                 syncMirrorStyles();
@@ -2162,9 +2150,9 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             syncColumnWidths(true);
             measureRowHeightsFromContent();
+            applyRowShortColumnLineSpacing();
             if (mirrorWindow && !mirrorWindow.closed) syncMirrorStyles();
         }
-        scheduleRowShortColumnLineSpacing(true);
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
         if (typeof shrinkAllPillsToFit === 'function') shrinkAllPillsToFit();
     }
@@ -3863,6 +3851,17 @@ function indexToColumnLetter(colIndex) {
         teleprompterText.querySelectorAll('.script-row-wrapper').forEach(r => r.removeAttribute(TP_ROW_BALANCE_KEY));
     }
 
+    function clearScriptRowLayoutLocks() {
+        teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
+            row.style.minHeight = '';
+            row.style.height = '';
+            row.style.alignItems = '';
+            row.removeAttribute(TP_ROW_BALANCE_KEY);
+        });
+        clearTpLineBalanceStyles();
+        measuredRowHeights = [];
+    }
+
     function rowBalanceContentWidthPx(col, locker) {
         if (locker) return Math.max(1, Math.floor(locker.clientWidth));
         return Math.max(1, Math.floor(col.getBoundingClientRect().width));
@@ -4690,6 +4689,13 @@ function indexToColumnLetter(colIndex) {
         const scriptColWidth = lastColumnWidthPx != null && lastColumnWidthPx > 0 ? lastColumnWidthPx : 400;
         const mirrorColWidth = scriptColWidth;
         const mainStyle = window.getComputedStyle(teleprompterText);
+        const scriptFontPx = (row) => {
+            if (row.classList.contains('row-font-12')) return '12px';
+            const fromSelect = parseInt(fontSizeSelect?.value, 10);
+            if (!Number.isNaN(fromSelect) && fromSelect > 0) return fromSelect + 'px';
+            const fromRoot = parseFloat(mainStyle.fontSize);
+            return (fromRoot > 0 ? fromRoot : 80) + 'px';
+        };
         const probe = document.createElement('div');
         probe.style.position = 'absolute';
         probe.style.left = '-9999px';
@@ -4711,7 +4717,7 @@ function indexToColumnLetter(colIndex) {
                 }
                 colW = Math.max(20, colW);
                 probe.style.width = colW + 'px';
-                probe.style.fontSize = row.classList.contains('row-font-12') ? '12px' : (mainStyle.fontSize || '');
+                probe.style.fontSize = scriptFontPx(row);
                 probe.style.fontFamily = mainStyle.fontFamily || '';
                 probe.style.lineHeight = row.classList.contains('row-font-12') ? '1.2' : '1.1';
                 const cell = col.querySelector('.cell-locker') || col.querySelector('.cell-content') || col;
@@ -4722,7 +4728,7 @@ function indexToColumnLetter(colIndex) {
             const mirrorCol = cols[numCols - 1];
             if (mirrorCol) {
                 probe.style.width = mirrorColWidth + 'px';
-                probe.style.fontSize = row.classList.contains('row-font-12') ? '12px' : (mainStyle.fontSize || '');
+                probe.style.fontSize = scriptFontPx(row);
                 probe.style.fontFamily = mainStyle.fontFamily || '';
                 probe.style.lineHeight = row.classList.contains('row-font-12') ? '1.2' : '1.1';
                 const mirrorCell = mirrorCol.querySelector('.cell-locker') || mirrorCol.querySelector('.cell-content') || mirrorCol;
