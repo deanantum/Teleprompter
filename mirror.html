@@ -160,21 +160,6 @@
             z-index: 100;
             pointer-events: none;
         }
-        #fullscreen-prompt {
-            position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.9);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            cursor: pointer;
-            font-size: 1.2rem;
-            color: #fff;
-            text-align: center;
-            padding: 2rem;
-        }
-        #fullscreen-prompt.hidden { display: none; }
         /* Filename pills: light blue fill, black text, pill shape, full width (match main) */
         .mirror-filename-pill {
             display: block;
@@ -213,7 +198,6 @@
     </style>
 </head>
 <body>
-    <div id="fullscreen-prompt" title="Press Enter to enter fullscreen">Press Enter for fullscreen</div>
     <div id="scroll-container">
         <div id="mirror-top-spacer" class="mirror-top-spacer" aria-hidden="true"></div>
         <div id="mirror-top-runway" class="mirror-top-runway" aria-hidden="true"></div>
@@ -225,8 +209,11 @@
     <div id="mirror-sync-guide"></div>
     <script>
         (function() {
-            var promptEl = document.getElementById('fullscreen-prompt');
             var debugMode = /(?:^|[?&])debug=1(?:&|$)/.test(window.location.search);
+
+            function isMirrorFullscreen() {
+                return !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
+            }
 
             function exitFullscreenIfNeeded() {
                 var doc = document;
@@ -236,57 +223,48 @@
                 }
             }
 
-            function setMirrorDebugMode(enabled) {
-                debugMode = !!enabled;
-                if (promptEl) promptEl.classList.toggle('hidden', debugMode);
-                if (debugMode) exitFullscreenIfNeeded();
-            }
-
             function enterFullscreen() {
-                if (debugMode) {
-                    if (promptEl) promptEl.classList.add('hidden');
-                    return;
-                }
+                if (debugMode || isMirrorFullscreen()) return;
                 var el = document.documentElement;
                 var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
-                if (req) {
-                    req.call(el).then(function() {
-                        if (promptEl) promptEl.classList.add('hidden');
-                    }).catch(function() {});
-                } else if (promptEl) promptEl.classList.add('hidden');
+                if (!req) return;
+                try {
+                    var result = req.call(el);
+                    if (result && typeof result.catch === 'function') {
+                        result.catch(function() {});
+                    }
+                } catch (_) {}
             }
 
-            function onFullscreenChange() {
+            function scheduleMirrorFullscreenAttempts() {
                 if (debugMode) return;
-                var isFull = !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
-                if (promptEl) promptEl.classList.toggle('hidden', isFull);
+                [0, 40, 120, 300, 700, 1500, 3000].forEach(function(ms) {
+                    setTimeout(enterFullscreen, ms);
+                });
             }
 
-            document.addEventListener('fullscreenchange', onFullscreenChange);
-            document.addEventListener('webkitfullscreenchange', onFullscreenChange);
-            document.addEventListener('MSFullscreenChange', onFullscreenChange);
-            if (promptEl) {
-                promptEl.addEventListener('click', enterFullscreen);
+            function setMirrorDebugMode(enabled) {
+                debugMode = !!enabled;
+                if (debugMode) exitFullscreenIfNeeded();
+                else scheduleMirrorFullscreenAttempts();
             }
-            function onKey(e) {
-                if (debugMode) return;
-                if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    enterFullscreen();
-                }
-            }
-            window.addEventListener('keydown', onKey);
-            window.addEventListener('message', function(e) {
+
+            function onMirrorMessage(e) {
                 var data = e.data || {};
                 if (data.type === 'setMirrorDebugMode') setMirrorDebugMode(!!data.enabled);
-            });
+                if (data.type === 'requestMirrorFullscreen') scheduleMirrorFullscreenAttempts();
+            }
+
+            window.addEventListener('message', onMirrorMessage);
             window.addEventListener('load', function() {
-                if (debugMode) {
-                    if (promptEl) promptEl.classList.add('hidden');
-                    return;
-                }
-                enterFullscreen();
+                if (!debugMode) scheduleMirrorFullscreenAttempts();
             });
+            window.addEventListener('focus', function() {
+                if (!debugMode) enterFullscreen();
+            });
+            window.addEventListener('pointerdown', function() {
+                if (!debugMode) enterFullscreen();
+            }, { once: true });
         })();
     </script>
     <script>
