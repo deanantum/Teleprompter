@@ -9,7 +9,1983 @@
     --button-hover: #3a3f4b;
     --indicator-red: rgba(255, 0, 0, 0.5);
     --indicator-green: rgba(0, 255, 0, 0.5);
+    --indicator-yellow: rgba(255, 255, 0, 0.5);/* ========================================= */
+/* 1. CORE VARIABLES & RESET                 */
+/* ========================================= */
+:root {
+    --primary-bg: #282c34;
+    --secondary-bg: #1e2127;
+    --border-color: #444;
+    --font-color: #abb2bf;
+    --button-hover: #3a3f4b;
+    --indicator-red: rgba(255, 0, 0, 0.5);
+    --indicator-green: rgba(0, 255, 0, 0.5);
     --indicator-yellow: rgba(255, 255, 0, 0.5);
+    --highlight-green: rgba(76, 175, 80, 0.3);
+    --highlight-red: rgba(244, 67, 54, 0.3);
+    --multi-select-highlight: rgba(100, 149, 237, 0.4);
+    --lyric-bg-color: #ffffff;
+    --lyric-highlight-color: #fef08a;
+}
+
+* { box-sizing: border-box; }
+
+/* Hide scrollbars but keep scrolling (match background / invisible) */
+* {
+    scrollbar-width: none; /* Firefox */
+}
+*::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, Edge */
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+}
+
+body {
+    font-family: sans-serif;
+    background-color: var(--primary-bg);
+    color: var(--font-color);
+    overflow: hidden; /* Prevents double scrollbars */
+}
+
+/* ========================================= */
+/* 2. LAYOUT CONTAINERS                      */
+/* ========================================= */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+}
+
+.content-area {
+    display: flex;
+    flex-grow: 1;
+    overflow: hidden;
+    width: 100%;
+    position: relative;
+}
+
+/* Teleprompter Stage (The Black Screen) */
+.teleprompter-stage {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    height: 100%;
+    background-color: black;
+    z-index: 0;
+}
+
+.debug-mode-badge {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    z-index: 120;
+    font-size: 10px;
+    line-height: 1.2;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(74, 158, 255, 0.52);
+    border: 1px solid rgba(102, 178, 255, 0.95);
+    color: #e8f2ff;
+    pointer-events: none;
+    user-select: none;
+}
+
+.debug-mode-badge.hidden {
+    display: none !important;
+}
+
+/* ... [Keep Sections 1 & 2 as they are] ... */
+
+/* ========================================= */
+/* 3. TELEPROMPTER VIEW                      */
+/* ========================================= */
+#teleprompter-view {
+    position: absolute; 
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: transparent;
+    color: white;
+    overflow-y: scroll !important;
+    overflow-x: hidden;
+    z-index: 3;
+    outline: none;
+    padding: 0;
+}
+
+
+body.format-pickup-mode #teleprompter-view,
+body.format-pickup-mode #teleprompter-text,
+#teleprompter-view.format-pickup-mode,
+#teleprompter-text.format-pickup-mode {
+    cursor: copy !important;
+}
+
+/* Top spacer: 0 when placeholder (content at top); when file loaded, pill sits just above indicator */
+.teleprompter-top-spacer {
+    min-height: 0;
+    width: 100%;
+    flex-shrink: 0;
+    pointer-events: none;
+}
+#teleprompter-view.has-file .teleprompter-top-spacer {
+    /* Taller spacer + runway below so you can scroll past the top pill to the sync line before scrollTop hits 0 */
+    min-height: calc(50vh - 8em);
+}
+
+/* Extra scroll room above top filename pill (light blue) so the indicator can intersect it and trigger previous file */
+.teleprompter-top-runway {
+    min-height: max(10em, 22vh);
+    width: 100%;
+    flex-shrink: 0;
+    pointer-events: none;
+}
+
+/* Blank space between script and bottom pill: 1 row before green pill */
+.teleprompter-runway {
+    min-height: 1.4em;
+    width: 100%;
+    flex-shrink: 0;
+    pointer-events: none;
+}
+
+/* Bottom spacer: room to scroll until bottom pill hits indicator, then trigger next file */
+.teleprompter-bottom-spacer {
+    min-height: 50vh;
+    width: 100%;
+    flex-shrink: 0;
+    pointer-events: none;
+}
+
+/* Filename pills: light blue fill, black text, pill shape, full width */
+.filename-pill {
+    display: block;
+    width: 100%;
+    padding: 8px 20px;
+    background-color: #87CEEB; /* Light blue (Sky Blue) */
+    color: #000000;
+    border-radius: 9999px;
+    line-height: 1.4;
+    font-weight: 500;
+    pointer-events: none;
+    flex-shrink: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-sizing: border-box;
+    text-align: center;
+}
+.filename-pill-top {
+    margin-top: 1.4em;
+    margin-bottom: 12px;
+}
+.filename-pill-bottom {
+    margin-top: 0; /* Gap from stay-switch-pill margin-bottom */
+}
+.filename-pill.hidden {
+    display: none !important;
+}
+
+/* Red END bar: always shown when a file is open; sits above green STAY/SWITCH when there is a next file */
+#pre-stay-end-pill:not(.hidden) {
+    margin-bottom: 0.55em;
+}
+
+/* Stay/Switch pill: green, between table and bottom filename pill */
+.stay-switch-pill {
+    display: block;
+    padding: 0 0 0 16px;
+    margin-top: 0;
+    margin-bottom: 1.4em; /* One blank row between pill and bottom filename */
+    background-color: #22c55e;
+    color: #000000;
+    border-radius: 9999px;
+    line-height: 1.4;
+    font-weight: 500;
+    pointer-events: none;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.stay-switch-pill.end-pill {
+    background-color: #dc2626;
+}
+.stay-switch-pill.hidden {
+    display: none !important;
+}
+
+/* Pill rows: match main font size, tight line-height, no extra spacing */
+.script-row-wrapper.keyword-pill-red,
+.script-row-wrapper.keyword-pill-yellow,
+.script-row-wrapper.keyword-pill-green,
+.script-row-wrapper.keyword-pill-blue,
+.script-row-wrapper.keyword-pill-white {
+    font-size: inherit !important;
+    line-height: 1.2 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    border-radius: 9999px;
+    padding: 0 0 0 16px !important;
+    margin: 0 !important;
+    border: none !important;
+    align-items: center !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+}
+#teleprompter-text .script-row-wrapper.keyword-pill-red .script-column,
+#teleprompter-text .script-row-wrapper.keyword-pill-yellow .script-column,
+#teleprompter-text .script-row-wrapper.keyword-pill-green .script-column,
+#teleprompter-text .script-row-wrapper.keyword-pill-blue .script-column,
+#teleprompter-text .script-row-wrapper.keyword-pill-white .script-column {
+    padding: 0 !important;
+    margin: 0 !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+}
+#teleprompter-text .script-row-wrapper.keyword-pill-red .cell-content,
+#teleprompter-text .script-row-wrapper.keyword-pill-red .cell-content *,
+#teleprompter-text .script-row-wrapper.keyword-pill-yellow .cell-content,
+#teleprompter-text .script-row-wrapper.keyword-pill-yellow .cell-content *,
+#teleprompter-text .script-row-wrapper.keyword-pill-green .cell-content,
+#teleprompter-text .script-row-wrapper.keyword-pill-green .cell-content *,
+#teleprompter-text .script-row-wrapper.keyword-pill-blue .cell-content,
+#teleprompter-text .script-row-wrapper.keyword-pill-blue .cell-content *,
+#teleprompter-text .script-row-wrapper.keyword-pill-white .cell-content,
+#teleprompter-text .script-row-wrapper.keyword-pill-white .cell-content * {
+    font-size: inherit !important;
+    line-height: 1.2 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+#teleprompter-text .script-row-wrapper.keyword-pill-red .cell-content,
+#teleprompter-text .script-row-wrapper.keyword-pill-yellow .cell-content,
+#teleprompter-text .script-row-wrapper.keyword-pill-green .cell-content,
+#teleprompter-text .script-row-wrapper.keyword-pill-blue .cell-content,
+#teleprompter-text .script-row-wrapper.keyword-pill-white .cell-content {
+    flex: 0 0 auto !important;
+    align-self: flex-start !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+}
+/* Pill row content: add left padding so text isn't flush left when sharing row with first column (e.g. |v8) */
+.script-row-wrapper.keyword-pill-red .script-column:last-child .cell-content,
+.script-row-wrapper.keyword-pill-yellow .script-column:last-child .cell-content,
+.script-row-wrapper.keyword-pill-green .script-column:last-child .cell-content,
+.script-row-wrapper.keyword-pill-blue .script-column:last-child .cell-content,
+.script-row-wrapper.keyword-pill-white .script-column:last-child .cell-content {
+    padding-left: 1em !important;
+}
+.script-row-wrapper.keyword-pill-red {
+    background-color: #dc2626 !important;
+    color: #000000 !important;
+}
+.script-row-wrapper.keyword-pill-red .script-column,
+.script-row-wrapper.keyword-pill-red .cell-locker,
+.script-row-wrapper.keyword-pill-red .cell-content,
+.script-row-wrapper.keyword-pill-red .script-column *,
+.script-row-wrapper.keyword-pill-red .color-span-inline,
+#teleprompter-text .script-row-wrapper.keyword-pill-red .script-column:first-child {
+    color: #000000 !important;
+    background-color: transparent !important;
+    background: transparent !important;
+    border: none !important;
+}
+.script-row-wrapper.keyword-pill-yellow {
+    background-color: #ffda03 !important;
+    color: #000000 !important;
+}
+.script-row-wrapper.keyword-pill-yellow .script-column,
+.script-row-wrapper.keyword-pill-yellow .cell-locker,
+.script-row-wrapper.keyword-pill-yellow .cell-content,
+.script-row-wrapper.keyword-pill-yellow .script-column *,
+.script-row-wrapper.keyword-pill-yellow .color-span-inline,
+#teleprompter-text .script-row-wrapper.keyword-pill-yellow .script-column:first-child {
+    color: #000000 !important;
+    background-color: transparent !important;
+    background: transparent !important;
+    border: none !important;
+}
+.script-row-wrapper.keyword-pill-green {
+    background-color: #22c55e !important;
+    color: #000000 !important;
+}
+.script-row-wrapper.keyword-pill-green .script-column,
+.script-row-wrapper.keyword-pill-green .cell-locker,
+.script-row-wrapper.keyword-pill-green .cell-content,
+.script-row-wrapper.keyword-pill-green .script-column *,
+.script-row-wrapper.keyword-pill-green .color-span-inline,
+#teleprompter-text .script-row-wrapper.keyword-pill-green .script-column:first-child {
+    color: #000000 !important;
+    background-color: transparent !important;
+    background: transparent !important;
+    border: none !important;
+}
+.script-row-wrapper.keyword-pill-blue {
+    background-color: #2563eb !important;
+    color: #ffffff !important;
+}
+.script-row-wrapper.keyword-pill-blue .script-column,
+.script-row-wrapper.keyword-pill-blue .cell-locker,
+.script-row-wrapper.keyword-pill-blue .cell-content,
+.script-row-wrapper.keyword-pill-blue .script-column *,
+.script-row-wrapper.keyword-pill-blue .color-span-inline,
+#teleprompter-text .script-row-wrapper.keyword-pill-blue .script-column:first-child {
+    color: #ffffff !important;
+    background-color: transparent !important;
+    background: transparent !important;
+    border: none !important;
+}
+.script-row-wrapper.keyword-pill-white {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+}
+.script-row-wrapper.keyword-pill-white .script-column,
+.script-row-wrapper.keyword-pill-white .cell-locker,
+.script-row-wrapper.keyword-pill-white .cell-content,
+.script-row-wrapper.keyword-pill-white .script-column *,
+.script-row-wrapper.keyword-pill-white .color-span-inline,
+#teleprompter-text .script-row-wrapper.keyword-pill-white .script-column:first-child {
+    color: #000000 !important;
+    background-color: transparent !important;
+    background: transparent !important;
+    border: none !important;
+}
+/* Override inline background on spans inside pills so text is readable */
+#teleprompter-text .script-row-wrapper.keyword-pill-red span[style*="background"],
+#teleprompter-text .script-row-wrapper.keyword-pill-yellow span[style*="background"],
+#teleprompter-text .script-row-wrapper.keyword-pill-green span[style*="background"],
+#teleprompter-text .script-row-wrapper.keyword-pill-blue span[style*="background"],
+#teleprompter-text .script-row-wrapper.keyword-pill-white span[style*="background"] {
+    background-color: transparent !important;
+    background: transparent !important;
+}
+
+/* New-talk pill animation when entering a new file via bottom-pill trigger */
+.filename-pill.new-talk {
+    animation: pill-new-talk 0.6s ease-out forwards;
+}
+@keyframes pill-new-talk {
+    0% { transform: scale(1.05); opacity: 0.7; }
+    50% { transform: scale(1.02); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* Page-turn overlay: covers stage during file transition */
+.page-turn-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    pointer-events: none;
+    background: rgba(0, 0, 0, 0.85);
+    opacity: 0;
+    visibility: hidden;
+    transition: none;
+}
+.page-turn-overlay.page-turn-active {
+    visibility: visible;
+    animation: page-turn-flash 0.5s ease-out forwards;
+}
+@keyframes page-turn-flash {
+    0% { opacity: 0; }
+    40% { opacity: 1; }
+    60% { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+#teleprompter-text {
+    width: 100%;
+    min-height: 100%;
+    margin: 0;
+    padding: 0 0 0 var(--indicator-gutter, 40px); 
+    font-size: 2.5rem;
+    line-height: 1.4 !important; /* Explicitly set the line height */
+    box-sizing: border-box;
+}
+
+
+/* Multi-select highlight (CSS Highlight API) */
+::highlight(multi-select) {
+    background-color: var(--multi-select-highlight);
+}
+
+/* ... [Keep Sections 4, 5, 6, and Layout Fixes] ... */
+
+/* ========================================= */
+/* 4. UI COMPONENTS (RIBBONS & SIDEBAR)      */
+/* ========================================= */
+.top-ribbon {
+    background-color: var(--secondary-bg);
+    padding: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-bottom: 1px solid var(--border-color);
+    z-index: 10;
+}
+
+.top-ribbon-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.top-ribbon-row-2 {
+    padding-top: 2px;
+    border-top: 1px solid var(--border-color);
+}
+
+.speed-slider-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--font-color);
+    opacity: 0.9;
+}
+
+.speed-slider-wrap .speed-slider-label {
+    flex-shrink: 0;
+}
+
+.speed-slider-container {
+    position: relative;
+    width: 280px;
+    height: 36px;
+}
+
+.speed-slider-track {
+    position: absolute;
+    top: 10px;
+    left: 0;
+    right: 0;
+    height: 8px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.speed-slider-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    transition: width 0.1s, left 0.1s, background 0.1s;
+}
+
+.speed-slider-fill.fill-right {
+    left: 50%;
+    background: rgba(76, 175, 80, 0.8);
+}
+
+.speed-slider-fill.fill-left {
+    left: 0;
+    background: rgba(244, 67, 54, 0.8);
+}
+
+.speed-slider-center-marker {
+    position: absolute;
+    left: 50%;
+    top: -2px;
+    bottom: -2px;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--font-color);
+    z-index: 2;
+}
+
+#speed-slider {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 36px;
+    margin: 0;
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+}
+
+#speed-slider.speed-slider-inverted {
+    direction: rtl;
+}
+
+#speed-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--font-color);
+    cursor: pointer;
+    border: 2px solid var(--secondary-bg);
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.3);
+}
+
+#speed-slider::-webkit-slider-runnable-track {
+    -webkit-appearance: none;
+    height: 8px;
+    background: transparent;
+}
+
+#speed-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--font-color);
+    cursor: pointer;
+    border: 2px solid var(--secondary-bg);
+}
+
+#speed-slider::-moz-range-track {
+    height: 8px;
+    background: transparent;
+}
+
+.speed-slider-scale {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 12px;
+    font-size: 9px;
+    opacity: 0.8;
+}
+
+.speed-scale-left { position: absolute; left: 0; color: rgba(244, 67, 54, 0.9); }
+.speed-scale-left-mid { position: absolute; left: 25%; transform: translateX(-50%); color: rgba(244, 67, 54, 0.7); }
+.speed-scale-mid { position: absolute; left: 50%; transform: translateX(-50%); }
+.speed-scale-right-mid { position: absolute; left: 75%; transform: translateX(-50%); color: rgba(76, 175, 80, 0.7); }
+.speed-scale-right { position: absolute; right: 0; color: rgba(76, 175, 80, 0.9); }
+
+#speed-value {
+    min-width: 32px;
+    font-weight: 500;
+    text-align: right;
+}
+
+.keyboard-btn {
+    background: none;
+    border: none;
+    color: var(--font-color);
+    font-size: 16px;
+    padding: 6px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    opacity: 0.8;
+}
+
+.keyboard-btn:hover {
+    background-color: var(--button-hover);
+    opacity: 1;
+}
+
+.keyboard-btn.shuttle-connected {
+    color: var(--accent, #4a9);
+}
+
+.shortcuts-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.shortcuts-overlay.hidden {
+    display: none !important;
+}
+
+.shortcuts-panel {
+    background: var(--secondary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 24px;
+    max-width: 360px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.shortcuts-panel h3 {
+    margin: 0 0 16px 0;
+    font-size: 18px;
+    color: var(--font-color);
+}
+
+.shortcuts-list {
+    margin: 0 0 20px 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 24px;
+    align-items: baseline;
+}
+
+.shortcuts-list dt {
+    font-family: monospace;
+    font-weight: 600;
+    color: var(--font-color);
+    font-size: 14px;
+}
+
+.shortcuts-list dd {
+    margin: 0;
+    color: var(--font-color);
+    opacity: 0.9;
+    font-size: 13px;
+}
+
+.shortcuts-close {
+    display: block;
+    width: 100%;
+    padding: 10px 16px;
+    background: var(--primary-bg);
+    border: 1px solid var(--border-color);
+    color: var(--font-color);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.shortcuts-close:hover {
+    background-color: var(--button-hover);
+}
+
+.top-ribbon button {
+    background: none;
+    border: none;
+    color: var(--font-color);
+    font-size: 18px;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.open-actions-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin: 0 3px 0 0;
+    padding: 3px 4px 4px 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    min-height: 38px;
+}
+
+.open-actions-group legend {
+    padding: 0 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--font-color);
+    opacity: 0.95;
+}
+
+.open-actions-group button {
+    width: 32px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    background: var(--primary-bg);
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.open-actions-group button:hover {
+    background: var(--button-hover);
+    border-color: var(--button-hover);
+}
+
+.top-ribbon select {
+    background: var(--primary-bg);
+    border: 1px solid var(--border-color);
+    color: var(--font-color);
+    font-size: 14px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin: 0 4px;
+}
+
+.top-ribbon select:hover {
+    border-color: var(--button-hover);
+}
+
+#select-font-target {
+    min-width: 160px;
+}
+
+.overview-btn {
+    background: var(--primary-bg);
+    border: 1px solid var(--border-color);
+    color: var(--font-color);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 6px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    margin: 0 4px;
+    letter-spacing: -0.5px;
+    min-width: 0; /* Allow shrink in flex so Aa stays within column when ribbon wraps */
+    flex-shrink: 0;
+}
+
+.overview-btn:hover {
+    background-color: var(--button-hover);
+    border-color: var(--button-hover);
+}
+
+.overview-btn.overview-active {
+    background-color: var(--button-hover);
+}
+
+.overview-btn.broadcast-edit-active {
+    background-color: var(--button-hover);
+    outline: 2px solid var(--font-color);
+    outline-offset: 1px;
+}
+
+.event-plan-dropdown {
+    position: relative;
+    display: inline-block;
+}
+.event-plan-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    font-size: 16px;
+    background: var(--primary-bg);
+    border: 1px solid var(--border-color);
+    color: var(--font-color);
+    border-radius: 4px;
+    cursor: pointer;
+}
+.event-plan-trigger:hover {
+    background: var(--button-hover);
+    border-color: var(--button-hover);
+}
+.event-plan-list {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 2px;
+    min-width: 140px;
+    background: var(--secondary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    z-index: 1000;
+}
+.event-plan-list.open {
+    display: block;
+}
+.event-plan-item {
+    display: block;
+    padding: 8px 12px;
+    font-size: 14px;
+    color: var(--font-color);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.event-plan-item:hover {
+    background: var(--button-hover);
+}
+
+.font-target-dropdown {
+    position: relative;
+    display: inline-block;
+    margin: 0 4px;
+}
+
+.font-target-trigger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 140px;
+    padding: 6px 10px;
+    font-size: 14px;
+    background: var(--primary-bg);
+    border: 1px solid var(--border-color);
+    color: var(--font-color);
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: left;
+}
+
+.font-target-trigger:hover {
+    border-color: var(--button-hover);
+}
+
+.font-target-list {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 2px;
+    min-width: 100%;
+    max-height: 280px;
+    overflow-y: auto;
+    background: var(--secondary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    z-index: 1000;
+}
+
+.font-target-list.open {
+    display: block;
+}
+
+.font-target-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    font-size: 14px;
+    color: var(--font-color);
+    cursor: pointer;
+}
+
+.font-target-item:hover {
+    background: var(--button-hover);
+}
+
+.font-target-label {
+    flex: 1;
+}
+
+.font-target-swatches {
+    display: flex;
+    gap: 4px;
+}
+
+.font-target-swatch {
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+.font-target-swatch-text {
+    border-radius: 2px;
+}
+
+.font-target-swatch-bg {
+    border-radius: 2px;
+}
+
+.font-target-flags {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 2px;
+}
+
+.font-target-flag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    font-size: 10px;
+    line-height: 1;
+    font-weight: 700;
+    color: var(--font-color);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.remove-font-btn {
+    margin-left: 2px;
+    padding: 2px 6px;
+    font-size: 1.1em;
+    line-height: 1;
+    min-width: 24px;
+    border-radius: 3px;
+}
+.remove-font-btn:hover {
+    background: var(--button-hover);
+    color: #fff;
+}
+
+.color-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.color-box {
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+}
+
+.color-box:hover {
+    border-color: #fff;
+    box-shadow: 0 0 0 2px var(--button-hover);
+}
+
+#runlist-panel {
+    background-color: var(--secondary-bg);
+    display: flex;
+    flex-direction: column;
+    width: 220px;
+    min-width: 160px;
+    max-width: 450px;
+    flex-shrink: 0;
+    transition: width 0.2s;
+}
+
+#runlist-panel.hidden,
+#resizer.hidden {
+    display: none !important;
+}
+
+body.mirror-runlist-edge-mode #resizer {
+    display: none !important;
+}
+
+body.mirror-runlist-edge-mode #runlist-panel {
+    position: fixed;
+    top: var(--mirror-runlist-top, 0);
+    right: 0;
+    bottom: 0;
+    z-index: 10050;
+    max-width: min(450px, 92vw);
+    transform: translateX(100%);
+    transition: transform 0.2s ease;
+    box-shadow: none;
+    pointer-events: none;
+}
+
+body.mirror-runlist-edge-mode.mirror-runlist-overlay-open #runlist-panel {
+    transform: translateX(0);
+    box-shadow: -10px 0 28px rgba(0, 0, 0, 0.45);
+    pointer-events: auto;
+}
+
+.runlist-section {
+    flex: 1 1 60%;
+    min-height: 100px;
+    display: flex;
+    flex-direction: column;
+}
+
+.runlist-ribbon {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0 8px 10px;
+    background-color: var(--primary-bg);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.runlist-ribbon button {
+    background: none;
+    border: none;
+    color: var(--font-color);
+    font-size: 14px;
+    padding: 6px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.runlist-ribbon button:hover {
+    background-color: var(--button-hover);
+}
+
+.section-label {
+    flex: 1;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--font-color);
+    opacity: 0.8;
+}
+
+.runlist-files {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 8px;
+}
+
+.runlist-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 6px;
+    background-color: var(--primary-bg);
+    border-radius: 4px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background-color 0.15s;
+}
+
+.runlist-row-left {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.runlist-row .file-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.runlist-row .runlist-column-toggles {
+    flex-shrink: 0;
+}
+
+.runlist-close {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: #c62828;
+    color: #fff;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.15s;
+}
+
+.runlist-close:hover {
+    background: #b71c1c;
+}
+
+.runlist-close.runlist-close-unsaved-html {
+    outline: 2px solid #ef4444;
+    outline-offset: 2px;
+}
+
+.runlist-close.runlist-close-saved-html {
+    outline: 2px solid #22c55e;
+    outline-offset: 2px;
+}
+
+.runlist-drag-handle {
+    flex-shrink: 0;
+    cursor: grab;
+    color: var(--font-color);
+    opacity: 0.6;
+    padding: 0 1px;
+    user-select: none;
+    font-size: 12px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.runlist-drag-handle:hover {
+    opacity: 1;
+}
+
+.runlist-drag-handle:active {
+    cursor: grabbing;
+}
+
+.runlist-row.runlist-dragging {
+    opacity: 0.6;
+}
+
+.runlist-drop-indicator {
+    display: block;
+    width: 100%;
+    height: 0;
+    margin: 2px 0;
+    border: none;
+    border-top: 3px solid #4a9eff;
+    border-radius: 2px;
+    pointer-events: none;
+    flex-shrink: 0;
+    box-shadow: 0 0 8px rgba(74, 158, 255, 0.5);
+}
+
+.runlist-row:hover {
+    background-color: var(--button-hover);
+}
+
+.runlist-row.active {
+    background-color: var(--button-hover);
+    font-weight: 500;
+}
+
+.runlist-row:not(.active) .runlist-drag-handle,
+.runlist-row:not(.active) .runlist-column-toggles,
+.runlist-row:not(.active) .runlist-display-toggles {
+    display: none;
+}
+
+.runlist-row:not(.active) .runlist-row-left {
+    gap: 0;
+}
+
+.runlist-column-toggles {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 3px 6px;
+    margin-top: 1px;
+    font-size: 11px;
+    color: var(--font-color);
+    align-items: center;
+    white-space: nowrap;
+}
+
+.runlist-col-toggle {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+}
+
+.runlist-col-toggle input {
+    margin-right: 1px;
+}
+
+.runlist-line-toggle {
+    font-weight: 600;
+}
+
+.runlist-display-toggles {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 3px 8px;
+    margin-top: 1px;
+    font-size: 11px;
+    color: var(--font-color);
+    align-items: center;
+    white-space: nowrap;
+}
+
+.runlist-color-guide-toggle {
+    font-weight: 600;
+}
+
+.bookmark-section {
+    flex: 1 1 40%;
+    min-height: 80px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Horizontal resizer between Files and Bookmarks */
+#runlist-bookmark-resizer.panel-resizer {
+    height: 10px;
+    min-height: 10px;
+    flex-shrink: 0;
+    cursor: row-resize;
+    background: var(--border-color);
+    margin: 2px 0;
+}
+
+#runlist-bookmark-resizer.panel-resizer:hover {
+    background: rgba(255, 255, 255, 0.4);
+}
+
+.bookmark-list-header {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 0 8px 10px;
+    background-color: var(--primary-bg);
+}
+
+.bookmark-list-header .section-label {
+    flex: none;
+}
+
+.bookmark-buttons {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bookmark-list-header button {
+    background: none;
+    border: none;
+    color: var(--font-color);
+    font-size: 14px;
+    padding: 6px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.bookmark-list-header button:hover {
+    background-color: var(--button-hover);
+}
+
+.bookmark-list {
+    overflow-y: auto;
+    padding: 8px;
+    min-height: 80px;
+}
+
+.bookmark-item {
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    background-color: var(--primary-bg);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background-color 0.15s;
+}
+
+.bookmark-item:hover {
+    background-color: var(--button-hover);
+}
+
+.bookmark-item.active {
+    background-color: #fef08a;
+    color: #000;
+    font-weight: 600;
+}
+
+.bookmark-item { display: flex; align-items: center; gap: 6px; }
+.bookmark-item .bookmark-num { flex-shrink: 0; }
+.bookmark-item .bookmark-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bookmark-close {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: #c62828;
+    color: #fff;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.15s;
+}
+.bookmark-close:hover { background: #b71c1c; }
+.bookmark-item::before {
+    content: none;
+}
+
+.bookmark-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 4px;
+    margin-right: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 2px solid var(--font-color);
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.bookmark-dot {
+    position: absolute;
+    width: 20px !important;
+    height: 20px !important;
+    min-width: 20px !important;
+    min-height: 20px !important;
+    left: calc(-1 * var(--indicator-gutter, 40px) + 7px) !important; /* gutter, same column as arrow */
+    border-radius: 50%;
+    background: #c62828;
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.3);
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px !important;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 0 1px #000;
+    z-index: 100; /* above sibling content so red circle is visible on top */
+}
+
+.bookmark-dot::after {
+    content: attr(data-bookmark-num);
+    font-size: 17px !important;
+}
+
+.bookmark-cursor-dot-wrap {
+    display: inline;
+}
+
+/* Color spans: keep inline to avoid line breaks / new flex columns */
+.color-span-inline {
+    display: inline !important;
+}
+/* execCommand-generated spans (color, font-size) - force inline so they don't create new flex columns */
+#teleprompter-text span[style*="color"],
+#teleprompter-text span[style*="background"],
+#teleprompter-text span[style*="font-size"] {
+    display: inline !important;
+}
+/* Bold, italic, underline - use format-span-inline (span with styles) + legacy b/i/u - force inline */
+#teleprompter-text .format-span-inline,
+#teleprompter-text .script-column b,
+#teleprompter-text .script-column i,
+#teleprompter-text .script-column u,
+#teleprompter-text .cell-content b,
+#teleprompter-text .cell-content i,
+#teleprompter-text .cell-content u,
+#teleprompter-text .cell-locker b,
+#teleprompter-text .cell-locker i,
+#teleprompter-text .cell-locker u,
+#teleprompter-text b,
+#teleprompter-text i,
+#teleprompter-text u {
+    display: inline !important;
+}
+
+.bookmark-cursor-dot {
+    display: inline;
+    pointer-events: none;
+}
+
+.bookmark-cursor-dot-nobreak {
+    white-space: nowrap;
+}
+
+.bookmark-cursor-dot-bullet {
+    color: #c62828;
+    font-weight: bold;
+}
+
+/* ========================================= */
+/* 5. INDICATORS                             */
+/* ========================================= */
+.indicator {
+    position: absolute; 
+    left: 0;
+    width: 100%; 
+    z-index: 2; /* below teleprompter-view (3) so bookmark dots appear on top */
+    pointer-events: none;
+}
+
+#indicator-wrapper {
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    position: relative;
+}
+
+#indicator-triangle {
+    width: 0; height: 0;
+    border-top: 20px solid transparent;
+    border-bottom: 20px solid transparent;
+    border-left: 30px solid #ffffff;
+    flex-shrink: 0;
+}
+
+.indicator-drag-handle {
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+#sync-guide {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    transform: translateY(-50%);
+    background: transparent;
+    backdrop-filter: invert(1);
+    -webkit-backdrop-filter: invert(1);
+}
+
+.indicator.stopped #indicator-triangle { border-left-color: #ffffff; }
+.indicator.running #indicator-triangle { border-left-color: #ffffff; }
+.indicator.paused #indicator-triangle { border-left-color: #ffffff; }
+
+/* ========================================= */
+/* 6. UTILITIES                              */
+/* ========================================= */
+.hidden { display: none !important; }
+
+.settings-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.settings-overlay.hidden { display: none !important; }
+.settings-overlay-panel {
+    background: var(--secondary-bg);
+    color: var(--font-color);
+    padding: 20px 24px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    max-width: 360px;
+    width: 100%;
+}
+.settings-overlay-panel h3 { margin: 0 0 16px 0; font-size: 18px; }
+.settings-close-btn {
+    display: block;
+    margin-top: 16px;
+    padding: 8px 16px;
+    font-size: 14px;
+    background: var(--primary-bg);
+    border: 1px solid var(--border-color);
+    color: var(--font-color);
+    border-radius: 4px;
+    cursor: pointer;
+    width: 100%;
+}
+.settings-close-btn:hover { background: var(--button-hover); }
+
+#settings-overlay h4 {
+    margin: 14px 0 8px 0;
+    font-size: 13px;
+    color: var(--font-color);
+}
+#settings-overlay h4:first-of-type { margin-top: 0; }
+#settings-overlay label { display: inline-block; margin-right: 12px; cursor: pointer; font-size: 13px; color: var(--font-color); }
+.settings-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+    flex-wrap: wrap;
+}
+.settings-row label { margin-right: 0; }
+.settings-row input[type="range"] { flex: 1; min-width: 100px; }
+#scroll-sensitivity-value { min-width: 2.5em; font-size: 13px; color: var(--font-color); }
+.settings-hint {
+    margin: 4px 0 8px 0;
+    font-size: 11px;
+    opacity: 0.85;
+    color: var(--font-color);
+    max-width: 260px;
+}
+.monitor-position-options { margin-bottom: 8px; }
+.monitor-position-options label { margin-right: 10px; }
+.settings-action-btn {
+    display: block;
+    margin: 6px 0 4px 0;
+    padding: 6px 10px;
+    font-size: 12px;
+    background: var(--primary-bg);
+    border: 1px solid var(--border-color);
+    color: var(--font-color);
+    border-radius: 4px;
+    cursor: pointer;
+}
+.settings-action-btn:hover { background: var(--button-hover); }
+
+.event-plan-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.event-plan-overlay.hidden { display: none !important; }
+.event-plan-panel {
+    background: var(--secondary-bg);
+    color: var(--font-color);
+    padding: 20px 24px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    max-width: 420px;
+    width: 100%;
+}
+.event-plan-panel h3 { margin: 0 0 12px 0; font-size: 18px; }
+.event-plan-hint {
+    font-size: 12px;
+    opacity: 0.9;
+    margin: 0 0 16px 0;
+    line-height: 1.4;
+    color: var(--font-color);
+}
+.event-plan-fields { margin-bottom: 16px; }
+.event-plan-fields label {
+    display: block;
+    margin: 10px 0 4px 0;
+    font-size: 13px;
+    color: var(--font-color);
+}
+.event-plan-fields label:first-child { margin-top: 0; }
+.event-plan-fields input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    font-size: 14px;
+    background: var(--primary-bg);
+    border: 1px solid var(--border-color);
+    color: var(--font-color);
+    border-radius: 4px;
+}
+.event-plan-actions {
+    display: flex;
+    gap: 10px;
+}
+.event-plan-actions .settings-action-btn,
+.event-plan-actions .settings-close-btn {
+    flex: 1;
+    margin: 0;
+}
+
+.settings-status {
+    display: block;
+    margin-top: 4px;
+    font-size: 11px;
+    opacity: 0.9;
+    color: var(--font-color);
+}
+.settings-code { margin-top: 6px; }
+.settings-code code {
+    font-size: 11px;
+    background: var(--primary-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid var(--border-color);
+}
+
+.mirror-placement-toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 90%;
+    padding: 12px 20px;
+    background: var(--secondary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    font-size: 13px;
+    color: var(--font-color);
+    z-index: 9999;
+    text-align: center;
+}
+.mirror-placement-toast.hidden { display: none !important; }
+
+#column-modal {
+    position: fixed;
+    z-index: 10000; /* Higher than everything else */
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    background: #ffffff; /* White background for the popup */
+    color: #000000;      /* Force black text so it's readable */
+    padding: 25px;
+    border-radius: 8px;
+    box-shadow: 0 0 30px rgba(0,0,0,0.7);
+    min-width: 300px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+/* Make sure the list inside the modal is readable */
+#column-list label {
+    display: block;
+    margin: 10px 0;
+    cursor: pointer;
+    font-size: 16px;
+    color: #333; /* Dark gray text */
+}
+
+#column-modal h3 {
+    margin-top: 0;
+    color: #000;
+}
+
+/* --- Fix for the Top Ribbon & Runlist Dividers --- */
+.divider {
+    display: inline-block;
+    border-left: 1px solid var(--border-color);
+    height: 24px;
+    margin: 0 10px;
+    vertical-align: middle;
+}
+
+/* --- Layout Fix: Ensuring the View is visible --- */
+.content-area {
+    display: flex;
+    flex-grow: 1;
+    overflow: hidden;
+    position: relative;
+    background-color: #000; /* Ensure background is dark */
+}
+
+/* --- Indicator Fixes --- */
+.indicator {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* --- Sidebar Resizer --- */
+#resizer {
+    width: 10px;
+    min-width: 10px;
+    flex-shrink: 0;
+    cursor: col-resize;
+    background: var(--border-color);
+}
+
+#resizer:hover {
+    background: rgba(255, 255, 255, 0.4);
+}
+
+.script-row {
+    height: 250px !important; /* This must be the same as the div height */
+}
+
+/* ========================================= */
+/* 7. DIV-BASED GRID (REPLACES TABLE)        */
+/* ========================================= */
+
+.script-container {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    background-color: black;
+}
+
+/* Acts like <tr> */
+.script-row-wrapper {
+    display: flex !important;   
+    width: 100% !important;
+    max-width: 100%;
+    min-width: 0; /* Allow row to shrink inside padded editor so fixed px columns don’t force horizontal scroll */
+    box-sizing: border-box;
+    border-bottom: 1px solid #444;
+    align-items: stretch; /* Forces all columns in a row to the same height */
+}
+
+/* Acts like <td> */
+.script-column {
+    flex: 1; 
+    border-right: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    min-width: 0; /* Critical for text-wrapping in flexbox */
+    padding: 0;
+    margin: 0;
+    overflow: hidden; /* Clip content so column stays within flex share and row fill reaches edge */
+}
+
+/* Single block wrapper for cell content - prevents flex from blockifying spans (color/highlight line-break fix) */
+.cell-content {
+    flex: 1;
+    display: block;
+    line-height: 1.4;
+    font-size: inherit;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    white-space: pre-wrap; /* Honor hard returns (Enter) and newlines in text */
+    color: inherit;
+    padding: 0;
+    margin: 0;
+    min-width: 0; /* Allow shrink in flex so column width constrains content */
+    max-width: 100%;
+}
+.script-column > .cell-content {
+    padding: 0;
+}
+.cell-locker > .cell-content {
+    padding: 0;
+}
+.cell-content p,
+.cell-content div {
+    margin: 0;
+    padding: 0;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+/* Keep right grid line so it extends to the right edge of the row */
+#teleprompter-text .script-row-wrapper .script-column:last-child {
+    border-right: 1px solid #333;
+    flex: 1 1 0%;
+    min-width: 0;
+}
+/* Last column: force wrap so content stays within column (e.g. Aa mode / overview) */
+#teleprompter-text .script-row-wrapper .script-column:last-child .cell-locker,
+#teleprompter-text .script-row-wrapper .script-column:last-child .cell-content {
+    overflow-wrap: break-word;
+    word-break: break-word;
+    min-width: 0;
+}
+
+/* Column widths are synced in JS; keep a sane default */
+#teleprompter-text .script-row-wrapper .script-column {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+
+/* Extender Logic: Hides the last column on main screen so you see cues */
+#teleprompter-text.extending-mode .script-row-wrapper .script-column:last-child {
+    display: none !important;
+}
+/* In extending mode the rightmost visible column is the second; ensure it wraps */
+#teleprompter-text.extending-mode .script-row-wrapper .script-column:nth-child(2) .cell-locker,
+#teleprompter-text.extending-mode .script-row-wrapper .script-column:nth-child(2) .cell-content {
+    overflow-wrap: break-word;
+    word-break: break-word;
+    min-width: 0;
+}
+
+/* The actual text content */
+.cell-locker {
+    padding: 0 !important;
+    line-height: 1.4 !important;
+    font-size: inherit;
+    word-wrap: break-word;
+    white-space: pre-wrap; /* Honor hard returns (Enter) inside cells */
+    color: white;
+    flex-grow: 1;
+    display: flex;
+    align-items: center; /* Centers text vertically if one col is longer */
+    min-width: 0; /* Let column width constrain content so cell fills to edge and text wraps */
+}
+
+/* Ensure the modal stays on top of the black stage */
+#column-modal {
+    z-index: 10001; 
+}
+/* Hide the last column (script) on main screen when broadcasting; mirror shows it */
+.broadcast-hidden {
+    display: none !important;
+}
+
+.script-column.user-col-hidden {
+    display: none !important;
+}
+
+/* Remaining columns take up space when last is hidden */
+body.broadcasting #teleprompter-text .script-row-wrapper .script-column:not(:last-child) {
+    flex: 1;
+}
+
+/* Left gap when extended – content inset from screen; window stays 5:4 */
+:root { --extend-left-gap: 32px; }
+body.broadcasting #teleprompter-view {
+    padding-left: var(--extend-left-gap) !important;
+    box-sizing: border-box;
+    overflow-x: hidden;
+}
+/* No padding/gap when broadcasting - tight rows */
+body.broadcasting #teleprompter-text {
+    max-width: 100%;
+    overflow-x: hidden;
+    line-height: 1.1 !important;
+}
+body.broadcasting #teleprompter-text .script-row-wrapper {
+    padding: 0 !important;
+    margin: 0 !important;
+    border-bottom-width: 0 !important;
+    line-height: 1.1 !important;
+}
+body.broadcasting #teleprompter-text .script-column .cell-locker,
+body.broadcasting #teleprompter-text .script-column,
+body.broadcasting #teleprompter-text .script-column .cell-content {
+    padding: 0 !important;
+    margin: 0 !important;
+    line-height: 1.1 !important;
+}
+body.broadcasting #teleprompter-text .script-column .cell-locker {
+    align-items: flex-start !important;
+}
+body.broadcasting #teleprompter-text .script-column .cell-content *,
+body.broadcasting #teleprompter-text .script-column .cell-content p,
+body.broadcasting #teleprompter-text .script-column .cell-content div {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* Rows containing |v use font-size 12, reduced height (main window + extended) */
+#teleprompter-text .script-row-wrapper.row-font-12,
+#teleprompter-text .script-row-wrapper.row-font-12 .script-column,
+#teleprompter-text .script-row-wrapper.row-font-12 .cell-content,
+#teleprompter-text .script-row-wrapper.row-font-12 .cell-locker {
+    font-size: 12px !important;
+    line-height: 1.2 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+#teleprompter-text .script-row-wrapper.row-font-12 .cell-content span,
+#teleprompter-text .script-row-wrapper.row-font-12 .cell-content div,
+#teleprompter-text .script-row-wrapper.row-font-12 .cell-content p {
+    font-size: 12px !important;
+    line-height: 1.2 !important;
+}
+
+/* First column always black background */
+#teleprompter-text .script-row-wrapper .script-column:first-child { background-color: #000000 !important; }
+
+
+#teleprompter-text.global-fill-active,
+#teleprompter-text.global-fill-active .script-container,
+#teleprompter-text.global-fill-active .script-row-wrapper,
+#teleprompter-text.global-fill-active .script-column,
+#teleprompter-text.global-fill-active .cell-locker,
+#teleprompter-text.global-fill-active .cell-content {
+    background-color: var(--global-fill-color, transparent) !important;
+}
+/* Bookmark-dot lives in row (not first column) so it stays visible when column 1 is unchecked */
+#teleprompter-text .script-row-wrapper:has(.bookmark-dot) { overflow: visible !important; position: relative; }
+
+/* Row background colors by col2 vs col3 comparison (3-column table only)
+   col2 < col3 = red (1 line: glow; 2+: fill). col3 < col2 = green (1 line: glow; 2+: fill). */
+#teleprompter-text .script-row-wrapper.row-lines-same { background-color: #000000 !important; }
+/* col3 < col2 by 1 line: green glow – same gradient shape on left and right (column-based) */
+#teleprompter-text .script-row-wrapper.row-col2-one-more {
+    background: #000000 !important;
+}
+/* Left edge of 2nd column: green glow – strong so visible in un-Aa (large font) */
+#teleprompter-text .script-row-wrapper.row-col2-one-more .script-column:nth-child(2) {
+    background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%), transparent !important;
+}
+/* Right edge of last column: same shape as left for consistent look */
+#teleprompter-text .script-row-wrapper.row-col2-one-more .script-column:last-child {
+    background: linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%), transparent !important;
+}
+/* col3 < col2 by 2+ lines: full green – row and last column so fill and grid extend to right edge */
+#teleprompter-text .script-row-wrapper.row-col2-more { background-color: #002D04 !important; }
+#teleprompter-text .script-row-wrapper.row-col2-more .script-column:last-child { background-color: #002D04 !important; }
+#teleprompter-text .script-row-wrapper.row-col2-more .script-column,
+#teleprompter-text .script-row-wrapper.row-col2-more .cell-locker { color: #ffffff !important; }
+/* col2 < col3 by 1 line: red glow – same gradient shape on left and right (column-based) */
+#teleprompter-text .script-row-wrapper.row-col3-one-more {
+    background: #000000 !important;
+}
+/* Left edge of 2nd column: red glow – strong so visible in un-Aa (large font) */
+#teleprompter-text .script-row-wrapper.row-col3-one-more .script-column:nth-child(2) {
+    background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), transparent !important;
+}
+/* Right edge of last column: same shape as left for consistent look */
+#teleprompter-text .script-row-wrapper.row-col3-one-more .script-column:last-child {
+    background: linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), transparent !important;
+}
+
+/* Extended main window hides col3 (.broadcast-hidden). Right-edge glow was on :last-child (col3), so col2 had no right fade — black gap. Only when a column is broadcast-hidden; otherwise keep left-on-2 / right-on-3 split. */
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-col2-one-more:has(.script-column.broadcast-hidden) .script-column:nth-child(2) {
+    background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
+                linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
+                transparent !important;
+}
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-col3-one-more:has(.script-column.broadcast-hidden) .script-column:nth-child(2) {
+    background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
+                linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
+                transparent !important;
+}
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-col2-more:has(.script-column.broadcast-hidden) .script-column:nth-child(2),
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-col2-more:has(.script-column.broadcast-hidden) .script-column:nth-child(2) .cell-locker {
+    background-color: #002D04 !important;
+}
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-col3-more:has(.script-column.broadcast-hidden) .script-column:nth-child(2),
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-col3-much-more:has(.script-column.broadcast-hidden) .script-column:nth-child(2),
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-col3-more:has(.script-column.broadcast-hidden) .script-column:nth-child(2) .cell-locker,
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-col3-much-more:has(.script-column.broadcast-hidden) .script-column:nth-child(2) .cell-locker {
+    background-color: #531516 !important;
+}
+
+/* col2 < col3 by 2+ lines: full red – row and last column so fill and grid extend to right edge */
+#teleprompter-text .script-row-wrapper.row-col3-more,
+#teleprompter-text .script-row-wrapper.row-col3-much-more { background-color: #531516 !important; }
+#teleprompter-text .script-row-wrapper.row-col3-more .script-column:last-child,
+#teleprompter-text .script-row-wrapper.row-col3-much-more .script-column:last-child { background-color: #531516 !important; }
+#teleprompter-text .script-row-wrapper.row-col3-more .script-column,
+#teleprompter-text .script-row-wrapper.row-col3-more .cell-locker,
+#teleprompter-text .script-row-wrapper.row-col3-much-more .script-column,
+#teleprompter-text .script-row-wrapper.row-col3-much-more .cell-locker { color: #ffffff !important; }
+
+/* Imbalanced rows: visually shorter column (measured height) gets extra line spacing to fill row (not Aa overview) */
+body:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col2 .script-column:nth-child(2) .cell-locker,
+body:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col3 .script-column:nth-child(3) .cell-locker {
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+}
+body:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col2 .script-column:nth-child(2) .cell-content,
+body:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col2 .script-column:nth-child(2) .cell-content *,
+body:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col3 .script-column:nth-child(3) .cell-content,
+body:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col3 .script-column:nth-child(3) .cell-content *,
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col2 .script-column:nth-child(2) .cell-content,
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col2 .script-column:nth-child(2) .cell-content *,
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col3 .script-column:nth-child(3) .cell-content,
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-stretch-col3 .script-column:nth-child(3) .cell-content * {
+    line-height: inherit !important;
+}
+
+/* Aa mode: glow at the line between 2nd and 3rd column, out both sides (same gradient shape) */
+body.overview-mode #teleprompter-text .script-row-wrapper.row-col2-one-more .script-column:nth-child(2) {
+    background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.75) 6%, rgba(0, 45, 4, 0.2) 14%, transparent 20%),
+                linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.75) 6%, rgba(0, 45, 4, 0.2) 14%, transparent 20%), transparent !important;
+}
+body.overview-mode #teleprompter-text .script-row-wrapper.row-col2-one-more .script-column:nth-child(3) {
+    background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.75) 6%, rgba(0, 45, 4, 0.2) 14%, transparent 20%),
+                linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.75) 6%, rgba(0, 45, 4, 0.2) 14%, transparent 20%), transparent !important;
+}
+body.overview-mode #teleprompter-text .script-row-wrapper.row-col3-one-more .script-column:nth-child(2) {
+    background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.75) 6%, rgba(83, 21, 22, 0.2) 14%, transparent 20%),
+                linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.75) 6%, rgba(83, 21, 22, 0.2) 14%, transparent 20%), transparent !important;
+}
+body.overview-mode #teleprompter-text .script-row-wrapper.row-col3-one-more .script-column:nth-child(3) {
+    background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.75) 6%, rgba(83, 21, 22, 0.2) 14%, transparent 20%),
+                linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.75) 6%, rgba(83, 21, 22, 0.2) 14%, transparent 20%), transparent !important;
+}
+
+#btn-format-pickup.format-pickup-active {
+    background-color: var(--button-hover);
+    color: #fff;
+    box-shadow: 0 0 0 1px #7aa2ff inset;
+}
+
+
+
     --highlight-green: rgba(76, 175, 80, 0.3);
     --highlight-red: rgba(244, 67, 54, 0.3);
     --multi-select-highlight: rgba(100, 149, 237, 0.4);
