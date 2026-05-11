@@ -8054,6 +8054,29 @@ async function resolveMirrorScreens() {
     return { currentScreen, secondaryScreen };
 }
 
+function computeBroadcastWindowSize(availW, availH) {
+    const w = Math.max(100, availW || 800);
+    const h = Math.max(100, availH || 600);
+    const ratio54 = 5 / 4;
+    let extendW = Math.min(w, Math.floor(h * ratio54));
+    let extendH = Math.floor(extendW / ratio54);
+    if (extendH > h) {
+        extendH = h;
+        extendW = Math.floor(extendH * ratio54);
+    }
+    return { width: extendW, height: extendH };
+}
+
+function getMirrorFrameSize(secondaryScreen, mainExtendW, mainExtendH) {
+    if (secondaryScreen) {
+        return {
+            width: secondaryScreen.availWidth,
+            height: secondaryScreen.availHeight
+        };
+    }
+    return { width: mainExtendW, height: mainExtendH };
+}
+
 function getFallbackMirrorPosition(mirrorW, mirrorH) {
     const gap = 48;
     const screenLeft = window.screen.availLeft || 0;
@@ -8242,18 +8265,12 @@ extendMonitorButton.onclick = async () => {
     try {
         const { currentScreen, secondaryScreen } = await resolveMirrorScreens();
 
-        /* 5:4 aspect ratio, fixed for both views */
-        const availW = currentScreen ? currentScreen.availWidth : (window.screen.availWidth || 800);
-        const availH = currentScreen ? currentScreen.availHeight : (window.screen.availHeight || 600);
-        const ratio54 = 5 / 4;
-        let extendW = Math.min(availW, Math.floor(availH * ratio54));
-        let extendH = Math.floor(extendW / ratio54);
-        if (extendH > availH) {
-            extendH = availH;
-            extendW = Math.floor(extendH * ratio54);
-        }
-        extendedWindowWidth = extendW;
-        extendedWindowHeight = extendH;
+        /* Main control window: 5:4 on the current display. Mirror uses the secondary display's full frame when known. */
+        const mainAvailW = currentScreen ? currentScreen.availWidth : (window.screen.availWidth || 800);
+        const mainAvailH = currentScreen ? currentScreen.availHeight : (window.screen.availHeight || 600);
+        const mainSize = computeBroadcastWindowSize(mainAvailW, mainAvailH);
+        extendedWindowWidth = mainSize.width;
+        extendedWindowHeight = mainSize.height;
 
         if (currentScreen) {
             window.moveTo(currentScreen.availLeft, currentScreen.availTop);
@@ -8264,7 +8281,7 @@ extendMonitorButton.onclick = async () => {
 
         /* Fix table width so it doesn't change on resize; subtract left gap so content fits and 5:4 is preserved */
         const extendLeftGap = 32;
-        extendedFixedWidth = Math.max(100, (window.innerWidth || document.documentElement.clientWidth || extendW) - extendLeftGap);
+        extendedFixedWidth = Math.max(100, (window.innerWidth || document.documentElement.clientWidth || extendedWindowWidth) - extendLeftGap);
         teleprompterText.style.width = extendedFixedWidth + 'px';
         teleprompterText.style.maxWidth = extendedFixedWidth + 'px';
 
@@ -8323,8 +8340,9 @@ extendMonitorButton.onclick = async () => {
 
         /* Position mirror on other monitor: use getScreenDetails when available, else user's "second monitor position" setting */
         let mirrorLeft, mirrorTop;
-        const mirrorW = extendedWindowWidth;
-        const mirrorH = extendedWindowHeight;
+        const mirrorFrame = getMirrorFrameSize(secondaryScreen, extendedWindowWidth, extendedWindowHeight);
+        const mirrorW = mirrorFrame.width;
+        const mirrorH = mirrorFrame.height;
         if (secondaryScreen) {
             mirrorLeft = secondaryScreen.availLeft;
             mirrorTop = secondaryScreen.availTop;
@@ -8333,7 +8351,6 @@ extendMonitorButton.onclick = async () => {
             mirrorLeft = fallback.left;
             mirrorTop = fallback.top;
         }
-        /* Same 5:4 ratio and fixed width as main: both views use extendedWindowWidth × extendedWindowHeight so teleprompter layout matches. */
         const specs = `left=${mirrorLeft},top=${mirrorTop},width=${mirrorW},height=${mirrorH},toolbar=no,menubar=no,location=no,status=no,scrollbars=no`;
 
         pendingMirrorPosition = { left: mirrorLeft, top: mirrorTop, width: mirrorW, height: mirrorH };
