@@ -198,6 +198,10 @@ document.addEventListener('DOMContentLoaded', function() {
     let fileShowSyncGuide = [];
     /** Per-file: show red/green row color guide (true by default). */
     let fileShowColorGuide = [];
+    /** Per-file default script ribbon settings (toolbar + root text styles). */
+    let fileFontFamily = [];
+    let fileFontSize = [];
+    let fileFontColor = [];
     let formattedHtmlSaveHandles = [];
     let formattedHtmlSavedNames = [];
     let pendingOpenActiveFileIndex = -1;
@@ -1464,6 +1468,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 updateMultiSelectState();
             } else {
                 teleprompterText.style.color = color;
+                persistCurrentFileScriptSettings();
             }
         }
         ribbonInteractionSnapshotRange = null;
@@ -2089,8 +2094,83 @@ document.addEventListener('DOMContentLoaded', function() {
     requestAnimationFrame(() => refreshSelectFontTarget());
 
     let skipCaretSyncForFontSelects = false;
+    let skipCaretFontSelectSync = false;
+
+    function normalizeFontSizeSelectValue(sizePx) {
+        const n = parseInt(sizePx, 10);
+        if (!fontSizeSelect || Number.isNaN(n)) return String(sizePx || '80');
+        const opts = Array.from(fontSizeSelect.options).map(o => parseInt(o.value, 10));
+        if (!opts.length) return String(n);
+        const nearest = opts.reduce((a, b) => Math.abs(a - n) < Math.abs(b - n) ? a : b);
+        return String(nearest);
+    }
+
+    function persistCurrentFileScriptSettings() {
+        if (currentFileIndex < 0) return;
+        if (fontFamilySelect) fileFontFamily[currentFileIndex] = fontFamilySelect.value;
+        if (fontSizeSelect) fileFontSize[currentFileIndex] = fontSizeSelect.value;
+        const color = teleprompterText.style.color || window.getComputedStyle(teleprompterText).color;
+        if (color) fileFontColor[currentFileIndex] = color;
+    }
+
+    function applyFileScriptSettingsToEditor(index) {
+        if (index < 0 || isOverviewMode) return;
+        skipCaretFontSelectSync = true;
+        const family = fileFontFamily[index] || fontFamilySelect?.value || 'Arial';
+        const size = normalizeFontSizeSelectValue(fileFontSize[index] || fontSizeSelect?.value || '80');
+        const color = fileFontColor[index] || teleprompterText.style.color || '#ffffff';
+        if (fontFamilySelect && Array.from(fontFamilySelect.options).some(o => o.value === family)) {
+            fontFamilySelect.value = family;
+        }
+        if (fontSizeSelect && Array.from(fontSizeSelect.options).some(o => o.value === size)) {
+            fontSizeSelect.value = size;
+        }
+        teleprompterText.style.fontFamily = family;
+        teleprompterText.style.fontSize = size + 'px';
+        teleprompterText.style.color = color;
+        requestAnimationFrame(() => {
+            skipCaretFontSelectSync = false;
+        });
+    }
+
+    function refreshLayoutAfterScriptFontChange() {
+        teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
+            row.style.minHeight = '';
+            row.style.height = '';
+        });
+        measuredRowHeights = [];
+        void teleprompterText.offsetHeight;
+        if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+        if (document.body.classList.contains('broadcasting')) {
+            syncColumnWidths(true);
+            applyBroadcastMainViewportWidth();
+            applyRowShortColumnLineSpacing();
+            const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
+            measuredRowHeights = measureBroadcastRowHeights(rows);
+            rows.forEach((row, i) => {
+                const h = measuredRowHeights[i];
+                if (h > 0) {
+                    row.style.minHeight = h + 'px';
+                    row.style.height = h + 'px';
+                }
+            });
+            if (mirrorWindow && !mirrorWindow.closed) {
+                refreshMirrorData();
+                syncMirrorStyles();
+                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+            }
+        } else {
+            syncColumnWidths(true);
+            measureRowHeightsFromContent();
+            if (mirrorWindow && !mirrorWindow.closed) syncMirrorStyles();
+        }
+        scheduleRowShortColumnLineSpacing(true);
+        if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
+        if (typeof shrinkAllPillsToFit === 'function') shrinkAllPillsToFit();
+    }
+
     function updateFontSelectsFromCaret() {
-        if (skipCaretSyncForFontSelects) return;
+        if (skipCaretSyncForFontSelects || skipCaretFontSelectSync) return;
         const sel = window.getSelection();
         if (!sel.rangeCount || sel.rangeCount === 0) return;
         const node = sel.anchorNode;
@@ -2230,16 +2310,10 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             flattenRedundantSpans();
             if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
-            teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
-                row.style.minHeight = '';
-                row.style.height = '';
-            });
-            measuredRowHeights = [];
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
-                    void teleprompterText.offsetHeight;
-                    measureRowHeightsFromContent();
-                    if (mirrorWindow && !mirrorWindow.closed) syncMirrorStyles();
+                    refreshLayoutAfterScriptFontChange();
+                    persistCurrentFileScriptSettings();
                     syncEditorState();
                     if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
                         contentStore[currentFileIndex] = teleprompterText.innerHTML.trim();
@@ -5183,7 +5257,10 @@ function serializeTeleprompterHtmlSavePayload(fileIndex, html) {
         columnVisibility: visibility,
         firstColIsId: !!(fileFirstColIsId[fileIndex] || inferred.firstColIsId),
         showSyncGuide: fileShowSyncGuide[fileIndex] !== false,
-        showColorGuide: fileShowColorGuide[fileIndex] !== false
+        showColorGuide: fileShowColorGuide[fileIndex] !== false,
+        fontFamily: fileFontFamily[fileIndex] || null,
+        fontSize: fileFontSize[fileIndex] ? normalizeFontSizeSelectValue(fileFontSize[fileIndex]) : null,
+        fontColor: fileFontColor[fileIndex] || null
     };
     const encoded = encodeURIComponent(JSON.stringify(metadata));
     return `<!-- TP_META:${encoded} -->\n${html || ''}`;
@@ -5241,6 +5318,7 @@ function updateRunlistRowHtmlBadge(index) {
 async function saveCurrentFile() {
     if (currentFileIndex < 0 || currentFileIndex >= fileStore.length) return;
     syncEditorState();
+    persistCurrentFileScriptSettings();
     const file = fileStore[currentFileIndex];
     const ext = file.name.split('.').pop().toLowerCase();
 
@@ -5364,6 +5442,9 @@ function moveFileInRunlist(direction) {
     [fileFirstColIsId[currentFileIndex], fileFirstColIsId[newIndex]] = [fileFirstColIsId[newIndex], fileFirstColIsId[currentFileIndex]];
     [fileShowSyncGuide[currentFileIndex], fileShowSyncGuide[newIndex]] = [fileShowSyncGuide[newIndex], fileShowSyncGuide[currentFileIndex]];
     [fileShowColorGuide[currentFileIndex], fileShowColorGuide[newIndex]] = [fileShowColorGuide[newIndex], fileShowColorGuide[currentFileIndex]];
+    [fileFontFamily[currentFileIndex], fileFontFamily[newIndex]] = [fileFontFamily[newIndex], fileFontFamily[currentFileIndex]];
+    [fileFontSize[currentFileIndex], fileFontSize[newIndex]] = [fileFontSize[newIndex], fileFontSize[currentFileIndex]];
+    [fileFontColor[currentFileIndex], fileFontColor[newIndex]] = [fileFontColor[newIndex], fileFontColor[currentFileIndex]];
     [formattedHtmlSaveHandles[currentFileIndex], formattedHtmlSaveHandles[newIndex]] = [formattedHtmlSaveHandles[newIndex], formattedHtmlSaveHandles[currentFileIndex]];
     [formattedHtmlSavedNames[currentFileIndex], formattedHtmlSavedNames[newIndex]] = [formattedHtmlSavedNames[newIndex], formattedHtmlSavedNames[currentFileIndex]];
     const rows = Array.from(runlistContainer.querySelectorAll('.runlist-row'));
@@ -6030,6 +6111,9 @@ function addFileToRunlist(file, options = {}) {
     fileFirstColIsId.push(false);
     fileShowSyncGuide.push(true);
     fileShowColorGuide.push(true);
+    fileFontFamily.push(fontFamilySelect?.value || 'Arial');
+    fileFontSize.push(fontSizeSelect?.value || '80');
+    fileFontColor.push(teleprompterText.style.color || '#ffffff');
     formattedHtmlSaveHandles.push(options.sourceHandle || null);
     formattedHtmlSavedNames.push('');
 
@@ -6135,6 +6219,9 @@ function removeFileFromRunlist(index) {
     fileFirstColIsId.splice(index, 1);
     fileShowSyncGuide.splice(index, 1);
     fileShowColorGuide.splice(index, 1);
+    fileFontFamily.splice(index, 1);
+    fileFontSize.splice(index, 1);
+    fileFontColor.splice(index, 1);
     formattedHtmlSaveHandles.splice(index, 1);
     formattedHtmlSavedNames.splice(index, 1);
     const row = runlistContainer.querySelector(`.runlist-row[data-index="${index}"]`);
@@ -6198,6 +6285,9 @@ function sortRunlistIfNumericPrefix(countBefore, options = {}) {
     const newFileFirstColIsId = indices.map(i => fileFirstColIsId[i]);
     const newFileShowSyncGuide = indices.map(i => fileShowSyncGuide[i]);
     const newFileShowColorGuide = indices.map(i => fileShowColorGuide[i]);
+    const newFileFontFamily = indices.map(i => fileFontFamily[i]);
+    const newFileFontSize = indices.map(i => fileFontSize[i]);
+    const newFileFontColor = indices.map(i => fileFontColor[i]);
     const newFormattedHtmlSaveHandles = indices.map(i => formattedHtmlSaveHandles[i]);
     const newFormattedHtmlSavedNames = indices.map(i => formattedHtmlSavedNames[i]);
     fileStore.length = 0;
@@ -6214,6 +6304,12 @@ function sortRunlistIfNumericPrefix(countBefore, options = {}) {
     fileShowSyncGuide.push(...newFileShowSyncGuide);
     fileShowColorGuide.length = 0;
     fileShowColorGuide.push(...newFileShowColorGuide);
+    fileFontFamily.length = 0;
+    fileFontFamily.push(...newFileFontFamily);
+    fileFontSize.length = 0;
+    fileFontSize.push(...newFileFontSize);
+    fileFontColor.length = 0;
+    fileFontColor.push(...newFileFontColor);
     formattedHtmlSaveHandles.length = 0;
     formattedHtmlSaveHandles.push(...newFormattedHtmlSaveHandles);
     formattedHtmlSavedNames.length = 0;
@@ -6432,6 +6528,9 @@ async function processFileContent(file, index) {
                 fileFirstColIsId[slot] = !!(meta?.firstColIsId ?? inferred.firstColIsId);
                 fileShowSyncGuide[slot] = meta?.showSyncGuide !== false;
                 fileShowColorGuide[slot] = meta?.showColorGuide !== false;
+                if (typeof meta?.fontFamily === 'string' && meta.fontFamily) fileFontFamily[slot] = meta.fontFamily;
+                if (meta?.fontSize != null && meta.fontSize !== '') fileFontSize[slot] = normalizeFontSizeSelectValue(meta.fontSize);
+                if (typeof meta?.fontColor === 'string' && meta.fontColor) fileFontColor[slot] = meta.fontColor;
                 updateRunlistRowColumnToggles(slot);
             }
             text = stripNumericAngleMarkers(text);
@@ -7981,6 +8080,7 @@ function loadScriptToEditor(index, options) {
 
     /* Save current file only when switching to a different file (avoid overwriting with placeholder/empty when reloading same file after sort) */
     if (currentFileIndex >= 0 && currentFileIndex < contentStore.length && currentFileIndex !== index) {
+        persistCurrentFileScriptSettings();
         const html = teleprompterText.innerHTML.trim();
         contentStore[currentFileIndex] = (html === '<br>' || html === '') ? '' : html;
         if (window.__fontSizeDebug) console.log('[FontSize] REPORT loadScriptToEditor SAVE before switch', { fromIndex: currentFileIndex, fromName: fileStore[currentFileIndex]?.name, toIndex: index, toName: fileStore[index]?.name });
@@ -8030,9 +8130,10 @@ function loadScriptToEditor(index, options) {
         } else {
             btnOverviewToggle.classList.remove('overview-active');
             document.body.classList.remove('overview-mode');
-            fontSizeSelect.value = savedFontSizeBeforeOverview || '80';
-            /* Don't apply font size to all content on load – preserves format-span-inline / Select-item formatting saved in contentStore */
+            applyFileScriptSettingsToEditor(index);
         }
+    } else {
+        applyFileScriptSettingsToEditor(index);
     }
 
     teleprompterText.focus();
