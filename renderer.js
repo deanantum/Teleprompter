@@ -4332,11 +4332,13 @@ function indexToColumnLetter(colIndex) {
         return vis.filter(v => v !== false).length;
     }
 
-    /** Visible content column indices (>= 1). Row height in broadcast = max of these columns' heights. */
+    /** Visible content column indices. Single-column docs use column 0; multi-column tables use script columns >= 1. */
     function getVisibleContentColumnIndices(maxCols) {
+        if (maxCols <= 1) return maxCols === 1 ? [0] : [];
         const vis = currentFileIndex >= 0 && fileColumnVisibility[currentFileIndex] ? fileColumnVisibility[currentFileIndex] : null;
         if (!vis || vis.length === 0) return Array.from({ length: Math.max(0, maxCols - 1) }, (_, i) => i + 1);
-        return [...vis].map((v, i) => (v !== false && i >= 1 ? i : -1)).filter(i => i >= 0);
+        const fromVis = [...vis].map((v, i) => (v !== false && i >= 1 ? i : -1)).filter(i => i >= 0);
+        return fromVis.length > 0 ? fromVis : [maxCols - 1];
     }
 
     function getMirrorCellHtml(cellEl) {
@@ -4627,7 +4629,9 @@ function indexToColumnLetter(colIndex) {
         const remaining = Math.max(availableWidth - widths[0], 0);
         let equalWidth = otherColCount > 0 ? Math.floor(remaining / (visibleColCount > 0 ? visibleColCount : 1)) : 0;
 
-        if (!equalSplitThreeTextCols && useVisibleColumns && effectiveVisibleIndices) {
+        if (maxCols === 1) {
+            widths[0] = availableWidth;
+        } else if (!equalSplitThreeTextCols && useVisibleColumns && effectiveVisibleIndices) {
             const contentVisibleCount = effectiveVisibleIndices.filter(i => i >= 1).length;
             /* In extend mode with 2+ content columns: main shows all visible except the last (mirror shows the last). */
             const mainVisibleIndices = (isBroadcasting && contentVisibleCount >= 2)
@@ -7991,10 +7995,13 @@ function requestMirrorFullscreen() {
             const doc = mirrorWindow.document;
             const root = doc && doc.documentElement;
             const req = root && (root.requestFullscreen || root.webkitRequestFullscreen || root.msRequestFullscreen);
-            if (req) req.call(root).catch(() => {});
+            if (req) {
+                const result = req.call(root, { navigationUI: 'hide' });
+                if (result && typeof result.catch === 'function') result.catch(() => {});
+            }
         } catch (_) {}
     };
-    [0, 60, 180, 400, 900, 1800].forEach((ms) => setTimeout(tryOnce, ms));
+    [0, 60, 180, 400, 900, 1800, 3200, 5200].forEach((ms) => setTimeout(tryOnce, ms));
 }
 
 /** Scroll sync: content Y at viewport top + row origins (not scroll ratio — different window heights). */
@@ -8307,19 +8314,22 @@ extendMonitorButton.onclick = async () => {
         document.body.appendChild(probe);
         measuredRowHeights = rowsForMeasure.map(row => {
             const cols = row.querySelectorAll('.script-column');
-            const visibleCols = Array.from(cols).slice(0, -1);
+            const numCols = cols.length;
+            const contentIndices = getVisibleContentColumnIndices(numCols);
             let visibleMax = 1;
-            if (visibleCols.length > 0) {
-                const visibleHeights = visibleCols.map(col => {
+            if (contentIndices.length > 0) {
+                const visibleHeights = contentIndices.map(idx => {
+                    const col = cols[idx];
+                    if (!col) return 0;
                     const cell = col.querySelector('.cell-locker') || col.querySelector('.cell-content') || col;
                     return cell ? (cell.scrollHeight || 0) : 0;
                 });
                 visibleMax = Math.max(1, ...visibleHeights);
             }
-            const lastCol = cols[cols.length - 1];
+            const mirrorCol = cols[numCols - 1];
             let mirrorH = 0;
-            if (lastCol && scriptColWidth != null && scriptColWidth > 0) {
-                const cell = lastCol.querySelector('.cell-locker') || lastCol.querySelector('.cell-content') || lastCol;
+            if (mirrorCol && scriptColWidth != null && scriptColWidth > 0) {
+                const cell = mirrorCol.querySelector('.cell-locker') || mirrorCol.querySelector('.cell-content') || mirrorCol;
                 const text = cell ? (cell.innerText || '').trim() || '\u00A0' : '\u00A0';
                 probe.textContent = text;
                 probe.style.fontSize = row.classList.contains('row-font-12') ? '12px' : (mainStyle.fontSize || '');
