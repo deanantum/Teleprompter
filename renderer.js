@@ -4518,6 +4518,39 @@ function indexToColumnLetter(colIndex) {
         return Math.max(0, Math.floor(teleprompterText.clientWidth - pl - pr));
     }
 
+    /** Main script width in extend mode: stop at the files/bookmarks resizer, not the full window. */
+    function getBroadcastTeleprompterTextWidthPx() {
+        if (!teleprompterView) return 0;
+        void teleprompterView.offsetHeight;
+        const viewRect = teleprompterView.getBoundingClientRect();
+        let rightEdge = viewRect.right;
+        if (resizer && !resizer.classList.contains('hidden')) {
+            const resizerRect = resizer.getBoundingClientRect();
+            if (resizerRect.width > 0) {
+                rightEdge = Math.min(rightEdge, resizerRect.left);
+            }
+        }
+        const viewCs = window.getComputedStyle(teleprompterView);
+        const pl = parseFloat(viewCs.paddingLeft) || 0;
+        const pr = parseFloat(viewCs.paddingRight) || 0;
+        return Math.max(100, Math.floor(rightEdge - viewRect.left - pl - pr));
+    }
+
+    function applyBroadcastMainViewportWidth() {
+        if (!document.body.classList.contains('broadcasting') || !teleprompterText) return;
+        const w = getBroadcastTeleprompterTextWidthPx();
+        if (w < 100) return;
+        extendedFixedWidth = w;
+        teleprompterText.style.width = w + 'px';
+        teleprompterText.style.maxWidth = w + 'px';
+        syncColumnWidths(true);
+        if (mirrorWindow && !mirrorWindow.closed) {
+            refreshMirrorData();
+            syncMirrorStyles();
+            if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+        }
+    }
+
     /** First column is sized from cue-style cells only — not section labels like "Pause" in col1 of sparse rows. */
     function isCueLikeFirstColumnText(raw) {
         const t = (raw || '').trim();
@@ -5271,6 +5304,7 @@ if (toggleRunlistButton && runlistPanel && resizer) {
         const isHidden = runlistPanel.classList.toggle('hidden');
         resizer.classList.toggle('hidden', isHidden);
         toggleRunlistButton.title = isHidden ? 'Show Runlist' : 'Hide Runlist';
+        applyBroadcastMainViewportWidth();
     };
 }
 
@@ -5844,6 +5878,7 @@ if (resizer && runlistPanel) {
             resizing = false;
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
+            applyBroadcastMainViewportWidth();
         }
     });
 }
@@ -8286,9 +8321,9 @@ extendMonitorButton.onclick = async () => {
         }
         window.resizeTo(extendedWindowWidth, extendedWindowHeight);
 
-        /* Fix table width so it doesn't change on resize; subtract left gap so content fits and 5:4 is preserved */
-        const extendLeftGap = 32;
-        extendedFixedWidth = Math.max(100, (window.innerWidth || document.documentElement.clientWidth || extendedWindowWidth) - extendLeftGap);
+        /* Fix table width to the main stage only — stop at #resizer, not under Files/Bookmarks. */
+        void teleprompterView.offsetHeight;
+        extendedFixedWidth = getBroadcastTeleprompterTextWidthPx();
         teleprompterText.style.width = extendedFixedWidth + 'px';
         teleprompterText.style.maxWidth = extendedFixedWidth + 'px';
 
@@ -8664,6 +8699,7 @@ window.addEventListener('resize', () => {
         if (window.outerWidth !== extendedWindowWidth || window.outerHeight !== extendedWindowHeight) {
             window.resizeTo(extendedWindowWidth, extendedWindowHeight);
         }
+        applyBroadcastMainViewportWidth();
     }
     syncColumnWidths(true);
     if (typeof updateTopScrollChrome === 'function') updateTopScrollChrome({ preserveScroll: true });
