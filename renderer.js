@@ -4542,20 +4542,14 @@ function indexToColumnLetter(colIndex) {
         return Math.max(0, Math.floor(teleprompterText.clientWidth - pl - pr));
     }
 
-    /** Main script width in extend mode: stop at #resizer, not under Files/Bookmarks. */
+    /** Main script width in extend mode: use the stage width (runlist is docked on the left). */
     function getBroadcastTeleprompterTextWidthPx() {
         if (!teleprompterView || !teleprompterText) return 0;
         void teleprompterView.offsetHeight;
         const stageRect = teleprompterStage
             ? teleprompterStage.getBoundingClientRect()
             : teleprompterView.getBoundingClientRect();
-        let rightEdge = stageRect.right;
-        if (resizer && !resizer.classList.contains('hidden')) {
-            const resizerRect = resizer.getBoundingClientRect();
-            if (resizerRect.width > 0) {
-                rightEdge = Math.min(rightEdge, resizerRect.left);
-            }
-        }
+        const rightEdge = stageRect.right;
         const viewRect = teleprompterView.getBoundingClientRect();
         const viewCs = window.getComputedStyle(teleprompterView);
         const viewPl = parseFloat(viewCs.paddingLeft) || 0;
@@ -4600,7 +4594,7 @@ function indexToColumnLetter(colIndex) {
 
     function onMirrorRunlistEdgeMouseMove(e) {
         if (!mirrorRunlistEdgeActive) return;
-        if (e.clientX >= window.innerWidth - MIRROR_RUNLIST_EDGE_PX) {
+        if (e.clientX <= MIRROR_RUNLIST_EDGE_PX) {
             setMirrorRunlistOverlayOpen(true);
         }
     }
@@ -6076,7 +6070,7 @@ if (resizer && runlistPanel) {
     document.addEventListener('mousemove', (e) => {
         if (!resizing) return;
         const deltaX = e.clientX - startX;
-        let newWidth = startWidth - deltaX;
+        let newWidth = startWidth + deltaX;
         newWidth = Math.max(200, Math.min(600, newWidth));
         runlistPanel.style.width = newWidth + 'px';
     });
@@ -8550,7 +8544,7 @@ extendMonitorButton.onclick = async () => {
         }
         window.resizeTo(extendedWindowWidth, extendedWindowHeight);
 
-        /* Fix table width to the main stage only — stop at #resizer, not under Files/Bookmarks. */
+        /* Fix table width to the main stage only (runlist is docked on the left). */
         void teleprompterView.offsetHeight;
         extendedFixedWidth = getBroadcastTeleprompterTextWidthPx();
         teleprompterText.style.width = extendedFixedWidth + 'px';
