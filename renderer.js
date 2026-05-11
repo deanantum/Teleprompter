@@ -94,6 +94,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const prevBookmarkButton = document.getElementById('btn-prev-bookmark');
     const nextBookmarkButton = document.getElementById('btn-next-bookmark');
     const invertScrollCheckbox = document.getElementById('invert-scroll-checkbox');
+    const mirrorDebugModeCheckbox = document.getElementById('mirror-debug-mode-checkbox');
     const secondMonitorPositionRadios = document.querySelectorAll('input[name="secondMonitorPosition"]');
 
     // Modal Elements
@@ -195,8 +196,12 @@ document.addEventListener('DOMContentLoaded', function() {
     let fileFirstColIsId = [];
     /** Per-file: show horizontal sync guide line (true by default). */
     let fileShowSyncGuide = [];
+    /** Per-file: show red/green row color guide (true by default). */
+    let fileShowColorGuide = [];
     let formattedHtmlSaveHandles = [];
     let formattedHtmlSavedNames = [];
+    let pendingOpenActiveFileIndex = -1;
+    let pendingOpenActiveToken = 0;
 
     let lastColumnWidthPx = null;
     let col2WidthPx = null;
@@ -1629,9 +1634,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 requestAnimationFrame(() => refreshSelectFontTarget());
             }
-        } else {
-            /* No explicit selection and no Select-item target: fill the view/grid layers (not text highlights). */
-            applyNoSelectionGlobalFill(color);
         }
         ribbonInteractionSnapshotRange = null;
         syncEditorState();
@@ -3263,8 +3265,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 const color = box.getAttribute('data-color');
                 if (color) {
                     e.preventDefault();
-                    pushUndoState();
-                    applyBackgroundColorToTarget(color);
+                    updateMultiSelectState();
+                    const explicit = resolveRibbonExplicitRanges();
+                    const hasHighlightTarget = explicit.length > 0 || !!selectedFontTarget;
+                    if (!hasHighlightTarget) {
+                        alert('Select the text you want to add or change a background color highlight on.');
+                    } else {
+                        pushUndoState();
+                        applyBackgroundColorToTarget(color);
+                    }
                 }
                 bgColorPanel.style.display = 'none';
             }
@@ -3316,12 +3325,14 @@ document.addEventListener('DOMContentLoaded', function() {
             indicatorWrapper.style.transform = 'translateY(-50%)';
             startY = e.clientY;
             startTop = newTop;
+            updateTopScrollChrome({ preserveScroll: true });
             syncMirrorByPixels();
         }, { passive: true });
 
         document.addEventListener('mouseup', () => {
             if (isDragging) {
                 isDragging = false;
+                updateTopScrollChrome({ preserveScroll: true });
                 syncMirrorByPixels();
             }
         });
@@ -3365,9 +3376,11 @@ document.addEventListener('DOMContentLoaded', function() {
             setTimeout(sendPendingMirrorPosition, 300);
             setTimeout(sendPendingMirrorPosition, 600);
         }
+        pushMirrorDebugMode();
         syncColumnWidths(true);
         refreshMirrorData();
         syncMirrorStyles();
+        [0, 60, 200, 450].forEach((ms) => setTimeout(() => pushMirrorLeaderLayout(), ms));
     }
 
     let overflowReportCount = 0;
@@ -3497,12 +3510,71 @@ function indexToColumnLetter(colIndex) {
         return Math.max(0, Math.min(100, (centerY / stageRect.height) * 100));
     }
 
+        /** Sync line center from top of #teleprompter-view (scroll viewport), not stage % — mirror matches row overlap. */
+        function getIndicatorViewportOffsetPx() {
+            if (!indicatorWrapper || !teleprompterView) return null;
+            const viewRect = teleprompterView.getBoundingClientRect();
+            const wrapperRect = indicatorWrapper.getBoundingClientRect();
+            const centerY = wrapperRect.top - viewRect.top + (wrapperRect.height / 2);
+            const maxY = Math.max(0, teleprompterView.clientHeight || viewRect.height || 0);
+            return Math.max(0, Math.min(maxY, Math.round(centerY)));
+        }
+
+        /** Size top black chrome from sync line so the top pill can scroll through the indicator. */
+        function updateTopScrollChrome(options) {
+            const preserveScroll = !options || options.preserveScroll !== false;
+            const view = teleprompterView;
+            if (!view) return;
+            const spacer = view.querySelector('.teleprompter-top-spacer');
+            const runway = view.querySelector('.teleprompter-top-runway');
+            if (!spacer || !runway) return;
+
+            const maxBefore = Math.max(0, view.scrollHeight - view.clientHeight);
+            const scrollRatio = maxBefore > 0 ? view.scrollTop / maxBefore : 0;
+
+            if (!view.classList.contains('has-file')) {
+                spacer.style.removeProperty('min-height');
+                runway.style.removeProperty('min-height');
+                return;
+            }
+
+            const rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+            const pillMarginTop = Math.round(1.4 * rootFs);
+            const indPx = getIndicatorViewportOffsetPx();
+            const viewH = Math.max(0, view.clientHeight || 0);
+            const indicatorPx = indPx != null ? indPx : Math.round(viewH * 0.5);
+            const minChrome = Math.round(4 * rootFs);
+            const beforePillContent = Math.max(minChrome, Math.round(indicatorPx - pillMarginTop * 0.25));
+            const runwayPx = Math.max(
+                Math.round(3 * rootFs),
+                Math.min(Math.round(10 * rootFs), Math.round(beforePillContent * 0.45))
+            );
+            const spacerPx = Math.max(0, beforePillContent - runwayPx);
+
+            spacer.style.setProperty('min-height', spacerPx + 'px', 'important');
+            runway.style.setProperty('min-height', runwayPx + 'px', 'important');
+            void view.offsetHeight;
+
+            if (preserveScroll) {
+                const newMax = Math.max(0, view.scrollHeight - view.clientHeight);
+                view.scrollTop = Math.round(scrollRatio * newMax);
+            }
+
+            if (mirrorWindow && !mirrorWindow.closed) {
+                pushMirrorLeaderLayout();
+                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+            }
+        }
+
 		function syncMirrorByPixels() {
         if (isUpdatingFromMirrorScroll || !mirrorWindow || mirrorWindow.closed) return;
-        mirrorWindow.postMessage({ 
-                type: 'pixelSync', 
-                scrollTop: teleprompterView.scrollTop,
-                indicatorPosition: getIndicatorPositionPercent()
+        mirrorWindow.postMessage({
+                type: 'pixelSync',
+                ...getMirrorScrollSyncPayload(),
+                indicatorPosition: getIndicatorPositionPercent(),
+                indicatorViewportPx: getIndicatorViewportOffsetPx(),
+                layout: getMirrorLayoutMetrics(),
+                ...getMirrorPillPayload()
             }, '*');
     }
 
@@ -3604,12 +3676,20 @@ function indexToColumnLetter(colIndex) {
         document.body.appendChild(probe);
         const numCols = rows[0] ? rows[0].querySelectorAll('.script-column').length : 0;
         const contentIndices = getVisibleContentColumnIndices(numCols);
+        const mirrorColWidth = lastColumnWidthPx != null && lastColumnWidthPx > 0 ? lastColumnWidthPx : scriptColWidth;
         measuredRowHeights = rows.map(row => {
             const cols = row.querySelectorAll('.script-column');
             let maxH = 1;
             contentIndices.forEach(idx => {
                 const col = cols[idx];
-                if (col && scriptColWidth > 0) {
+                if (!col) return;
+                let colW = Math.floor(col.getBoundingClientRect().width);
+                if (colW < 2 || col.classList.contains('broadcast-hidden')) {
+                    colW = idx === numCols - 1 ? mirrorColWidth : scriptColWidth;
+                }
+                colW = Math.max(20, colW);
+                if (colW > 0) {
+                    probe.style.width = colW + 'px';
                     const cell = col.querySelector('.cell-locker') || col.querySelector('.cell-content') || col;
                     const text = cell ? (cell.innerText || '').trim() || '\u00A0' : '\u00A0';
                     probe.textContent = text;
@@ -4054,6 +4134,7 @@ function indexToColumnLetter(colIndex) {
         const STRETCH_HEIGHT_HYSTERESIS_PX = 4;
 
         const debugRowColors = typeof window !== 'undefined' && window.DEBUG_ROW_COLORS;
+        const colorGuideEnabled = currentFileIndex < 0 || fileShowColorGuide[currentFileIndex] !== false;
         if (debugRowColors && rows.length > 0) {
             console.log('[RowColors] DEBUG on. We compare idxCol2=' + idxCol2 + ' vs idxCol3=' + idxCol3 + '. Col3 more => red. Check "byIndex" to see which DOM index has your column-3 text.');
         }
@@ -4080,7 +4161,9 @@ function indexToColumnLetter(colIndex) {
             const words3 = countWordsForRowBalance(text3);
             const wordDiff = Math.abs(words2 - words3);
             let cls;
-            if (words2 === words3 || wordDiff < WORD_DIFF_GLOW) {
+            if (!colorGuideEnabled) {
+                cls = 'row-lines-same';
+            } else if (words2 === words3 || wordDiff < WORD_DIFF_GLOW) {
                 cls = 'row-lines-same';
             } else if (words2 > words3) {
                 cls = wordDiff >= WORD_DIFF_FILL ? 'row-col2-more' : 'row-col2-one-more';
@@ -4226,50 +4309,10 @@ function indexToColumnLetter(colIndex) {
         });
     }
 
-    /** When in Aa (broadcast edit) mode: let main rows size to content, measure heights as max of visible content columns (col 2 and col 3), then apply. */
+    /** When in Aa (broadcast edit) mode: row heights must include the mirror column; broadcast-hidden cols measure 0px in layout — use probe (same as extend). */
     function syncRowHeightsFromMainInBroadcastEditMode() {
         if (!document.body.classList.contains('broadcasting') || !broadcastEditMode) return;
-        const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
-        if (rows.length === 0) return;
-        rows.forEach(row => {
-            row.style.height = 'auto';
-            row.style.minHeight = '0';
-            row.querySelectorAll('.script-column').forEach(col => {
-                const cell = col.querySelector('.cell-locker') || col.querySelector('.cell-content');
-                if (cell) {
-                    cell.style.height = 'auto';
-                }
-            });
-        });
-        void teleprompterText.offsetHeight;
-        const viewportMax = Math.min(2000, (window.innerHeight || 800) * 2);
-        const numCols = rows[0] ? rows[0].querySelectorAll('.script-column').length : 0;
-        const contentIndices = getVisibleContentColumnIndices(numCols);
-        measuredRowHeights = rows.map(row => {
-            const cols = row.querySelectorAll('.script-column');
-            let maxH = 1;
-            contentIndices.forEach(idx => {
-                const col = cols[idx];
-                const cell = col ? (col.querySelector('.cell-locker') || col.querySelector('.cell-content')) : null;
-                const h = cell ? cell.getBoundingClientRect().height : 0;
-                if (h > maxH) maxH = h;
-            });
-            return Math.max(1, Math.min(Math.floor(maxH), viewportMax));
-        });
-        rows.forEach((row, i) => {
-            const h = measuredRowHeights[i];
-            if (h > 0) {
-                row.style.minHeight = h + 'px';
-                row.style.height = h + 'px';
-            }
-            row.querySelectorAll('.script-column').forEach(col => {
-                const cell = col.querySelector('.cell-locker') || col.querySelector('.cell-content');
-                if (cell) cell.style.height = '';
-            });
-        });
-        if (mirrorWindow && !mirrorWindow.closed) {
-            mirrorWindow.postMessage({ type: 'updateRowHeights', rowHeights: measuredRowHeights }, '*');
-        }
+        measureRowHeightsWithProbeForBroadcasting();
     }
 
     /** Index of the last visible column (per file checkboxes). Mirror always shows this column. */
@@ -4295,6 +4338,14 @@ function indexToColumnLetter(colIndex) {
         return [...vis].map((v, i) => (v !== false && i >= 1 ? i : -1)).filter(i => i >= 0);
     }
 
+    function getMirrorCellHtml(cellEl) {
+        if (!cellEl) return '';
+        const text = (cellEl.textContent || '').replace(/\u00a0/g, ' ').trim();
+        if (!text) return '';
+        const raw = (cellEl.innerHTML || '').trim();
+        return raw || '';
+    }
+
     function refreshMirrorData() {
         if (!mirrorWindow || mirrorWindow.closed) return;
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
@@ -4303,19 +4354,24 @@ function indexToColumnLetter(colIndex) {
         }
         const contentWidth = (lastColumnWidthPx && lastColumnWidthPx > 50) ? `${lastColumnWidthPx}px` : null;
         const isBroadcasting = document.body.classList.contains('broadcasting');
-        if (isBroadcasting && broadcastEditMode && rows.length > 0) {
-            if (!preserveRowHeightsAfterExtend) {
-                syncRowHeightsFromMainInBroadcastEditMode();
-            } else {
-                preserveRowHeightsAfterExtend = false;
+        if (rows.length > 0 && isBroadcasting) {
+            if (broadcastEditMode) {
+                if (!preserveRowHeightsAfterExtend) {
+                    syncRowHeightsFromMainInBroadcastEditMode();
+                } else {
+                    preserveRowHeightsAfterExtend = false;
+                }
+            } else if (measuredRowHeights.length !== rows.length) {
+                /* e.g. font ribbon cleared heights async — mirror would get no rowHeights and collapse rows */
+                measureRowHeightsWithProbeForBroadcasting();
             }
-            /* Recompute glow/fill for current column widths so main and mirror stay in sync */
-            buildCharCountsPerRow();
-            applyRowColors();
+            if (broadcastEditMode && rows.length > 0) {
+                buildCharCountsPerRow();
+                applyRowColors();
+            }
         }
         /* Copy full table to mirror (all columns); mirror shows the last visible column (per file checkboxes). */
-        const topPill = (currentFileIndex >= 0 && fileStore[currentFileIndex]) ? stripFileExtension(fileStore[currentFileIndex].name) : '';
-        const bottomPill = (currentFileIndex >= 0 && currentFileIndex + 1 < fileStore.length && fileStore[currentFileIndex + 1]) ? stripFileExtension(fileStore[currentFileIndex + 1].name) : '';
+        const pillPayload = getMirrorPillPayload();
         if (rows.length > 0 && isBroadcasting) {
             const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
             const visibleColumnIndex = getLastVisibleColumnIndex(maxCols);
@@ -4323,7 +4379,7 @@ function indexToColumnLetter(colIndex) {
                 const cols = row.querySelectorAll('.script-column');
                 const cells = Array.from(cols).map(col => {
                     const c = col.querySelector('.cell-content') || col;
-                    return (c.innerText || '').trim() || "\u00A0";
+                    return getMirrorCellHtml(c);
                 });
                 const colorClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
                 const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
@@ -4343,15 +4399,15 @@ function indexToColumnLetter(colIndex) {
                 rowColors,
                 rowFont12,
                 rowHeights,
-                topPill,
-                bottomPill
+                ...pillPayload,
+                layout: getMirrorLayoutMetrics()
             }, '*');
         } else if (rows.length > 0) {
             const rowData = rows.map(row => {
                 const cols = row.querySelectorAll('.script-column');
                 const cells = Array.from(cols).map(col => {
                     const c = col.querySelector('.cell-content') || col;
-                    return (c.innerText || '').trim() || "\u00A0";
+                    return getMirrorCellHtml(c);
                 });
                 const colorClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
                 const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
@@ -4371,8 +4427,8 @@ function indexToColumnLetter(colIndex) {
                 contentWidth,
                 rowColors,
                 rowFont12,
-                topPill,
-                bottomPill
+                ...pillPayload,
+                layout: getMirrorLayoutMetrics()
             }, '*');
         } else {
             const fullText = teleprompterText.innerText || '';
@@ -4384,8 +4440,8 @@ function indexToColumnLetter(colIndex) {
                 contentWidth: null,
                 rowColors: [],
                 rowFont12: [],
-                topPill,
-                bottomPill
+                ...pillPayload,
+                layout: getMirrorLayoutMetrics()
             }, '*');
         }
         if (rows.length > 0) {
@@ -4399,7 +4455,11 @@ function indexToColumnLetter(colIndex) {
         const maxCols = rows.length > 0 ? Math.max(...Array.from(rows).map(r => r.querySelectorAll('.script-column').length)) : 0;
         const vis = currentFileIndex >= 0 && fileColumnVisibility[currentFileIndex] ? fileColumnVisibility[currentFileIndex] : null;
         const visibleIndices = vis ? [...vis].map((v, i) => (v !== false ? i : -1)).filter(i => i >= 0) : null;
-        const contentVisibleCount = visibleIndices ? visibleIndices.filter(i => i >= 1).length : 0;
+        let contentVisibleCount = visibleIndices ? visibleIndices.filter(i => i >= 1).length : 0;
+        /* No column checkboxes yet: same as "all columns on" — count script columns (index >= 1). */
+        if ((!visibleIndices || visibleIndices.length === 0) && maxCols > 1) {
+            contentVisibleCount = maxCols - 1;
+        }
         const lastVisible = isBroadcasting && maxCols > 0 ? getLastVisibleColumnIndex(maxCols) : -1;
         const hideLastOnMain = isBroadcasting && contentVisibleCount >= 2 && lastVisible >= 0;
         rows.forEach(row => {
@@ -4552,8 +4612,11 @@ function indexToColumnLetter(colIndex) {
         const nVisible = getVisibleColumnCount(maxCols);
         const vis = currentFileIndex >= 0 && fileColumnVisibility[currentFileIndex] ? fileColumnVisibility[currentFileIndex] : null;
         const visibleIndices = vis ? [...vis].map((v, i) => (v !== false ? i : -1)).filter(i => i >= 0) : null;
+        /* When extended, treat missing checkbox state as all columns visible so main splits width without the mirror-only column. */
+        const effectiveVisibleIndices = visibleIndices
+            || (isBroadcasting && maxCols > 0 ? Array.from({ length: maxCols }, (_, i) => i) : null);
         const useVisibleColumns = (isBroadcasting && nVisible > 0) || (!isBroadcasting && visibleIndices && visibleIndices.length > 0);
-        const visibleColCount = useVisibleColumns && visibleIndices ? visibleIndices.length : maxCols;
+        const visibleColCount = useVisibleColumns && effectiveVisibleIndices ? effectiveVisibleIndices.length : maxCols;
         const otherColCount = Math.max(0, visibleColCount - 1);
 
         /* When extended use fixed width so table doesn't change on window resize. */
@@ -4563,12 +4626,12 @@ function indexToColumnLetter(colIndex) {
         const remaining = Math.max(availableWidth - widths[0], 0);
         let equalWidth = otherColCount > 0 ? Math.floor(remaining / (visibleColCount > 0 ? visibleColCount : 1)) : 0;
 
-        if (!equalSplitThreeTextCols && useVisibleColumns && visibleIndices) {
-            const contentVisibleCount = visibleIndices.filter(i => i >= 1).length;
+        if (!equalSplitThreeTextCols && useVisibleColumns && effectiveVisibleIndices) {
+            const contentVisibleCount = effectiveVisibleIndices.filter(i => i >= 1).length;
             /* In extend mode with 2+ content columns: main shows all visible except the last (mirror shows the last). */
             const mainVisibleIndices = (isBroadcasting && contentVisibleCount >= 2)
-                ? visibleIndices.slice(0, -1)
-                : visibleIndices;
+                ? effectiveVisibleIndices.slice(0, -1)
+                : effectiveVisibleIndices;
             const contentIndices = mainVisibleIndices.filter(j => j >= 1);
             const hasCol0 = mainVisibleIndices.indexOf(0) >= 0;
             if (hasCol0) {
@@ -4599,7 +4662,7 @@ function indexToColumnLetter(colIndex) {
             const contentRemainingForMirror = Math.max(0, availableWidth - (widths[0] || 0));
             lastColumnWidthPx = (lastIdx < widths.length && widths[lastIdx] > 0)
                 ? widths[lastIdx]
-                : (useVisibleColumns && visibleIndices && visibleIndices.length > 1 ? contentRemainingForMirror : Math.floor(remaining / nVisible));
+                : (useVisibleColumns && effectiveVisibleIndices && effectiveVisibleIndices.length > 1 ? contentRemainingForMirror : Math.floor(remaining / nVisible));
         } else if (!isBroadcasting) {
             lastColumnWidthPx = (maxCols > 1 && rows[0]) ? rows[0].querySelectorAll('.script-column')[1]?.getBoundingClientRect().width || remaining / (maxCols - 1) : null;
         }
@@ -4753,7 +4816,62 @@ function selectPreferredContentFiles(files) {
     }
     return Array.from(byBase.values()).map(v => v.file);
 }
-async function loadFilesIntoRunlist(files) {
+
+function markRunlistRowActive(index) {
+    if (!runlistContainer || index < 0) return;
+    document.querySelectorAll('.runlist-row').forEach(r => r.classList.remove('active'));
+    const row = runlistContainer.querySelector(`.runlist-row[data-index="${index}"]`);
+    if (row) row.classList.add('active');
+}
+
+function tryActivatePendingOpenFile(token) {
+    if (token !== pendingOpenActiveToken || pendingOpenActiveFileIndex < 0) return;
+    const index = pendingOpenActiveFileIndex;
+    if (!fileStore[index]) {
+        pendingOpenActiveFileIndex = -1;
+        return;
+    }
+    const content = contentStore[index];
+    const hasContent = (c) => c && typeof c === 'string' && c.trim() && c.trim() !== '<br>';
+    if (hasContent(content)) {
+        pendingOpenActiveFileIndex = -1;
+        loadScriptToEditor(index);
+        return;
+    }
+    requestAnimationFrame(() => tryActivatePendingOpenFile(token));
+}
+
+function scheduleActiveRunlistFile(index) {
+    if (index < 0 || index >= fileStore.length) return;
+    pendingOpenActiveFileIndex = index;
+    const token = ++pendingOpenActiveToken;
+    markRunlistRowActive(index);
+    tryActivatePendingOpenFile(token);
+    setTimeout(() => tryActivatePendingOpenFile(token), 0);
+    setTimeout(() => tryActivatePendingOpenFile(token), 50);
+    setTimeout(() => tryActivatePendingOpenFile(token), 150);
+    setTimeout(() => tryActivatePendingOpenFile(token), 400);
+}
+
+function onRunlistFileContentReady(index) {
+    if (index === pendingOpenActiveFileIndex) {
+        tryActivatePendingOpenFile(pendingOpenActiveToken);
+    }
+}
+
+function resolveOpenedRunlistIndex(regularFiles, pickMode, countBefore) {
+    if (!regularFiles.length || fileStore.length <= countBefore) return -1;
+    if (pickMode === 'folder') return 0;
+    const opened = regularFiles[0];
+    let idx = fileStore.findIndex(f => f === opened);
+    if (idx < 0) idx = fileStore.findIndex(f => f.name === opened.name);
+    if (idx < 0) idx = countBefore;
+    return idx;
+}
+
+async function loadFilesIntoRunlist(files, options = {}) {
+    const pickMode = options.pickMode || 'file';
+    const sourceHandles = Array.isArray(options.sourceHandles) ? options.sourceHandles : [];
     let metadataApplied = false;
     const contentCandidates = [];
     for (const file of files) {
@@ -4769,10 +4887,14 @@ async function loadFilesIntoRunlist(files) {
     }
     const regularFiles = selectPreferredContentFiles(contentCandidates);
     const countBefore = fileStore.length;
-    regularFiles.forEach(file => addFileToRunlist(file));
+    regularFiles.forEach((file, i) => {
+        addFileToRunlist(file, { sourceHandle: sourceHandles[i] || null });
+    });
     if (countBefore > 0 && fileStore.length > countBefore) {
-        sortRunlistIfNumericPrefix(countBefore);
+        sortRunlistIfNumericPrefix(countBefore, { suppressEditorLoad: true });
     }
+    const indexToActivate = resolveOpenedRunlistIndex(regularFiles, pickMode, countBefore);
+    if (indexToActivate >= 0) scheduleActiveRunlistFile(indexToActivate);
     if (metadataApplied) console.log('Event metadata loaded and form pre-populated.');
 }
 async function openFolderWithDirectoryPicker() {
@@ -4786,7 +4908,7 @@ async function openFolderWithDirectoryPicker() {
             files.push(file);
         }
         console.log(`Folder selected with ${files.length} top-level entries`);
-        await loadFilesIntoRunlist(files);
+        await loadFilesIntoRunlist(files, { pickMode: 'folder' });
         return true;
     } catch (err) {
         if (err && err.name === 'AbortError') return true;
@@ -4813,6 +4935,36 @@ function resetFileOpenerToFileMode() {
 openFileButton.onclick = async () => {
     console.log("📂 Open File button clicked");
     resetFileOpenerToFileMode();
+    if ('showOpenFilePicker' in window) {
+        try {
+            const handles = await window.showOpenFilePicker({
+                multiple: true,
+                types: [{
+                    description: 'Teleprompter files',
+                    accept: {
+                        'text/plain': ['.txt'],
+                        'text/html': ['.html', '.htm'],
+                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+                        'application/vnd.ms-excel': ['.xls'],
+                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+                        'application/msword': ['.doc'],
+                        'application/json': ['.json']
+                    }
+                }]
+            });
+            const files = [];
+            const sourceHandles = [];
+            for (const handle of handles) {
+                files.push(await handle.getFile());
+                sourceHandles.push(handle);
+            }
+            await loadFilesIntoRunlist(files, { pickMode: 'file', sourceHandles });
+            return;
+        } catch (err) {
+            if (err && err.name === 'AbortError') return;
+            console.warn('Open file picker failed; falling back to file input:', err);
+        }
+    }
     fileOpener.click();
 };
 if (openFolderButton) {
@@ -4896,7 +5048,8 @@ function serializeTeleprompterHtmlSavePayload(fileIndex, html) {
         columnCount: count,
         columnVisibility: visibility,
         firstColIsId: !!(fileFirstColIsId[fileIndex] || inferred.firstColIsId),
-        showSyncGuide: fileShowSyncGuide[fileIndex] !== false
+        showSyncGuide: fileShowSyncGuide[fileIndex] !== false,
+        showColorGuide: fileShowColorGuide[fileIndex] !== false
     };
     const encoded = encodeURIComponent(JSON.stringify(metadata));
     return `<!-- TP_META:${encoded} -->\n${html || ''}`;
@@ -4913,18 +5066,42 @@ function hasFormattedHtmlSave(index) {
     return !!formattedHtmlSaveHandles[index] || !!formattedHtmlSavedNames[index];
 }
 
+async function writeBlobToPersistedHandle(index, blob, suggestedName, pickerTypes) {
+    let handle = formattedHtmlSaveHandles[index] || null;
+    try {
+        if (!handle && 'showSaveFilePicker' in window) {
+            handle = await window.showSaveFilePicker({
+                suggestedName,
+                types: pickerTypes
+            });
+            formattedHtmlSaveHandles[index] = handle;
+            formattedHtmlSavedNames[index] = handle.name || suggestedName;
+        }
+        if (handle) {
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            updateRunlistRowHtmlBadge(index);
+            return true;
+        }
+    } catch (err) {
+        if (err.name !== 'AbortError') console.error('Save failed:', err);
+        return false;
+    }
+    return false;
+}
+
 function updateRunlistRowHtmlBadge(index) {
     if (!runlistContainer || index < 0) return;
     const row = runlistContainer.querySelector(`.runlist-row[data-index="${index}"]`);
     if (!row) return;
-    const existing = row.querySelector('.runlist-html-badge');
-    if (existing) existing.remove();
-    if (!hasFormattedHtmlSave(index)) return;
-    const badge = document.createElement('span');
-    badge.className = 'runlist-html-badge';
-    badge.textContent = 'HTML';
-    badge.title = 'Saved as formatted HTML';
-    row.appendChild(badge);
+    const closeBtn = row.querySelector('.runlist-close');
+    if (!closeBtn) return;
+    row.querySelectorAll('.runlist-html-badge').forEach(el => el.remove());
+    const savedHtml = hasFormattedHtmlSave(index);
+    closeBtn.classList.toggle('runlist-close-saved-html', savedHtml);
+    closeBtn.classList.toggle('runlist-close-unsaved-html', !savedHtml);
+    closeBtn.title = savedHtml ? 'Close file (saved as formatted HTML)' : 'Close file (not saved as formatted HTML)';
 }
 
 async function saveCurrentFile() {
@@ -4939,22 +5116,11 @@ async function saveCurrentFile() {
     const htmlPayload = serializeTeleprompterHtmlSavePayload(currentFileIndex, contentStore[currentFileIndex]);
     if (!isHtmlFilename(file.name)) {
         const htmlBlob = new Blob([htmlPayload], { type: 'text/html' });
-        let suggestedName = formattedHtmlSavedNames[currentFileIndex] || getFormattedHtmlSuggestedName(file.name);
-        let handle = formattedHtmlSaveHandles[currentFileIndex] || null;
+        const suggestedName = formattedHtmlSavedNames[currentFileIndex] || getFormattedHtmlSuggestedName(file.name);
+        const pickerTypes = [{ description: 'Teleprompter HTML', accept: { 'text/html': ['.html'] } }];
+        if (await writeBlobToPersistedHandle(currentFileIndex, htmlBlob, suggestedName, pickerTypes)) return;
         try {
-            if (!handle && 'showSaveFilePicker' in window) {
-                handle = await window.showSaveFilePicker({
-                    suggestedName,
-                    types: [{ description: 'Teleprompter HTML', accept: { 'text/html': ['.html'] } }]
-                });
-                formattedHtmlSaveHandles[currentFileIndex] = handle;
-                formattedHtmlSavedNames[currentFileIndex] = handle.name || suggestedName;
-            }
-            if (handle) {
-                const writable = await handle.createWritable();
-                await writable.write(htmlBlob);
-                await writable.close();
-            } else if (typeof saveAs === 'function') {
+            if (typeof saveAs === 'function') {
                 saveAs(htmlBlob, suggestedName);
                 formattedHtmlSavedNames[currentFileIndex] = suggestedName;
             } else {
@@ -4968,11 +5134,10 @@ async function saveCurrentFile() {
                 formattedHtmlSavedNames[currentFileIndex] = suggestedName;
             }
             updateRunlistRowHtmlBadge(currentFileIndex);
-            return;
         } catch (err) {
             if (err.name !== 'AbortError') console.error('Save failed:', err);
-            return;
         }
+        return;
     }
 
     let blob;
@@ -5008,22 +5173,18 @@ async function saveCurrentFile() {
         blob = new Blob([contentStore[currentFileIndex]], { type: 'text/plain' });
     }
 
+    let pickerTypes;
+    if (ext === 'xlsx' || ext === 'xls') {
+        pickerTypes = [{ description: 'Excel', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }];
+    } else if (ext === 'html' || ext === 'htm') {
+        pickerTypes = [{ description: 'HTML', accept: { 'text/html': ['.html'] } }];
+    } else {
+        pickerTypes = [{ description: 'Text', accept: { 'text/plain': ['.txt'] } }];
+    }
+    if (await writeBlobToPersistedHandle(currentFileIndex, blob, suggestedName, pickerTypes)) return;
     try {
         if (typeof saveAs === 'function') {
             saveAs(blob, suggestedName);
-        } else if ('showSaveFilePicker' in window) {
-            let types;
-            if (ext === 'xlsx' || ext === 'xls') {
-                types = [{ description: 'Excel', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }];
-            } else if (ext === 'html' || ext === 'htm') {
-                types = [{ description: 'HTML', accept: { 'text/html': ['.html'] } }];
-            } else {
-                types = [{ description: 'Text', accept: { 'text/plain': ['.txt'] } }];
-            }
-            const handle = await window.showSaveFilePicker({ suggestedName, types });
-            const writable = await handle.createWritable();
-            await writable.write(blob);
-            await writable.close();
         } else {
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
@@ -5053,7 +5214,7 @@ fileOpener.onchange = async (e) => {
             return parts.length <= 2; /* selected-folder root files only */
         });
     }
-    await loadFilesIntoRunlist(filesToLoad);
+    await loadFilesIntoRunlist(filesToLoad, { pickMode });
     resetFileOpenerToFileMode();
     fileOpener.value = "";
 };
@@ -5068,6 +5229,7 @@ function moveFileInRunlist(direction) {
     [fileColumnVisibility[currentFileIndex], fileColumnVisibility[newIndex]] = [fileColumnVisibility[newIndex], fileColumnVisibility[currentFileIndex]];
     [fileFirstColIsId[currentFileIndex], fileFirstColIsId[newIndex]] = [fileFirstColIsId[newIndex], fileFirstColIsId[currentFileIndex]];
     [fileShowSyncGuide[currentFileIndex], fileShowSyncGuide[newIndex]] = [fileShowSyncGuide[newIndex], fileShowSyncGuide[currentFileIndex]];
+    [fileShowColorGuide[currentFileIndex], fileShowColorGuide[newIndex]] = [fileShowColorGuide[newIndex], fileShowColorGuide[currentFileIndex]];
     [formattedHtmlSaveHandles[currentFileIndex], formattedHtmlSaveHandles[newIndex]] = [formattedHtmlSaveHandles[newIndex], formattedHtmlSaveHandles[currentFileIndex]];
     [formattedHtmlSavedNames[currentFileIndex], formattedHtmlSavedNames[newIndex]] = [formattedHtmlSavedNames[newIndex], formattedHtmlSavedNames[currentFileIndex]];
     const rows = Array.from(runlistContainer.querySelectorAll('.runlist-row'));
@@ -5079,7 +5241,7 @@ function moveFileInRunlist(direction) {
         if (nameEl) nameEl.textContent = getRunlistDisplayName(fileStore[i].name);
         row.onclick = (e) => {
             if (runlistJustDragged) { runlistJustDragged = false; return; }
-            if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]')) return;
+            if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]') || e.target.closest('.runlist-display-toggles input[type="checkbox"]')) return;
             loadScriptToEditor(i);
         };
         const closeBtn = row.querySelector('.runlist-close');
@@ -5718,7 +5880,7 @@ if (runlistBookmarkResizer && runlistSection && bookmarkSection && runlistPanel)
     });
 }
 
-function addFileToRunlist(file) {
+function addFileToRunlist(file, options = {}) {
     console.log(`Adding to runlist: ${file.name}`);
     const index = fileStore.length;
     fileStore.push(file);
@@ -5727,19 +5889,20 @@ function addFileToRunlist(file) {
     fileColumnVisibility.push([]);
     fileFirstColIsId.push(false);
     fileShowSyncGuide.push(true);
-    formattedHtmlSaveHandles.push(null);
+    fileShowColorGuide.push(true);
+    formattedHtmlSaveHandles.push(options.sourceHandle || null);
     formattedHtmlSavedNames.push('');
 
     const row = document.createElement('div');
     row.className = 'runlist-row';
     row.dataset.index = index;
-    row.innerHTML = `<span class="runlist-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</span><div class="runlist-row-left"><span class="file-name"></span><div class="runlist-column-toggles"></div></div><button type="button" class="runlist-close" title="Close file" aria-label="Close file">×</button>`;
+    row.innerHTML = `<span class="runlist-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</span><div class="runlist-row-left"><span class="file-name"></span><div class="runlist-column-toggles"></div><div class="runlist-display-toggles"></div></div><button type="button" class="runlist-close" title="Close file" aria-label="Close file">×</button>`;
     const nameEl = row.querySelector('.file-name');
     if (nameEl) nameEl.textContent = getRunlistDisplayName(file.name);
 
     row.onclick = (e) => {
         if (runlistJustDragged) { runlistJustDragged = false; return; }
-        if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]')) return;
+        if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]') || e.target.closest('.runlist-display-toggles input[type="checkbox"]')) return;
         console.log(`Row clicked: loading index ${index}`);
         loadScriptToEditor(index);
     };
@@ -5788,6 +5951,7 @@ function moveRunlistRow(fromIndex, toIndex) {
     move(fileColumnVisibility);
     move(fileFirstColIsId);
     move(fileShowSyncGuide);
+    move(fileShowColorGuide);
     move(formattedHtmlSaveHandles);
     move(formattedHtmlSavedNames);
     const rows = Array.from(runlistContainer.querySelectorAll('.runlist-row'));
@@ -5804,7 +5968,7 @@ function moveRunlistRow(fromIndex, toIndex) {
         if (nameEl) nameEl.textContent = getRunlistDisplayName(fileStore[i].name);
         r.onclick = (e) => {
             if (runlistJustDragged) { runlistJustDragged = false; return; }
-            if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]')) return;
+            if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]') || e.target.closest('.runlist-display-toggles input[type="checkbox"]')) return;
             loadScriptToEditor(i);
         };
         const closeBtn = r.querySelector('.runlist-close');
@@ -5830,6 +5994,7 @@ function removeFileFromRunlist(index) {
     fileColumnVisibility.splice(index, 1);
     fileFirstColIsId.splice(index, 1);
     fileShowSyncGuide.splice(index, 1);
+    fileShowColorGuide.splice(index, 1);
     formattedHtmlSaveHandles.splice(index, 1);
     formattedHtmlSavedNames.splice(index, 1);
     const row = runlistContainer.querySelector(`.runlist-row[data-index="${index}"]`);
@@ -5841,7 +6006,7 @@ function removeFileFromRunlist(index) {
         if (nameEl) nameEl.textContent = getRunlistDisplayName(fileStore[i].name);
         r.onclick = (e) => {
             if (runlistJustDragged) { runlistJustDragged = false; return; }
-            if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]')) return;
+            if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]') || e.target.closest('.runlist-display-toggles input[type="checkbox"]')) return;
             loadScriptToEditor(i);
         };
         const closeBtn = r.querySelector('.runlist-close');
@@ -5874,7 +6039,7 @@ function removeFileFromRunlist(index) {
 }
 
 /** If existing files have numeric prefix (e.g. "02_"), sort full runlist by filename. */
-function sortRunlistIfNumericPrefix(countBefore) {
+function sortRunlistIfNumericPrefix(countBefore, options = {}) {
     const firstSet = fileStore.slice(0, countBefore);
     const allStartWithNumber = firstSet.length > 0 && firstSet.every(f => /^\d+_/.test(f.name));
     if (!allStartWithNumber) return;
@@ -5892,6 +6057,7 @@ function sortRunlistIfNumericPrefix(countBefore) {
     const newFileColumnVisibility = indices.map(i => fileColumnVisibility[i]);
     const newFileFirstColIsId = indices.map(i => fileFirstColIsId[i]);
     const newFileShowSyncGuide = indices.map(i => fileShowSyncGuide[i]);
+    const newFileShowColorGuide = indices.map(i => fileShowColorGuide[i]);
     const newFormattedHtmlSaveHandles = indices.map(i => formattedHtmlSaveHandles[i]);
     const newFormattedHtmlSavedNames = indices.map(i => formattedHtmlSavedNames[i]);
     fileStore.length = 0;
@@ -5906,6 +6072,8 @@ function sortRunlistIfNumericPrefix(countBefore) {
     fileFirstColIsId.push(...newFileFirstColIsId);
     fileShowSyncGuide.length = 0;
     fileShowSyncGuide.push(...newFileShowSyncGuide);
+    fileShowColorGuide.length = 0;
+    fileShowColorGuide.push(...newFileShowColorGuide);
     formattedHtmlSaveHandles.length = 0;
     formattedHtmlSaveHandles.push(...newFormattedHtmlSaveHandles);
     formattedHtmlSavedNames.length = 0;
@@ -5917,12 +6085,12 @@ function sortRunlistIfNumericPrefix(countBefore) {
         const row = document.createElement('div');
         row.className = 'runlist-row';
         row.dataset.index = String(i);
-        row.innerHTML = `<span class="runlist-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</span><div class="runlist-row-left"><span class="file-name"></span><div class="runlist-column-toggles"></div></div><button type="button" class="runlist-close" title="Close file" aria-label="Close file">×</button>`;
+        row.innerHTML = `<span class="runlist-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⋮⋮</span><div class="runlist-row-left"><span class="file-name"></span><div class="runlist-column-toggles"></div><div class="runlist-display-toggles"></div></div><button type="button" class="runlist-close" title="Close file" aria-label="Close file">×</button>`;
         const nameEl = row.querySelector('.file-name');
         if (nameEl) nameEl.textContent = getRunlistDisplayName(file.name);
         row.onclick = (e) => {
             if (runlistJustDragged) { runlistJustDragged = false; return; }
-            if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]')) return;
+            if (e.target.closest('.runlist-close') || e.target.closest('.runlist-drag-handle') || e.target.closest('.runlist-column-toggles input[type="checkbox"]') || e.target.closest('.runlist-display-toggles input[type="checkbox"]')) return;
             loadScriptToEditor(i);
         };
         const closeBtn = row.querySelector('.runlist-close');
@@ -5945,10 +6113,12 @@ function sortRunlistIfNumericPrefix(countBefore) {
     }
     const activeRow = runlistContainer.querySelector(`.runlist-row[data-index="${currentFileIndex}"]`);
     if (activeRow) activeRow.classList.add('active');
-    if (hasContent(contentStore[idxToLoad])) {
-        loadScriptToEditor(idxToLoad);
-    } else {
-        updateFilenamePills();
+    if (!options.suppressEditorLoad) {
+        if (hasContent(contentStore[idxToLoad])) {
+            loadScriptToEditor(idxToLoad);
+        } else {
+            updateFilenamePills();
+        }
     }
 }
 
@@ -6121,10 +6291,12 @@ async function processFileContent(file, index) {
                 fileColumnVisibility[slot] = Array.from({ length: count }, (_, i) => visSrc?.[i] !== false);
                 fileFirstColIsId[slot] = !!(meta?.firstColIsId ?? inferred.firstColIsId);
                 fileShowSyncGuide[slot] = meta?.showSyncGuide !== false;
+                fileShowColorGuide[slot] = meta?.showColorGuide !== false;
                 updateRunlistRowColumnToggles(slot);
             }
             text = stripNumericAngleMarkers(text);
             contentStore[slot] = text;
+            onRunlistFileContentReady(slot);
             console.log("Text/HTML content loaded successfully");
         } 
         else if (extension === 'xlsx' || extension === 'xls') {
@@ -6165,7 +6337,7 @@ async function processFileContent(file, index) {
                     fileColumnVisibility[slot] = selectedCols.map(() => true);
                     fileFirstColIsId[slot] = selectedCols.length > 0 && isFirstColumnNumeric(sheet);
                     updateRunlistRowColumnToggles(slot);
-                    loadScriptToEditor(slot);
+                    onRunlistFileContentReady(slot);
                     if (allCols.length > maxCols) {
                         alert(`"${file.name}" has ${allCols.length} columns. Teleprompter uses a maximum of ${MAX_COLUMNS} columns. Extra columns were merged into column ${MAX_COLUMNS}.`);
                     }
@@ -6192,7 +6364,7 @@ async function processFileContent(file, index) {
                         updateRunlistRowColumnToggles(slot);
                         if (wasTrimmed) alert(`"${file.name}" had more than ${MAX_COLUMNS} columns. Extra columns were merged into column ${MAX_COLUMNS}.`);
                         console.log("Docx converted successfully");
-                        loadScriptToEditor(slot);
+                        onRunlistFileContentReady(slot);
                     })
                     .catch(err => console.error("❌ Mammoth conversion error:", err));
             };
@@ -7318,6 +7490,15 @@ function updateRunlistRowColumnToggles(fileIndex) {
             togglesEl.appendChild(label);
         }
     }
+    let displayTogglesEl = row ? row.querySelector('.runlist-display-toggles') : null;
+    if (row && !displayTogglesEl) {
+        const rowLeft = row.querySelector('.runlist-row-left');
+        displayTogglesEl = document.createElement('div');
+        displayTogglesEl.className = 'runlist-display-toggles';
+        if (rowLeft) rowLeft.appendChild(displayTogglesEl);
+    }
+    if (!displayTogglesEl) return;
+    displayTogglesEl.innerHTML = '';
     const lineLabel = document.createElement('label');
     lineLabel.className = 'runlist-col-toggle runlist-line-toggle';
     const lineCb = document.createElement('input');
@@ -7330,7 +7511,32 @@ function updateRunlistRowColumnToggles(fileIndex) {
     });
     lineLabel.appendChild(lineCb);
     lineLabel.appendChild(document.createTextNode(' Line'));
-    togglesEl.appendChild(lineLabel);
+    displayTogglesEl.appendChild(lineLabel);
+    const colorGuideLabel = document.createElement('label');
+    colorGuideLabel.className = 'runlist-col-toggle runlist-color-guide-toggle';
+    const colorGuideCb = document.createElement('input');
+    colorGuideCb.type = 'checkbox';
+    colorGuideCb.checked = fileShowColorGuide[fileIndex] !== false;
+    colorGuideCb.addEventListener('change', (e) => {
+        e.stopPropagation();
+        fileShowColorGuide[fileIndex] = colorGuideCb.checked;
+        if (currentFileIndex !== fileIndex) {
+            loadScriptToEditor(fileIndex);
+            return;
+        }
+        applyRowColors();
+        syncColumnWidths();
+        if (document.body.classList.contains('broadcasting')) {
+            if (broadcastEditMode) syncRowHeightsFromMainInBroadcastEditMode();
+            else measureRowHeightsWithProbeForBroadcasting();
+            if (mirrorWindow && !mirrorWindow.closed) refreshMirrorData();
+        } else if (mirrorWindow && !mirrorWindow.closed) {
+            refreshMirrorData();
+        }
+    });
+    colorGuideLabel.appendChild(colorGuideCb);
+    colorGuideLabel.appendChild(document.createTextNode(' Color guide'));
+    displayTogglesEl.appendChild(colorGuideLabel);
 }
 
 const KEYWORD_PILL_RED = ['end', 'full screen', 'stop', 'out'];
@@ -7553,6 +7759,8 @@ function updateFilenamePills() {
         });
     }
     shrinkAllPillsToFit();
+    if (typeof updateTopScrollChrome === 'function') updateTopScrollChrome({ preserveScroll: true });
+    pushMirrorPillLabels();
 }
 
 const PILL_SHRINK_MIN_PX = 10;
@@ -7708,15 +7916,11 @@ function loadScriptToEditor(index, options) {
         }
     });
 
+    updateFilenamePills();
     if (mirrorWindow && !mirrorWindow.closed) {
-        // ❌ REMOVE THIS LINE:
-        // mirrorWindow.postMessage({ type: 'loadContent', content: teleprompterText.innerHTML }, '*');
-        
-        // ✅ KEEP THESE:
-        refreshMirrorData(); // This handles the clean text extraction
+        refreshMirrorData();
         syncMirrorStyles();
     }
-    updateFilenamePills();
     if (options && options.scrollToTop) {
         const view = document.getElementById('teleprompter-view');
         if (view) view.scrollTop = 0;
@@ -7745,6 +7949,45 @@ function loadScriptToEditor(index, options) {
 // Second monitor position (when getScreenDetails not available)
 // =========================================
 const SECOND_MONITOR_STORAGE_KEY = 'teleprompter_secondMonitorPosition';
+const MIRROR_DEBUG_MODE_STORAGE_KEY = 'teleprompter_mirrorDebugMode';
+
+function getMirrorDebugMode() {
+    const cb = document.getElementById('mirror-debug-mode-checkbox');
+    if (cb) return !!cb.checked;
+    try {
+        return localStorage.getItem(MIRROR_DEBUG_MODE_STORAGE_KEY) === 'true';
+    } catch (_) {
+        return false;
+    }
+}
+
+function pushMirrorDebugMode() {
+    if (!mirrorWindow || mirrorWindow.closed) return;
+    try {
+        mirrorWindow.postMessage({ type: 'setMirrorDebugMode', enabled: getMirrorDebugMode() }, '*');
+    } catch (_) {}
+}
+
+/** Scroll sync: content Y at viewport top + row origins (not scroll ratio — different window heights). */
+function getMirrorScrollSyncPayload() {
+    const view = teleprompterView;
+    if (!view || !teleprompterText) {
+        return { contentScrollY: 0, scriptOffsetTop: 0, rowOriginYs: [] };
+    }
+    void view.offsetHeight;
+    void teleprompterText.offsetHeight;
+    const contentScrollY = Math.round(view.scrollTop || 0);
+    const scriptOffsetTop = Math.round(teleprompterText.offsetTop || 0);
+    const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
+    const rowOriginYs = rows.map((row) => Math.round(scriptOffsetTop + (row.offsetTop || 0)));
+    return {
+        contentScrollY,
+        scriptOffsetTop,
+        rowOriginYs,
+        scrollTop: contentScrollY
+    };
+}
+
 function getSecondMonitorPosition() {
     const el = document.querySelector('input[name="secondMonitorPosition"]:checked');
     if (el) return el.value;
@@ -7770,6 +8013,20 @@ if (secondMonitorPositionRadios && secondMonitorPositionRadios.length) {
                 localStorage.setItem(SECOND_MONITOR_STORAGE_KEY, r.value);
             } catch (_) {}
         });
+    });
+}
+
+if (mirrorDebugModeCheckbox) {
+    try {
+        const savedDebug = localStorage.getItem(MIRROR_DEBUG_MODE_STORAGE_KEY);
+        if (savedDebug === 'true') mirrorDebugModeCheckbox.checked = true;
+        if (savedDebug === 'false') mirrorDebugModeCheckbox.checked = false;
+    } catch (_) {}
+    mirrorDebugModeCheckbox.addEventListener('change', () => {
+        try {
+            localStorage.setItem(MIRROR_DEBUG_MODE_STORAGE_KEY, mirrorDebugModeCheckbox.checked ? 'true' : 'false');
+        } catch (_) {}
+        pushMirrorDebugMode();
     });
 }
 
@@ -8016,7 +8273,7 @@ extendMonitorButton.onclick = async () => {
             pendingMirrorPosition = null;
         }
 
-        const mirrorUrl = 'mirror.html';
+        const mirrorUrl = 'mirror.html?v=' + Date.now() + (getMirrorDebugMode() ? '&debug=1' : '');
         mirrorWindow = window.open(mirrorUrl, 'TeleprompterMirror', specs);
         if (mirrorWindow) {
             if (mirrorCloseCheckInterval) clearInterval(mirrorCloseCheckInterval);
@@ -8027,6 +8284,7 @@ extendMonitorButton.onclick = async () => {
             }, 300);
 
             const sendWhenReady = () => {
+                pushMirrorDebugMode();
                 if (!secondaryScreen && pendingMirrorPosition) {
                     try {
                         mirrorWindow.moveTo(mirrorLeft, mirrorTop);
@@ -8062,6 +8320,7 @@ extendMonitorButton.onclick = async () => {
                 requestAnimationFrame(attemptRestore);
                 requestAnimationFrame(() => requestAnimationFrame(attemptRestore));
                 setTimeout(attemptRestore, 100);
+                [0, 40, 120, 350, 700].forEach((ms) => setTimeout(() => pushMirrorLeaderLayout(), ms));
             };
             mirrorWindow.addEventListener('load', sendWhenReady);
             setTimeout(sendWhenReady, 800);
@@ -8074,6 +8333,112 @@ extendMonitorButton.onclick = async () => {
 // =========================================
 // 7. SCROLLING ENGINE (PIXEL-PERFECT)
 // =========================================
+
+/** Filename pill labels + shrunk font from main DOM (mirror cannot read fileStore after shrink-to-fit). */
+function getMirrorPillPayload() {
+    const topEl = document.getElementById('filename-pill-top');
+    const bottomEl = document.getElementById('filename-pill-bottom');
+    const topVisible = topEl && !topEl.classList.contains('hidden');
+    const bottomVisible = bottomEl && !bottomEl.classList.contains('hidden');
+    const topPill = topVisible ? (topEl.textContent || '').trim() : '';
+    const bottomPill = bottomVisible ? (bottomEl.textContent || '').trim() : '';
+    const topCs = topEl ? window.getComputedStyle(topEl) : null;
+    const bottomCs = bottomEl ? window.getComputedStyle(bottomEl) : null;
+    return {
+        topPill,
+        bottomPill,
+        topPillFontSize: topCs && topVisible ? topCs.fontSize : null,
+        bottomPillFontSize: bottomCs && bottomVisible ? bottomCs.fontSize : null,
+        topPillFontFamily: topCs && topVisible ? topCs.fontFamily : null,
+        bottomPillFontFamily: bottomCs && bottomVisible ? bottomCs.fontFamily : null
+    };
+}
+
+function pushMirrorPillLabels() {
+    if (!mirrorWindow || mirrorWindow.closed) return;
+    try {
+        mirrorWindow.postMessage({ type: 'mirrorPillSync', ...getMirrorPillPayload() }, '*');
+    } catch (_) {}
+}
+
+/** Black band above blue pill on main — mirror must match this px height (second window cannot use vh). */
+function getMirrorLayoutMetrics() {
+    const view = document.getElementById('teleprompter-view');
+    const text = document.getElementById('teleprompter-text');
+    const pillMain = document.getElementById('filename-pill-top');
+    if (!view || !text) return null;
+    void view.offsetHeight;
+    void text.offsetHeight;
+    if (pillMain) void pillMain.offsetHeight;
+
+    const vr = view.getBoundingClientRect();
+    const scrollTop = view.scrollTop || 0;
+
+    /** Offset from top of #teleprompter-view scroll content to top border of el — stable across scroll (unlike raw offsetTop). */
+    const yInScrollContent = (el) => {
+        if (!el) return 0;
+        const er = el.getBoundingClientRect();
+        return Math.round(scrollTop + er.top - vr.top);
+    };
+
+    const spacer = view.querySelector('.teleprompter-top-spacer');
+    const runway = view.querySelector('.teleprompter-top-runway');
+    let ts = spacer ? Math.round(spacer.offsetHeight) : 0;
+    let tr = runway ? Math.round(runway.offsetHeight) : 0;
+
+    /*
+     * Measured heights are sometimes 0 during the same tick as resize/extend even though CSS applies vh/em chrome.
+     * Mirror cannot use vh — replicate style.css math on THIS window so payloads are never all-zero.
+     * .teleprompter-top-spacer: calc(50vh - 8em) when #teleprompter-view.has-file
+     * .teleprompter-top-runway: max(10em, 22vh)
+     * .filename-pill-top: margin-top 1.4em (gap above blue pill after runway)
+     */
+    const ih = window.innerHeight || document.documentElement.clientHeight || 800;
+    const rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const hasFile = view.classList.contains('has-file');
+    const cssSpacerPx = hasFile ? Math.max(0, Math.round(ih * 0.5 - 8 * rootFs)) : 0;
+    const cssRunwayPx = Math.max(Math.round(10 * rootFs), Math.round(ih * 0.22));
+    const cssPillMarginPx = Math.round(1.4 * rootFs);
+    const cssStackPx = cssSpacerPx + cssRunwayPx + cssPillMarginPx;
+
+    if (ts < 1) ts = cssSpacerPx;
+    if (tr < 1) tr = cssRunwayPx;
+
+    const pillCs = pillMain ? window.getComputedStyle(pillMain) : null;
+    const pillDisplayed = pillMain && pillCs && pillCs.display !== 'none' && pillCs.visibility !== 'hidden';
+
+    let leaderPxGeometry = 0;
+    if (pillDisplayed && pillMain) {
+        leaderPxGeometry = Math.max(0, yInScrollContent(pillMain));
+    } else {
+        leaderPxGeometry = Math.max(0, yInScrollContent(text));
+    }
+
+    let pillGapPx = Math.max(0, leaderPxGeometry - ts - tr, cssPillMarginPx);
+    let leaderPx = leaderPxGeometry > 0 ? leaderPxGeometry : (ts + tr + pillGapPx);
+    if (leaderPx < ts + tr + pillGapPx) leaderPx = ts + tr + pillGapPx;
+
+    const beforeScriptPx = Math.max(0, Math.round(text.offsetTop));
+
+    return {
+        leaderPx,
+        abovePillPx: leaderPx,
+        beforeScriptPx,
+        topSpacerPx: ts,
+        topRunwayPx: tr,
+        pillGapPx,
+        pillTopPx: 0
+    };
+}
+
+function pushMirrorLeaderLayout() {
+    if (!mirrorWindow || mirrorWindow.closed) return;
+    const layout = getMirrorLayoutMetrics();
+    if (!layout) return;
+    try {
+        mirrorWindow.postMessage({ type: 'mirrorForceLayout', layout }, '*');
+    } catch (_) {}
+}
 
 function getMirrorStylePayload() {
     const mainStyle = window.getComputedStyle(teleprompterText);
@@ -8164,10 +8529,23 @@ function getMirrorStylePayload() {
 
 function syncMirrorStyles() {
     if (!mirrorWindow || mirrorWindow.closed) return;
-    mirrorWindow.postMessage({ 
-        type: 'syncStyleLite', 
-        style: getMirrorStylePayload()
-    }, '*');
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            mirrorWindow.postMessage({
+                type: 'syncStyleLite',
+                style: getMirrorStylePayload(),
+                layout: getMirrorLayoutMetrics(),
+                ...getMirrorPillPayload()
+            }, '*');
+            pushMirrorLeaderLayout();
+            setTimeout(pushMirrorLeaderLayout, 40);
+            setTimeout(pushMirrorLeaderLayout, 180);
+            requestAnimationFrame(() => {
+                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+                pushMirrorLeaderLayout();
+            });
+        });
+    });
 }
 
 window.addEventListener('resize', () => {
@@ -8178,7 +8556,9 @@ window.addEventListener('resize', () => {
         }
     }
     syncColumnWidths(true);
+    if (typeof updateTopScrollChrome === 'function') updateTopScrollChrome({ preserveScroll: true });
     syncMirrorStyles();
+    if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
     if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
     requestAnimationFrame(() => shrinkAllPillsToFit());
 });
