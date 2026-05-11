@@ -6918,11 +6918,37 @@ function stripPipeVFromFirstColumn() {
 const TP_ROW_PIPEV_ATTR = 'data-tp-row-pipev';
 /** Internal-only |v… tokens (e.g. Excel export) in script/cue columns — whole cell is just this token. */
 const TP_PIPEV_MARKER_ONLY = /^\|v(?:\u2011|-)?[A-Za-z0-9_.]+\|?$/;
+/** Leading |v cue token plus body text in one cell (common in DOCX / plain imports). */
+const TP_PIPEV_PREFIX_WITH_BODY = /^(\|v(?:\u2011|-)?[A-Za-z0-9_.]+\|?)\s+(.+)$/s;
 
 /**
  * Replace marker-only content in columns after the line# column with nbsp so they don’t show on screen.
  * Sets data-tp-row-pipev on the row so row-font-12 / white pill still apply after |v is removed from text.
  */
+/** Split a single-column |v cue + body line into cue + script columns so width sync can wrap the body. */
+function splitPipeVPrefixIntoCueColumn() {
+    if (!teleprompterText || isCurrentFileXlsx()) return;
+    teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
+        const cols = Array.from(row.querySelectorAll(':scope > .script-column'));
+        if (cols.length !== 1) return;
+        const cueCol = cols[0];
+        const cueCell = cueCol.querySelector('.cell-content') || cueCol.querySelector('.cell-locker') || cueCol;
+        if (!cueCell) return;
+        const raw = (cueCell.textContent || '').trim();
+        const match = raw.match(TP_PIPEV_PREFIX_WITH_BODY);
+        if (!match) return;
+        const [, marker, body] = match;
+        cueCell.textContent = marker;
+        const bodyCol = document.createElement('div');
+        bodyCol.className = 'script-column';
+        const bodyCell = document.createElement('div');
+        bodyCell.className = 'cell-content';
+        bodyCell.textContent = body.trim();
+        bodyCol.appendChild(bodyCell);
+        row.appendChild(bodyCol);
+    });
+}
+
 function stripPipeVMarkersFromContentColumns() {
     if (!teleprompterText) return;
     teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
@@ -7006,11 +7032,38 @@ function processTableColumns() {
     }
     /* Merge all script-containers into one so every row shares the same table layout */
     ensureSingleScriptContainer();
+    ensurePlainScriptRows();
     /* Split any cell content that contains hard returns (<br> or newline) into separate rows */
     splitMultiLineCellsIntoRows();
+    splitPipeVPrefixIntoCueColumn();
     /* Ensure blank/empty rows have nbsp so they keep height and stay separated */
     ensureEmptyRowsHaveNbsp();
     trimScriptTableToMaxColumns();
+}
+
+/** Plain text / non-table scripts: wrap loose lines in single-column rows so width sync and wrapping apply. */
+function ensurePlainScriptRows() {
+    if (!teleprompterText) return;
+    if (teleprompterText.querySelector('.script-row-wrapper')) return;
+    const raw = teleprompterText.innerHTML.trim();
+    if (!raw || raw === '<br>') return;
+    const container = document.createElement('div');
+    container.className = 'script-container';
+    splitHtmlByLineBreaks(raw).forEach((line) => {
+        const row = document.createElement('div');
+        row.className = 'script-row-wrapper';
+        const col = document.createElement('div');
+        col.className = 'script-column';
+        const cell = document.createElement('div');
+        cell.className = 'cell-content';
+        const trimmed = (line || '').trim();
+        cell.innerHTML = trimmed || '\u00A0';
+        col.appendChild(cell);
+        row.appendChild(col);
+        container.appendChild(row);
+    });
+    teleprompterText.innerHTML = '';
+    teleprompterText.appendChild(container);
 }
 
 /** Set empty cell-content to nbsp so blank rows preserve height and separation. */
@@ -7160,8 +7213,11 @@ function loadFileContent(file, index) {
             if (currentFileIndex === index) {
                 teleprompterText.innerHTML = text;
                 delete teleprompterText.dataset.placeholder;
+                processTableColumns();
+                wrapCellContentInBlock();
                 replaceAsciiHyphensInTextNodes(teleprompterText);
                 requestAnimationFrame(() => {
+                    applyKeywordPills();
                     convertBkmkPlaceholdersToBookmarks();
                     updateBookmarkSidebar();
                     replaceAsciiHyphensInTextNodes(teleprompterText);
