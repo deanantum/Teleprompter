@@ -74,6 +74,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const redoButton = document.getElementById('btn-redo');
     const fontFamilySelect = document.getElementById('font-family-select');
     const fontSizeSelect = document.getElementById('font-size-select');
+    const btnFontSizeIncrease = document.getElementById('btn-font-size-increase');
+    const btnFontSizeDecrease = document.getElementById('btn-font-size-decrease');
+    const fontSizeStepper = document.querySelector('.font-size-stepper');
     const selectFontTarget = document.getElementById('select-font-target');
     const btnRemoveFontTarget = document.getElementById('btn-remove-font-target');
     const bgColorButton = document.getElementById('btn-bg-color');
@@ -2107,6 +2110,38 @@ document.addEventListener('DOMContentLoaded', function() {
         return String(nearest);
     }
 
+    function getFontSizeSelectValues() {
+        if (!fontSizeSelect) return [];
+        return Array.from(fontSizeSelect.options).map(o => o.value);
+    }
+
+    function getFontSizeSelectIndex() {
+        const values = getFontSizeSelectValues();
+        if (!values.length) return -1;
+        let index = values.indexOf(fontSizeSelect.value);
+        if (index < 0) index = values.indexOf(normalizeFontSizeSelectValue(fontSizeSelect.value));
+        return index;
+    }
+
+    function updateFontSizeStepperState() {
+        const values = getFontSizeSelectValues();
+        const index = getFontSizeSelectIndex();
+        if (btnFontSizeIncrease) btnFontSizeIncrease.disabled = index < 0 || index >= values.length - 1;
+        if (btnFontSizeDecrease) btnFontSizeDecrease.disabled = index <= 0;
+    }
+
+    function stepFontSizeSelect(delta) {
+        if (!fontSizeSelect) return;
+        const values = getFontSizeSelectValues();
+        if (!values.length) return;
+        const index = getFontSizeSelectIndex();
+        if (index < 0) return;
+        const next = index + delta;
+        if (next < 0 || next >= values.length || next === index) return;
+        fontSizeSelect.value = values[next];
+        fontSizeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
     function captureOverviewSavedFontSize() {
         if (currentFileIndex >= 0 && fileFontSize[currentFileIndex] && fileFontSize[currentFileIndex] !== '12') {
             savedFontSizeBeforeOverview = normalizeFontSizeSelectValue(fileFontSize[currentFileIndex]);
@@ -2146,9 +2181,26 @@ document.addEventListener('DOMContentLoaded', function() {
     function persistCurrentFileScriptSettings() {
         if (currentFileIndex < 0) return;
         if (fontFamilySelect) fileFontFamily[currentFileIndex] = fontFamilySelect.value;
-        if (fontSizeSelect && !isOverviewMode) fileFontSize[currentFileIndex] = fontSizeSelect.value;
+        if (!isOverviewMode) fileFontSize[currentFileIndex] = getRibbonFontSizeSelectValue();
         const color = teleprompterText.style.color || window.getComputedStyle(teleprompterText).color;
         if (color) fileFontColor[currentFileIndex] = color;
+    }
+
+    function getRibbonFontSizeSelectValue() {
+        const stylePx = parseFloat(teleprompterText.style.fontSize)
+            || parseFloat(window.getComputedStyle(teleprompterText).fontSize);
+        if (stylePx > 0) return normalizeFontSizeSelectValue(stylePx);
+        if (currentFileIndex >= 0 && fileFontSize[currentFileIndex]) {
+            return normalizeFontSizeSelectValue(fileFontSize[currentFileIndex]);
+        }
+        return normalizeFontSizeSelectValue(fontSizeSelect?.value || '80');
+    }
+
+    function shouldIgnoreCaretFontSizeForRibbon(el) {
+        if (!el || !teleprompterText.contains(el)) return true;
+        const row = el.closest?.('.script-row-wrapper');
+        if (row?.classList.contains('row-font-12')) return true;
+        return isLockedFirstTableColumnElement(el);
     }
 
     function applyFileScriptSettingsToEditor(index) {
@@ -2163,13 +2215,12 @@ document.addEventListener('DOMContentLoaded', function() {
         if (fontSizeSelect && Array.from(fontSizeSelect.options).some(o => o.value === size)) {
             fontSizeSelect.value = size;
         }
-        teleprompterText.style.fontFamily = family;
-        teleprompterText.style.fontSize = size + 'px';
+        lastFontChangeSource = 'size';
+        applyFontToAllContent(family, size);
         teleprompterText.style.color = color;
         applyTableFirstColumnFontLock();
-        requestAnimationFrame(() => {
-            skipCaretFontSelectSync = false;
-        });
+        refreshLayoutAfterScriptFontChange();
+        updateFontSizeStepperState();
     }
 
     function refreshLayoutAfterScriptFontChange() {
@@ -2217,9 +2268,14 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
         if (fontSizeSelect) {
-            const opts = Array.from(fontSizeSelect.options).map(o => parseInt(o.value, 10));
-            const nearest = opts.reduce((a, b) => Math.abs(a - fontSizePx) < Math.abs(b - fontSizePx) ? a : b);
-            fontSizeSelect.value = String(nearest);
+            if (shouldIgnoreCaretFontSizeForRibbon(el)) {
+                fontSizeSelect.value = getRibbonFontSizeSelectValue();
+            } else {
+                const opts = Array.from(fontSizeSelect.options).map(o => parseInt(o.value, 10));
+                const nearest = opts.reduce((a, b) => Math.abs(a - fontSizePx) < Math.abs(b - fontSizePx) ? a : b);
+                fontSizeSelect.value = String(nearest);
+            }
+            updateFontSizeStepperState();
         }
     }
 
@@ -2416,7 +2472,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     };
     const fmtLog = (...a) => { if (FMT_DEBUG) console.log('[FMT]', ...a); };
-    const isFontControl = (el) => el && (fontFamilySelect?.contains(el) || fontSizeSelect?.contains(el) || fontColorButton?.contains(el) || fontColorPanel?.contains(el) || bgColorButton?.contains(el) || bgColorPanel?.contains(el) || boldButton?.contains(el) || italicButton?.contains(el) || underlineButton?.contains(el) || formatPickupButton?.contains(el) || document.getElementById('font-target-dropdown')?.contains(el) || selectFontTarget?.contains(el) || document.getElementById('btn-overview-toggle')?.contains(el));
+    const isFontControl = (el) => el && (fontFamilySelect?.contains(el) || fontSizeSelect?.contains(el) || fontSizeStepper?.contains(el) || fontColorButton?.contains(el) || fontColorPanel?.contains(el) || bgColorButton?.contains(el) || bgColorPanel?.contains(el) || boldButton?.contains(el) || italicButton?.contains(el) || underlineButton?.contains(el) || formatPickupButton?.contains(el) || document.getElementById('font-target-dropdown')?.contains(el) || selectFontTarget?.contains(el) || document.getElementById('btn-overview-toggle')?.contains(el));
     const saveSelectionWhenFocusingFontControl = (e) => {
         if (!isFontControl(e.target)) return;
         /* mouseover must not call saveSelection — moving toward the ribbon often collapses or changes the browser selection before click. */
@@ -2567,11 +2623,20 @@ document.addEventListener('DOMContentLoaded', function() {
                 applyFontSettings();
                 requestAnimationFrame(() => refreshSelectFontTarget());
                 updateFilenamePills();
+                updateFontSizeStepperState();
                 return;
             }
             applyFontSettings();
             updateFilenamePills();
+            updateFontSizeStepperState();
         });
+        updateFontSizeStepperState();
+    }
+    if (btnFontSizeIncrease) {
+        btnFontSizeIncrease.addEventListener('click', () => stepFontSizeSelect(1));
+    }
+    if (btnFontSizeDecrease) {
+        btnFontSizeDecrease.addEventListener('click', () => stepFontSizeSelect(-1));
     }
 
     const btnOverviewToggle = document.getElementById('btn-overview-toggle');
@@ -3729,7 +3794,8 @@ function indexToColumnLetter(colIndex) {
             const indicatorPx = indPx != null ? indPx : Math.round(viewH * 0.5);
             const minChrome = Math.round(4 * rootFs);
             const runwayAfterPill = Math.max(minChrome, Math.round(viewH - indicatorPx));
-            let spacerPx = Math.max(Math.round(viewH * 0.5), runwayAfterPill);
+            const overviewMode = document.body.classList.contains('overview-mode');
+            let spacerPx = overviewMode ? runwayAfterPill : Math.max(Math.round(viewH * 0.5), runwayAfterPill);
 
             const bottomPill = document.getElementById('filename-pill-bottom');
             if (bottomPill && !bottomPill.classList.contains('hidden')) {
@@ -8295,6 +8361,7 @@ function loadScriptToEditor(index, options) {
         contentStore[currentFileIndex] = teleprompterText.innerHTML.trim();
     }
 
+    skipCaretFontSelectSync = true;
     /* Aa is global: apply current overview state to the loaded file so all files respect the same mode */
     const btnOverviewToggle = document.getElementById('btn-overview-toggle');
     if (btnOverviewToggle && fontSizeSelect) {
@@ -8328,12 +8395,16 @@ function loadScriptToEditor(index, options) {
         stripPipeVMarkersFromContentColumns();
         wrapCellContentInBlock();
         applyKeywordPills();
+        if (!isOverviewMode) applyFileScriptSettingsToEditor(index);
         syncColumnWidths(true);
         applyTableFirstColumnFontLock();
         shrinkAllPillsToFit();
         if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
             contentStore[currentFileIndex] = teleprompterText.innerHTML.trim();
         }
+        requestAnimationFrame(() => {
+            skipCaretFontSelectSync = false;
+        });
     });
 
     updateFilenamePills();
