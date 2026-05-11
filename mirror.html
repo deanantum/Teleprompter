@@ -7,12 +7,24 @@
     <style>
         * { box-sizing: border-box; }
         body { background: #000; margin: 0; padding: 0; overflow: hidden; color: #fff; font-family: sans-serif; }
-        #scroll-container { height: 100vh; width: 100vw; overflow-y: scroll; scrollbar-width: none; padding-left: 32px; box-sizing: border-box; }
+        /* Flex column so top spacers keep min-height (same stack as main #teleprompter-view children). */
+        #scroll-container {
+            height: 100vh;
+            width: 100vw;
+            overflow-y: scroll;
+            scrollbar-width: none;
+            padding-left: 32px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+        }
         #scroll-container::-webkit-scrollbar { display: none; }
         #mirror-content {
             width: 100%;
             padding: 0;
             margin: 0;
+            flex-shrink: 0;
         }
         /* Blank space at end so last line can scroll up to top (matches main) */
         .mirror-runway {
@@ -55,6 +67,16 @@
             color: inherit;
             padding: 0;
             margin: 0;
+        }
+        .mirror-table .cell-content b,
+        .mirror-table .cell-content i,
+        .mirror-table .cell-content u,
+        .mirror-table .cell-content .format-span-inline,
+        .mirror-table .cell-content .color-span-inline,
+        .mirror-table .cell-content span[style*="color"],
+        .mirror-table .cell-content span[style*="background"],
+        .mirror-table .cell-content span[style*="font-size"] {
+            display: inline !important;
         }
         .mirror-table .script-row-wrapper.row-lines-same { background-color: #000000 !important; }
         .mirror-table .script-row-wrapper.row-col2-one-more { background: #000000 !important; }
@@ -130,7 +152,7 @@
             left: 0;
             width: 100%;
             height: 2px;
-            top: var(--mirror-indicator-position, 50%);
+            top: var(--mirror-indicator-top-px, var(--mirror-indicator-position, 50%));
             transform: translateY(-50%);
             background: transparent;
             backdrop-filter: invert(1);
@@ -169,17 +191,32 @@
             text-overflow: ellipsis;
             box-sizing: border-box;
             text-align: center;
+            flex-shrink: 0;
+            position: relative;
+            z-index: 1;
+            -webkit-text-fill-color: currentColor;
         }
         .mirror-filename-pill-bottom {
             margin-bottom: 0;
             margin-top: 12px;
         }
         .mirror-filename-pill.hidden { display: none !important; }
+        /* Same stack as main #teleprompter-view: spacer → runway → pill; heights set inline from main offsetHeight (like row heights). */
+        .mirror-top-spacer,
+        .mirror-top-runway {
+            width: 100%;
+            flex-shrink: 0;
+            pointer-events: none;
+            background-color: #000;
+            min-height: 0;
+        }
     </style>
 </head>
 <body>
     <div id="fullscreen-prompt" title="Press Enter to enter fullscreen">Press Enter for fullscreen</div>
     <div id="scroll-container">
+        <div id="mirror-top-spacer" class="mirror-top-spacer" aria-hidden="true"></div>
+        <div id="mirror-top-runway" class="mirror-top-runway" aria-hidden="true"></div>
         <div id="mirror-pill-top" class="mirror-filename-pill hidden" aria-hidden="true"></div>
         <div id="mirror-content" class="mirror-table"></div>
         <div id="mirror-runway" class="mirror-runway" aria-hidden="true"></div>
@@ -189,7 +226,27 @@
     <script>
         (function() {
             var promptEl = document.getElementById('fullscreen-prompt');
+            var debugMode = /(?:^|[?&])debug=1(?:&|$)/.test(window.location.search);
+
+            function exitFullscreenIfNeeded() {
+                var doc = document;
+                var exit = doc.exitFullscreen || doc.webkitExitFullscreen || doc.msExitFullscreen;
+                if (exit) {
+                    try { exit.call(doc); } catch (_) {}
+                }
+            }
+
+            function setMirrorDebugMode(enabled) {
+                debugMode = !!enabled;
+                if (promptEl) promptEl.classList.toggle('hidden', debugMode);
+                if (debugMode) exitFullscreenIfNeeded();
+            }
+
             function enterFullscreen() {
+                if (debugMode) {
+                    if (promptEl) promptEl.classList.add('hidden');
+                    return;
+                }
                 var el = document.documentElement;
                 var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
                 if (req) {
@@ -198,10 +255,13 @@
                     }).catch(function() {});
                 } else if (promptEl) promptEl.classList.add('hidden');
             }
+
             function onFullscreenChange() {
+                if (debugMode) return;
                 var isFull = !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
                 if (promptEl) promptEl.classList.toggle('hidden', isFull);
             }
+
             document.addEventListener('fullscreenchange', onFullscreenChange);
             document.addEventListener('webkitfullscreenchange', onFullscreenChange);
             document.addEventListener('MSFullscreenChange', onFullscreenChange);
@@ -209,13 +269,22 @@
                 promptEl.addEventListener('click', enterFullscreen);
             }
             function onKey(e) {
+                if (debugMode) return;
                 if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
                     enterFullscreen();
                 }
             }
             window.addEventListener('keydown', onKey);
+            window.addEventListener('message', function(e) {
+                var data = e.data || {};
+                if (data.type === 'setMirrorDebugMode') setMirrorDebugMode(!!data.enabled);
+            });
             window.addEventListener('load', function() {
+                if (debugMode) {
+                    if (promptEl) promptEl.classList.add('hidden');
+                    return;
+                }
                 enterFullscreen();
             });
         })();
@@ -225,6 +294,7 @@
             const container = document.getElementById('scroll-container');
             const display = document.getElementById('mirror-content');
             let skipNextScrollPost = false;
+            let lastPixelSyncData = null;
             const mirrorChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('teleprompter-mirror-sync') : null;
 
             function postToMain(payload) {
@@ -239,6 +309,23 @@
                 var div = document.createElement('div');
                 div.textContent = text;
                 return div.innerHTML;
+            }
+
+            function mirrorCellHasVisibleText(raw) {
+                var probe = document.createElement('div');
+                probe.innerHTML = raw;
+                return !!(probe.textContent || '').replace(/\u00a0/g, ' ').trim();
+            }
+
+            function normalizeMirrorCellMarkup(cell) {
+                if (cell == null) return '\u00A0';
+                var raw = String(cell).trim();
+                if (!raw) return '\u00A0';
+                if (!mirrorCellHasVisibleText(raw)) return '\u00A0';
+                if (raw.indexOf('<') === -1) {
+                    return escapeHtml(raw).replace(/\n/g, '<br>');
+                }
+                return raw.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
             }
 
             function mirrorBalanceColWidthPx(col) {
@@ -279,6 +366,202 @@
                 cell.style.setProperty('box-sizing', 'border-box', 'important');
                 void cell.offsetHeight;
                 return cell.offsetHeight;
+            }
+
+            function ensureMirrorTopChrome() {
+                var root = document.getElementById('scroll-container');
+                if (!root) return { spacer: null, runway: null, pillTop: null, content: null };
+                var pillTop = document.getElementById('mirror-pill-top');
+                var content = document.getElementById('mirror-content');
+                var anchor = pillTop || content;
+                if (!anchor) return { spacer: null, runway: null, pillTop: pillTop, content: content };
+
+                var spacer = document.getElementById('mirror-top-spacer');
+                if (!spacer) {
+                    spacer = document.createElement('div');
+                    spacer.id = 'mirror-top-spacer';
+                    spacer.className = 'mirror-top-spacer';
+                    spacer.setAttribute('aria-hidden', 'true');
+                    root.insertBefore(spacer, anchor);
+                }
+                var runway = document.getElementById('mirror-top-runway');
+                if (!runway) {
+                    runway = document.createElement('div');
+                    runway.id = 'mirror-top-runway';
+                    runway.className = 'mirror-top-runway';
+                    runway.setAttribute('aria-hidden', 'true');
+                    if (pillTop && pillTop.parentNode === root) root.insertBefore(runway, pillTop);
+                    else root.insertBefore(runway, anchor);
+                }
+                if (pillTop && pillTop.parentNode === root) {
+                    if (spacer.parentNode === root && spacer.nextElementSibling !== runway) root.insertBefore(spacer, runway);
+                    if (runway.parentNode === root && runway.nextElementSibling !== pillTop) root.insertBefore(runway, pillTop);
+                }
+                return { spacer: spacer, runway: runway, pillTop: pillTop, content: content };
+            }
+
+            function defaultMirrorLayoutFromViewport() {
+                var ih = window.innerHeight || document.documentElement.clientHeight || 800;
+                var rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+                var ts = Math.max(0, Math.round(ih * 0.5 - 8 * rootFs));
+                var tr = Math.max(Math.round(10 * rootFs), Math.round(ih * 0.22));
+                var gap = Math.round(1.4 * rootFs);
+                return { topSpacerPx: ts, topRunwayPx: tr, pillGapPx: gap, leaderPx: ts + tr + gap };
+            }
+
+            function shrinkMirrorPillToFit(el, minPx) {
+                if (!el || el.classList.contains('hidden')) return;
+                minPx = minPx || 10;
+                var maxW = el.clientWidth;
+                if (maxW <= 0) return;
+                var size = parseFloat(window.getComputedStyle(el).fontSize) || 16;
+                el.style.setProperty('font-size', size + 'px', 'important');
+                el.style.setProperty('line-height', '1.4', 'important');
+                void el.offsetWidth;
+                while (el.scrollWidth > maxW && size > minPx) {
+                    size = Math.max(minPx, size - 2);
+                    el.style.setProperty('font-size', size + 'px', 'important');
+                    void el.offsetWidth;
+                }
+            }
+
+            function applyMirrorIndicatorGuide(data) {
+                var guide = document.getElementById('mirror-sync-guide');
+                if (!guide || !container) return;
+                if (typeof data.indicatorViewportPx === 'number' && !isNaN(data.indicatorViewportPx)) {
+                    var cr = container.getBoundingClientRect();
+                    document.documentElement.style.setProperty('--mirror-indicator-top-px', (cr.top + data.indicatorViewportPx) + 'px');
+                    return;
+                }
+                if (typeof data.indicatorPosition === 'number' && !isNaN(data.indicatorPosition)) {
+                    document.documentElement.style.removeProperty('--mirror-indicator-top-px');
+                    var viewH = container.clientHeight || 0;
+                    var px = viewH > 0
+                        ? Math.round((Math.max(0, Math.min(100, data.indicatorPosition)) / 100) * viewH)
+                        : null;
+                    if (px != null) {
+                        document.documentElement.style.setProperty('--mirror-indicator-top-px', (container.getBoundingClientRect().top + px) + 'px');
+                    } else {
+                        document.documentElement.style.setProperty('--mirror-indicator-position', data.indicatorPosition + '%');
+                    }
+                }
+            }
+
+            function applyMirrorScrollSync(data) {
+                if (!data || !container) return;
+                var display = document.getElementById('mirror-content');
+                var mainScroll = Math.round(data.contentScrollY || data.scrollTop || 0);
+                var target = mainScroll;
+                if (display && data.rowOriginYs && data.rowOriginYs.length > 0) {
+                    var mirrorRows = display.querySelectorAll('.script-row-wrapper');
+                    if (mirrorRows.length > 0) {
+                        var mirrorRow0Origin = Math.round((display.offsetTop || 0) + (mirrorRows[0].offsetTop || 0));
+                        target = mainScroll + (mirrorRow0Origin - Math.round(data.rowOriginYs[0]));
+                    }
+                } else if (display && typeof data.scriptOffsetTop === 'number' && !isNaN(data.scriptOffsetTop)) {
+                    target = mainScroll + (Math.round(display.offsetTop || 0) - Math.round(data.scriptOffsetTop));
+                }
+                if (target < 0) target = 0;
+                var maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+                if (target > maxScroll) target = maxScroll;
+                container.scrollTop = target;
+            }
+
+            function applyMirrorPills(data) {
+                if (!data) return;
+                function updateOne(el, text, fontSize, fontFamily) {
+                    if (!el) return el;
+                    if (text !== undefined && text !== null) {
+                        var label = String(text).trim();
+                        el.textContent = label;
+                        el.classList.toggle('hidden', !label);
+                        el.setAttribute('aria-hidden', label ? 'false' : 'true');
+                        if (label) {
+                            el.style.setProperty('color', '#000000', 'important');
+                            el.style.setProperty('-webkit-text-fill-color', 'currentColor', 'important');
+                        }
+                    }
+                    if (fontSize) el.style.setProperty('font-size', fontSize, 'important');
+                    if (fontFamily) el.style.setProperty('font-family', fontFamily, 'important');
+                    return el;
+                }
+                var topPillEl = updateOne(
+                    document.getElementById('mirror-pill-top'),
+                    data.topPill,
+                    data.topPillFontSize,
+                    data.topPillFontFamily
+                );
+                var bottomPillEl = updateOne(
+                    document.getElementById('mirror-pill-bottom'),
+                    data.bottomPill,
+                    data.bottomPillFontSize,
+                    data.bottomPillFontFamily
+                );
+                requestAnimationFrame(function() {
+                    shrinkMirrorPillToFit(topPillEl);
+                    shrinkMirrorPillToFit(bottomPillEl);
+                });
+            }
+
+            function applyMirrorLayout(layout) {
+                if (!layout) layout = defaultMirrorLayoutFromViewport();
+                var chrome = ensureMirrorTopChrome();
+                var spacer = chrome.spacer;
+                var runway = chrome.runway;
+                var pillTop = chrome.pillTop;
+                var content = chrome.content;
+
+                var ts = typeof layout.topSpacerPx === 'number' && !isNaN(layout.topSpacerPx) ? Math.max(0, Math.round(layout.topSpacerPx)) : 0;
+                var tr = typeof layout.topRunwayPx === 'number' && !isNaN(layout.topRunwayPx) ? Math.max(0, Math.round(layout.topRunwayPx)) : 0;
+                var gap = typeof layout.pillGapPx === 'number' && !isNaN(layout.pillGapPx) ? Math.max(0, Math.round(layout.pillGapPx)) : 0;
+                var leaderPx = typeof layout.leaderPx === 'number' && !isNaN(layout.leaderPx) ? Math.max(0, Math.round(layout.leaderPx)) : 0;
+
+                if (ts + tr === 0 && leaderPx > 0) {
+                    ts = leaderPx;
+                    gap = 0;
+                }
+
+                function setBlackBand(el, h) {
+                    if (!el) return;
+                    if (h > 0) {
+                        el.style.setProperty('min-height', h + 'px', 'important');
+                        el.style.setProperty('height', h + 'px', 'important');
+                        el.style.setProperty('flex-shrink', '0', 'important');
+                        el.style.setProperty('background-color', '#000', 'important');
+                    } else {
+                        el.style.removeProperty('min-height');
+                        el.style.removeProperty('height');
+                        el.style.removeProperty('flex-shrink');
+                        el.style.removeProperty('background-color');
+                    }
+                }
+
+                setBlackBand(spacer, ts);
+                setBlackBand(runway, tr);
+
+                if (pillTop) {
+                    pillTop.style.minHeight = '';
+                    pillTop.style.boxSizing = '';
+                }
+
+                var pillHidden = pillTop && pillTop.classList.contains('hidden');
+                if (pillHidden) {
+                    if (pillTop) pillTop.style.removeProperty('margin-top');
+                    if (content) {
+                        if (gap > 0) content.style.setProperty('margin-top', gap + 'px', 'important');
+                        else content.style.removeProperty('margin-top');
+                    }
+                } else {
+                    if (content) content.style.removeProperty('margin-top');
+                    if (pillTop) {
+                        if (gap > 0) pillTop.style.setProperty('margin-top', gap + 'px', 'important');
+                        else pillTop.style.removeProperty('margin-top');
+                    }
+                }
+                requestAnimationFrame(function() {
+                    shrinkMirrorPillToFit(pillTop);
+                    shrinkMirrorPillToFit(document.getElementById('mirror-pill-bottom'));
+                });
             }
 
             function applyMirrorShortColumnLineBalance(displayRoot, visibleColumnIndex) {
@@ -325,21 +608,15 @@
             function handleMessage(e) {
                 const data = e.data || {};
                 const type = data.type;
+                if (type === 'mirrorForceLayout' && data.layout) {
+                    applyMirrorLayout(data.layout);
+                }
+                if (type === 'mirrorPillSync') {
+                    applyMirrorPills(data);
+                }
                 if (type === 'loadContent') {
-                    var topPillEl = document.getElementById('mirror-pill-top');
-                    var bottomPillEl = document.getElementById('mirror-pill-bottom');
-                    if (topPillEl) {
-                        var topText = (data.topPill != null && data.topPill !== '') ? data.topPill : '';
-                        topPillEl.textContent = topText;
-                        topPillEl.classList.toggle('hidden', !topText);
-                        topPillEl.setAttribute('aria-hidden', topText ? 'false' : 'true');
-                    }
-                    if (bottomPillEl) {
-                        var bottomText = (data.bottomPill != null && data.bottomPill !== '') ? data.bottomPill : '';
-                        bottomPillEl.textContent = bottomText;
-                        bottomPillEl.classList.toggle('hidden', !bottomText);
-                        bottomPillEl.setAttribute('aria-hidden', bottomText ? 'false' : 'true');
-                    }
+                    ensureMirrorTopChrome();
+                    applyMirrorPills(data);
                     if (data.table && Array.isArray(data.table)) {
                         var visibleColumnIndex = typeof data.visibleColumnIndex === 'number' ? data.visibleColumnIndex : 0;
                         if (data.contentWidth) {
@@ -352,9 +629,8 @@
                             html += '<div class="script-row-wrapper' + (rowClass ? ' ' + rowClass.trim() : '') + '">';
                             cells.forEach(function(cellText, ci) {
                                 var visible = (ci === visibleColumnIndex) ? ' mirror-visible' : '';
-                                var safe = escapeHtml(cellText != null ? String(cellText) : '');
-                                safe = safe.replace(/\n/g, '<br>');
-                                html += '<div class="script-column' + visible + '"><div class="cell-content">' + (safe || '\u00A0') + '</div></div>';
+                                var markup = normalizeMirrorCellMarkup(cellText);
+                                html += '<div class="script-column' + visible + '"><div class="cell-content">' + markup + '</div></div>';
                             });
                             html += '</div>';
                         });
@@ -370,10 +646,14 @@
                                 });
                             }
                         }
+                        applyMirrorLayout(data.layout);
                         var visIdx = typeof data.visibleColumnIndex === 'number' ? data.visibleColumnIndex : 0;
+                        var hasRowHeights = data.rowHeights && Array.isArray(data.rowHeights) && data.rowHeights.length > 0;
+                        var layoutSnap = data.layout || defaultMirrorLayoutFromViewport();
                         requestAnimationFrame(function() {
                             requestAnimationFrame(function() {
-                                applyMirrorShortColumnLineBalance(display, visIdx);
+                                if (layoutSnap) applyMirrorLayout(layoutSnap);
+                                if (!hasRowHeights) applyMirrorShortColumnLineBalance(display, visIdx);
                             });
                         });
                     }
@@ -387,18 +667,21 @@
                     document.documentElement.style.setProperty('--mirror-pad', pad);
                     document.documentElement.style.setProperty('--mirror-line-height', s.lineHeight || '1.4');
                     document.documentElement.style.setProperty('--mirror-content-width', s.contentWidth || '100%');
-                    var topPill = document.getElementById('mirror-pill-top');
-                    var bottomPill = document.getElementById('mirror-pill-bottom');
-                    if (topPill) { topPill.style.fontSize = s.fontSize || ''; topPill.style.fontFamily = s.fontFamily || ''; }
-                    if (bottomPill) { bottomPill.style.fontSize = s.fontSize || ''; bottomPill.style.fontFamily = s.fontFamily || ''; }
+                    applyMirrorPills(data);
+                    if (data.layout) applyMirrorLayout(data.layout);
                 }
                 if (type === 'pixelSync') {
+                    lastPixelSyncData = data;
                     skipNextScrollPost = true;
-                    container.scrollTo({ top: data.scrollTop || 0, behavior: 'instant' });
-                    const pct = data.indicatorPosition;
-                    if (typeof pct === 'number') {
-                        document.documentElement.style.setProperty('--mirror-indicator-position', pct + '%');
-                    }
+                    applyMirrorPills(data);
+                    if (data.layout) applyMirrorLayout(data.layout);
+                    void container.offsetHeight;
+                    applyMirrorScrollSync(data);
+                    applyMirrorIndicatorGuide(data);
+                    requestAnimationFrame(function() {
+                        applyMirrorScrollSync(data);
+                        applyMirrorIndicatorGuide(data);
+                    });
                 }
                 if (type === 'setPosition') {
                     try {
@@ -424,9 +707,13 @@
             });
 
             window.addEventListener('message', handleMessage);
+            window.addEventListener('resize', function() {
+                if (lastPixelSyncData) applyMirrorIndicatorGuide(lastPixelSyncData);
+            });
 
             /* Position and size are set by the opener (main window). Do not move/resize here – on PC, screen reports the primary monitor and would pull the window off the intended monitor. */
 
+            ensureMirrorTopChrome();
             postToMain({ type: 'mirrorReady' });
         })();
     </script>
