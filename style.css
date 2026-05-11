@@ -277,11 +277,40 @@ body.format-pickup-mode #teleprompter-text,
 #teleprompter-text .script-row-wrapper.keyword-pill-red .cell-content,
 #teleprompter-text .script-row-wrapper.keyword-pill-yellow .cell-content,
 #teleprompter-text .script-row-wrapper.keyword-pill-green .cell-content,
-#teleprompter-text .script-row-wrapper.keyword-pill-blue .cell-content,
-#teleprompter-text .script-row-wrapper.keyword-pill-white .cell-content {
+#teleprompter-text .script-row-wrapper.keyword-pill-blue .cell-content {
     flex: 0 0 auto !important;
     align-self: flex-start !important;
     white-space: nowrap !important;
+    overflow: hidden !important;
+}
+/* |v rows: keep cue tokens compact; body columns wrap inside the viewport (incl. when a mirror column is hidden). */
+.script-row-wrapper.keyword-pill-white {
+    align-items: stretch !important;
+    white-space: normal !important;
+    overflow-x: clip !important;
+    overflow-y: visible !important;
+}
+#teleprompter-text .script-row-wrapper.keyword-pill-white .script-column {
+    align-items: stretch !important;
+}
+#teleprompter-text .script-row-wrapper.keyword-pill-white .script-column:first-child:not(:only-child) .cell-content,
+#teleprompter-text .script-row-wrapper.keyword-pill-white .script-column:first-child:not(:only-child) .cell-content * {
+    flex: 0 0 auto !important;
+    align-self: flex-start !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+}
+#teleprompter-text .script-row-wrapper.keyword-pill-white .script-column:only-child .cell-content,
+#teleprompter-text .script-row-wrapper.keyword-pill-white .script-column:only-child .cell-content *,
+#teleprompter-text .script-row-wrapper.keyword-pill-white .script-column:not(:only-child):not(:first-child) .cell-content,
+#teleprompter-text .script-row-wrapper.keyword-pill-white .script-column:not(:only-child):not(:first-child) .cell-content * {
+    flex: 1 1 auto !important;
+    align-self: stretch !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    white-space: pre-wrap !important;
+    overflow-wrap: break-word !important;
+    word-break: break-word !important;
     overflow: hidden !important;
 }
 /* Pill row content: add left padding so text isn't flush left when sharing row with first column (e.g. |v8) */
@@ -418,6 +447,10 @@ body.format-pickup-mode #teleprompter-text,
     font-size: 2.5rem;
     line-height: 1.4 !important; /* Explicitly set the line height */
     box-sizing: border-box;
+    overflow-x: clip;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    white-space: pre-wrap;
 }
 
 /* Loaded scripts should not stretch the editor to viewport height (Aa overview showed a large black gap). */
@@ -1938,10 +1971,10 @@ body.broadcasting #teleprompter-text .script-column .cell-content div {
 /* First column always black background */
 #teleprompter-text .script-row-wrapper .script-column:first-child { background-color: #000000 !important; }
 /* Cue/ID column: keep compact tokens on one line (avoid 2-digit wrap when col0 is shrink-fit). */
-#teleprompter-text .script-container .script-row-wrapper .script-column:first-child .cell-locker,
-#teleprompter-text .script-container .script-row-wrapper .script-column:first-child .cell-content,
-#teleprompter-text .script-container .script-row-wrapper .script-column:first-child .cell-content p,
-#teleprompter-text .script-container .script-row-wrapper .script-column:first-child .cell-content div {
+#teleprompter-text .script-container .script-row-wrapper .script-column:first-child:not(:only-child) .cell-locker,
+#teleprompter-text .script-container .script-row-wrapper .script-column:first-child:not(:only-child) .cell-content,
+#teleprompter-text .script-container .script-row-wrapper .script-column:first-child:not(:only-child) .cell-content p,
+#teleprompter-text .script-container .script-row-wrapper .script-column:first-child:not(:only-child) .cell-content div {
     white-space: nowrap;
     word-break: normal;
     overflow-wrap: normal;
