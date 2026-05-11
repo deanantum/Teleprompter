@@ -1031,6 +1031,16 @@ body.format-pickup-mode #teleprompter-text,
     background: #b71c1c;
 }
 
+.runlist-close.runlist-close-unsaved-html {
+    outline: 2px solid #ef4444;
+    outline-offset: 2px;
+}
+
+.runlist-close.runlist-close-saved-html {
+    outline: 2px solid #22c55e;
+    outline-offset: 2px;
+}
+
 .runlist-drag-handle {
     flex-shrink: 0;
     cursor: grab;
@@ -1079,6 +1089,16 @@ body.format-pickup-mode #teleprompter-text,
     font-weight: 500;
 }
 
+.runlist-row:not(.active) .runlist-drag-handle,
+.runlist-row:not(.active) .runlist-column-toggles,
+.runlist-row:not(.active) .runlist-display-toggles {
+    display: none;
+}
+
+.runlist-row:not(.active) .runlist-row-left {
+    gap: 0;
+}
+
 .runlist-column-toggles {
     display: flex;
     flex-wrap: nowrap;
@@ -1101,6 +1121,21 @@ body.format-pickup-mode #teleprompter-text,
 }
 
 .runlist-line-toggle {
+    font-weight: 600;
+}
+
+.runlist-display-toggles {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 3px 8px;
+    margin-top: 1px;
+    font-size: 11px;
+    color: var(--font-color);
+    align-items: center;
+    white-space: nowrap;
+}
+
+.runlist-color-guide-toggle {
     font-weight: 600;
 }
 
@@ -1819,6 +1854,19 @@ body.broadcasting #teleprompter-text .script-column .cell-content div {
 #teleprompter-text .script-row-wrapper.row-col3-one-more .script-column:last-child {
     background: linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), transparent !important;
 }
+
+/* Extended main window hides col3 (.broadcast-hidden). Right-edge glow was on :last-child (col3), so col2 had no right fade — black gap. Only when a column is broadcast-hidden; otherwise keep left-on-2 / right-on-3 split. */
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-col2-one-more:has(.script-column.broadcast-hidden) .script-column:nth-child(2) {
+    background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
+                linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
+                transparent !important;
+}
+body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row-col3-one-more:has(.script-column.broadcast-hidden) .script-column:nth-child(2) {
+    background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
+                linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
+                transparent !important;
+}
+
 /* col2 < col3 by 2+ lines: full red – row and last column so fill and grid extend to right edge */
 #teleprompter-text .script-row-wrapper.row-col3-more,
 #teleprompter-text .script-row-wrapper.row-col3-much-more { background-color: #531516 !important; }
@@ -1871,20 +1919,3 @@ body.overview-mode #teleprompter-text .script-row-wrapper.row-col3-one-more .scr
 }
 
 
-.runlist-row {
-    position: relative;
-}
-
-.runlist-html-badge {
-    position: absolute;
-    top: 3px;
-    right: 30px;
-    font-size: 9px;
-    line-height: 1;
-    padding: 2px 4px;
-    border-radius: 999px;
-    background: rgba(74, 158, 255, 0.52);
-    border: 1px solid rgba(102, 178, 255, 0.95);
-    color: #e8f2ff;
-    pointer-events: none;
-}
