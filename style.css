@@ -944,6 +944,7 @@ body.format-pickup-mode #teleprompter-text,
     max-width: 450px;
     flex-shrink: 0;
     transition: width 0.2s;
+    border-right: 1px solid var(--border-color);
 }
 
 #runlist-panel.hidden,
@@ -958,19 +959,20 @@ body.mirror-runlist-edge-mode #resizer {
 body.mirror-runlist-edge-mode #runlist-panel {
     position: fixed;
     top: var(--mirror-runlist-top, 0);
-    right: 0;
+    left: 0;
     bottom: 0;
     z-index: 10050;
     max-width: min(450px, 92vw);
-    transform: translateX(100%);
+    transform: translateX(-100%);
     transition: transform 0.2s ease;
     box-shadow: none;
     pointer-events: none;
+    border-right: 1px solid var(--border-color);
 }
 
 body.mirror-runlist-edge-mode.mirror-runlist-overlay-open #runlist-panel {
     transform: translateX(0);
-    box-shadow: -10px 0 28px rgba(0, 0, 0, 0.45);
+    box-shadow: 10px 0 28px rgba(0, 0, 0, 0.45);
     pointer-events: auto;
 }
 
