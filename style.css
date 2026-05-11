@@ -420,6 +420,11 @@ body.format-pickup-mode #teleprompter-text,
     box-sizing: border-box;
 }
 
+/* Loaded scripts should not stretch the editor to viewport height (Aa overview showed a large black gap). */
+#teleprompter-view.has-file #teleprompter-text {
+    min-height: 0;
+}
+
 
 /* Multi-select highlight (CSS Highlight API) */
 ::highlight(multi-select) {
@@ -730,6 +735,58 @@ body.format-pickup-mode #teleprompter-text,
 
 .top-ribbon select:hover {
     border-color: var(--button-hover);
+}
+
+.font-size-stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    margin: 0;
+}
+
+.font-size-stepper .font-size-quick-btn {
+    position: relative;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 8px 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+}
+
+.font-size-stepper .font-size-quick-btn:hover:not(:disabled) {
+    background-color: var(--button-hover);
+}
+
+.font-size-stepper .font-size-quick-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.font-size-quick-glyph {
+    line-height: 1;
+    font-weight: 700;
+    font-family: Verdana, Arial, sans-serif;
+    color: var(--font-color);
+}
+
+.font-size-quick-glyph-large {
+    font-size: 22px;
+}
+
+.font-size-quick-glyph-small {
+    font-size: 15px;
+}
+
+.font-size-quick-caret {
+    position: absolute;
+    top: 2px;
+    right: 3px;
+    font-size: 7px;
+    line-height: 1;
+    color: #4aa9ff;
 }
 
 #select-font-target {
