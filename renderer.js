@@ -215,6 +215,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let extendedWindowHeight = null;
     const MIRROR_RUNLIST_EDGE_PX = 12;
     const TABLE_FIRST_COLUMN_FONT_PX = 14;
+    const FIRST_COLUMN_MIN_PROBE_TEXT = '999';
     let mirrorRunlistEdgeActive = false;
     let mirrorRunlistOverlayOpen = false;
     let charCountsPerRow = [];
@@ -2106,10 +2107,46 @@ document.addEventListener('DOMContentLoaded', function() {
         return String(nearest);
     }
 
+    function captureOverviewSavedFontSize() {
+        if (currentFileIndex >= 0 && fileFontSize[currentFileIndex] && fileFontSize[currentFileIndex] !== '12') {
+            savedFontSizeBeforeOverview = normalizeFontSizeSelectValue(fileFontSize[currentFileIndex]);
+            return;
+        }
+        if (fontSizeSelect && fontSizeSelect.value !== '12') {
+            savedFontSizeBeforeOverview = fontSizeSelect.value;
+        } else if (!savedFontSizeBeforeOverview || savedFontSizeBeforeOverview === '12') {
+            savedFontSizeBeforeOverview = '80';
+        }
+    }
+
+    function getOverviewRestoreFontSizePx() {
+        if (savedFontSizeBeforeOverview && savedFontSizeBeforeOverview !== '12') {
+            return normalizeFontSizeSelectValue(savedFontSizeBeforeOverview);
+        }
+        if (currentFileIndex >= 0 && fileFontSize[currentFileIndex] && fileFontSize[currentFileIndex] !== '12') {
+            return normalizeFontSizeSelectValue(fileFontSize[currentFileIndex]);
+        }
+        return normalizeFontSizeSelectValue('80');
+    }
+
+    function restoreScriptTypographyAfterOverview() {
+        const restore = getOverviewRestoreFontSizePx();
+        if (fontSizeSelect) fontSizeSelect.value = restore;
+        lastFontChangeSource = 'size';
+        const family = (currentFileIndex >= 0 && fileFontFamily[currentFileIndex]) || fontFamilySelect?.value || 'Arial';
+        if (fontFamilySelect && family && Array.from(fontFamilySelect.options).some(o => o.value === family)) {
+            fontFamilySelect.value = family;
+        }
+        applyFontToAllContent(family, restore);
+        applyTableFirstColumnFontLock();
+        refreshLayoutAfterScriptFontChange();
+        persistCurrentFileScriptSettings();
+    }
+
     function persistCurrentFileScriptSettings() {
         if (currentFileIndex < 0) return;
         if (fontFamilySelect) fileFontFamily[currentFileIndex] = fontFamilySelect.value;
-        if (fontSizeSelect) fileFontSize[currentFileIndex] = fontSizeSelect.value;
+        if (fontSizeSelect && !isOverviewMode) fileFontSize[currentFileIndex] = fontSizeSelect.value;
         const color = teleprompterText.style.color || window.getComputedStyle(teleprompterText).color;
         if (color) fileFontColor[currentFileIndex] = color;
     }
@@ -2544,23 +2581,20 @@ document.addEventListener('DOMContentLoaded', function() {
             if (isExtended) {
                 broadcastEditMode = !broadcastEditMode;
                 if (broadcastEditMode) {
-                    savedFontSizeBeforeOverview = fontSizeSelect.value;
+                    captureOverviewSavedFontSize();
                     fontSizeSelect.value = '12';
                     lastFontChangeSource = 'size';
                     applyFontSizeOnlyToAllContent('12');
+                    prepareOverviewRowLayout();
                     isOverviewMode = true;
                     document.body.classList.add('overview-mode');
                     btnOverviewToggle.classList.add('overview-active');
                     if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
                 } else {
-                    const rawRestore = savedFontSizeBeforeOverview || '80';
-                    const restore = (rawRestore && rawRestore !== '12') ? rawRestore : '80';
-                    fontSizeSelect.value = restore;
-                    lastFontChangeSource = 'size';
-                    applyFontSizeOnlyToAllContent(restore);
                     isOverviewMode = false;
                     document.body.classList.remove('overview-mode');
                     btnOverviewToggle.classList.remove('overview-active');
+                    restoreScriptTypographyAfterOverview();
                 }
                 flattenRedundantSpans();
                 /* When un-Aa'ing: compute row colors while col3 is still visible, then hide col3. Otherwise hidden col3 yields empty text and we get wrong (green) colors. */
@@ -2595,22 +2629,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 return;
             }
-            let sizeToReapply = null;
-            if (isOverviewMode) {
-                const rawRestore = savedFontSizeBeforeOverview || '80';
-                const restore = (rawRestore && rawRestore !== '12') ? rawRestore : '80';
-                sizeToReapply = restore;
-                fontSizeSelect.value = restore;
-                lastFontChangeSource = 'size';
-                applyFontSizeOnlyToAllContent(restore);
+            const exitingOverview = isOverviewMode;
+            if (exitingOverview) {
                 isOverviewMode = false;
                 btnOverviewToggle.classList.remove('overview-active');
                 document.body.classList.remove('overview-mode');
             } else {
-                savedFontSizeBeforeOverview = fontSizeSelect.value;
+                captureOverviewSavedFontSize();
                 fontSizeSelect.value = '12';
                 lastFontChangeSource = 'size';
                 applyFontSizeOnlyToAllContent('12');
+                prepareOverviewRowLayout();
                 isOverviewMode = true;
                 btnOverviewToggle.classList.add('overview-active');
                 document.body.classList.add('overview-mode');
@@ -2618,9 +2647,9 @@ document.addEventListener('DOMContentLoaded', function() {
             flattenRedundantSpans();
             if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
             requestAnimationFrame(() => {
+                if (exitingOverview) restoreScriptTypographyAfterOverview();
                 syncColumnWidths();
-                measureRowHeightsFromContent();
-                if (sizeToReapply) applyFontSizeOnlyToAllContent(sizeToReapply);
+                if (!isOverviewMode) measureRowHeightsFromContent();
                 refreshSelectFontTarget();
                 updateFilenamePills();
                 if (mirrorWindow && !mirrorWindow.closed) syncMirrorStyles();
@@ -3435,6 +3464,7 @@ document.addEventListener('DOMContentLoaded', function() {
             startY = e.clientY;
             startTop = newTop;
             updateTopScrollChrome({ preserveScroll: true });
+            updateBottomScrollChrome({ preserveScroll: true });
             syncMirrorByPixels();
         }, { passive: true });
 
@@ -3442,6 +3472,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (isDragging) {
                 isDragging = false;
                 updateTopScrollChrome({ preserveScroll: true });
+                updateBottomScrollChrome({ preserveScroll: true });
                 syncMirrorByPixels();
             }
         });
@@ -3663,6 +3694,58 @@ function indexToColumnLetter(colIndex) {
 
             spacer.style.setProperty('min-height', spacerPx + 'px', 'important');
             runway.style.setProperty('min-height', runwayPx + 'px', 'important');
+            void view.offsetHeight;
+
+            if (preserveScroll) {
+                const newMax = Math.max(0, view.scrollHeight - view.clientHeight);
+                view.scrollTop = Math.round(scrollRatio * newMax);
+            }
+
+            if (mirrorWindow && !mirrorWindow.closed) {
+                pushMirrorLeaderLayout();
+                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+            }
+        }
+
+        /** Size bottom black chrome so the bottom pill can scroll through the indicator before advancing. */
+        function updateBottomScrollChrome(options) {
+            const preserveScroll = !options || options.preserveScroll !== false;
+            const view = teleprompterView;
+            if (!view) return;
+            const bottomSpacer = view.querySelector('.teleprompter-bottom-spacer');
+            if (!bottomSpacer) return;
+
+            const maxBefore = Math.max(0, view.scrollHeight - view.clientHeight);
+            const scrollRatio = maxBefore > 0 ? view.scrollTop / maxBefore : 0;
+
+            if (!view.classList.contains('has-file')) {
+                bottomSpacer.style.removeProperty('min-height');
+                return;
+            }
+
+            const rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+            const indPx = getIndicatorViewportOffsetPx();
+            const viewH = Math.max(0, view.clientHeight || 0);
+            const indicatorPx = indPx != null ? indPx : Math.round(viewH * 0.5);
+            const minChrome = Math.round(4 * rootFs);
+            const runwayAfterPill = Math.max(minChrome, Math.round(viewH - indicatorPx));
+            let spacerPx = Math.max(Math.round(viewH * 0.5), runwayAfterPill);
+
+            const bottomPill = document.getElementById('filename-pill-bottom');
+            if (bottomPill && !bottomPill.classList.contains('hidden')) {
+                void view.offsetHeight;
+                const viewRect = view.getBoundingClientRect();
+                const pillRect = bottomPill.getBoundingClientRect();
+                const pillHeight = Math.max(1, pillRect.height || bottomPill.offsetHeight || 0);
+                const scrollTop = view.scrollTop;
+                const pillBottomInContent = scrollTop + pillRect.bottom - viewRect.top;
+                const contentBelowPillBottom = Math.max(0, view.scrollHeight - pillBottomInContent);
+                if (contentBelowPillBottom < runwayAfterPill) {
+                    spacerPx = Math.max(spacerPx, runwayAfterPill - contentBelowPillBottom + Math.round(0.35 * pillHeight));
+                }
+            }
+
+            bottomSpacer.style.setProperty('min-height', spacerPx + 'px', 'important');
             void view.offsetHeight;
 
             if (preserveScroll) {
@@ -3904,6 +3987,24 @@ function indexToColumnLetter(colIndex) {
         });
         clearTpLineBalanceStyles();
         measuredRowHeights = [];
+    }
+
+    function prepareOverviewRowLayout() {
+        clearScriptRowLayoutLocks();
+        teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
+            ROW_STRETCH_MARKERS.forEach(c => row.classList.remove(c));
+            row.querySelectorAll('.script-column').forEach(col => {
+                col.style.minHeight = '';
+                col.style.flex = '';
+                const cell = col.querySelector('.cell-locker') || col.querySelector('.cell-content');
+                if (cell) {
+                    cell.style.height = '';
+                    cell.style.minHeight = '';
+                    cell.style.flex = '';
+                    cell.style.removeProperty('line-height');
+                }
+            });
+        });
     }
 
     function rowBalanceContentWidthPx(col, locker) {
@@ -4241,7 +4342,7 @@ function indexToColumnLetter(colIndex) {
             row.classList.add(cls);
             rowColorsCache.push(cls);
             /* Tallest column sets row height; stretch the *other* column with line-spacing (word-count class is only for red/green). */
-            {
+            if (!document.body.classList.contains('overview-mode')) {
                 const locker2 = col2.querySelector('.cell-locker');
                 const c2 = col2.querySelector('.cell-content') || locker2;
                 const locker3 = col3.querySelector('.cell-locker');
@@ -4578,42 +4679,63 @@ function indexToColumnLetter(colIndex) {
     }
 
     /** Usable width inside #teleprompter-text for the script grid (excludes horizontal padding / indicator gutter). */
-    function getTeleprompterContentWidthPx() {
+    function getStageScriptContentWidthPx() {
         if (!teleprompterText) return 0;
-        const cs = window.getComputedStyle(teleprompterText);
-        const pl = parseFloat(cs.paddingLeft) || 0;
-        const pr = parseFloat(cs.paddingRight) || 0;
-        return Math.max(0, Math.floor(teleprompterText.clientWidth - pl - pr));
+        const textCs = window.getComputedStyle(teleprompterText);
+        const textPl = parseFloat(textCs.paddingLeft) || 0;
+        const textPr = parseFloat(textCs.paddingRight) || 0;
+        if (teleprompterView) {
+            void teleprompterView.offsetHeight;
+            const stageRect = teleprompterStage
+                ? teleprompterStage.getBoundingClientRect()
+                : teleprompterView.getBoundingClientRect();
+            const viewRect = teleprompterView.getBoundingClientRect();
+            const viewCs = window.getComputedStyle(teleprompterView);
+            const viewPl = parseFloat(viewCs.paddingLeft) || 0;
+            const viewPr = parseFloat(viewCs.paddingRight) || 0;
+            const measured = Math.floor(stageRect.right - viewRect.left - viewPl - viewPr - textPl - textPr);
+            if (measured > 0) return measured;
+        }
+        return Math.max(0, Math.floor(teleprompterText.clientWidth - textPl - textPr));
+    }
+
+    function getTeleprompterContentWidthPx() {
+        return getStageScriptContentWidthPx();
     }
 
     /** Main script width in extend mode: use the stage width (runlist is docked on the left). */
     function getBroadcastTeleprompterTextWidthPx() {
-        if (!teleprompterView || !teleprompterText) return 0;
-        void teleprompterView.offsetHeight;
-        const stageRect = teleprompterStage
-            ? teleprompterStage.getBoundingClientRect()
-            : teleprompterView.getBoundingClientRect();
-        const rightEdge = stageRect.right;
-        const viewRect = teleprompterView.getBoundingClientRect();
-        const viewCs = window.getComputedStyle(teleprompterView);
-        const viewPl = parseFloat(viewCs.paddingLeft) || 0;
-        const viewPr = parseFloat(viewCs.paddingRight) || 0;
-        return Math.max(100, Math.floor(rightEdge - (viewRect.left + viewPl) - viewPr));
+        return Math.max(100, getStageScriptContentWidthPx());
     }
 
-    function applyBroadcastMainViewportWidth() {
-        if (!document.body.classList.contains('broadcasting') || !teleprompterText) return;
-        const w = getBroadcastTeleprompterTextWidthPx();
-        if (w < 100) return;
-        extendedFixedWidth = w;
-        teleprompterText.style.width = w + 'px';
-        teleprompterText.style.maxWidth = w + 'px';
+    function applyMainScriptViewportWidth() {
+        if (!teleprompterText || !teleprompterView) return;
+        const textCs = window.getComputedStyle(teleprompterText);
+        const textPl = parseFloat(textCs.paddingLeft) || 0;
+        const textPr = parseFloat(textCs.paddingRight) || 0;
+        const inner = getStageScriptContentWidthPx();
+        if (inner < 100) return;
+        const isBroadcasting = document.body.classList.contains('broadcasting');
+        if (isBroadcasting) {
+            extendedFixedWidth = inner;
+            teleprompterText.style.width = Math.ceil(inner + textPl + textPr) + 'px';
+            teleprompterText.style.maxWidth = '100%';
+        } else {
+            extendedFixedWidth = null;
+            teleprompterText.style.width = '';
+            teleprompterText.style.maxWidth = '';
+        }
         syncColumnWidths(true);
         if (mirrorWindow && !mirrorWindow.closed) {
             refreshMirrorData();
             syncMirrorStyles();
             if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
         }
+    }
+
+    function applyBroadcastMainViewportWidth() {
+        if (!document.body.classList.contains('broadcasting')) return;
+        applyMainScriptViewportWidth();
     }
 
     function syncMirrorRunlistOverlayTop() {
@@ -4675,6 +4797,7 @@ function indexToColumnLetter(colIndex) {
         if (runlistPanel) runlistPanel.classList.remove('hidden');
         if (resizer) resizer.classList.remove('hidden');
         if (toggleRunlistButton) toggleRunlistButton.title = 'Show/Hide Runlist';
+        applyMainScriptViewportWidth();
     }
 
     /** First column is sized from cue-style cells only — not section labels like "Pause" in col1 of sparse rows. */
@@ -4694,31 +4817,53 @@ function indexToColumnLetter(colIndex) {
         return (t.split(/\s+/)[0] || t).trim();
     }
 
+    function firstColumnMeasureFontPx(row) {
+        if (isOverviewMode) return 12;
+        if (row?.classList?.contains('row-font-12')) return 12;
+        if (documentHasTableLayout()) return TABLE_FIRST_COLUMN_FONT_PX;
+        const root = parseFloat(window.getComputedStyle(teleprompterText).fontSize);
+        return root > 0 ? root : 80;
+    }
+
+    function applyFirstColumnMeasureTypography(probe, row) {
+        const tf = window.getComputedStyle(teleprompterText);
+        probe.style.fontFamily = tf.fontFamily;
+        const px = firstColumnMeasureFontPx(row);
+        probe.style.fontSize = px + 'px';
+        probe.style.lineHeight = (px === 12 || isOverviewMode) ? '1.2' : (tf.lineHeight || '1.1');
+    }
+
     function measureFirstColumnLayoutWidth(rows, maxCols, paddingWidth) {
         if (maxCols < 2) return Math.ceil(paddingWidth);
         const probe = document.createElement('span');
         probe.style.position = 'absolute';
         probe.style.visibility = 'hidden';
         probe.style.whiteSpace = 'pre';
-        const tf = window.getComputedStyle(teleprompterText);
-        probe.style.fontFamily = tf.fontFamily;
-        probe.style.fontSize = isOverviewMode ? '12px' : tf.fontSize;
-        probe.style.lineHeight = isOverviewMode ? '1.2' : tf.lineHeight;
         document.body.appendChild(probe);
-        probe.textContent = '99';
-        const minCol0Floor = probe.getBoundingClientRect().width;
+        let minCol0Floor = 0;
         let col0Max = 0;
         rows.forEach(row => {
             const cols = row.querySelectorAll('.script-column');
             if (cols.length < 2) return;
+            applyFirstColumnMeasureTypography(probe, row);
+            probe.textContent = FIRST_COLUMN_MIN_PROBE_TEXT;
+            minCol0Floor = Math.max(minCol0Floor, probe.getBoundingClientRect().width);
             const cell = cols[0]?.querySelector('.cell-content') || cols[0]?.querySelector('.cell-locker') || cols[0];
             const txt = (cell?.textContent || '').trim();
             if (!isCueLikeFirstColumnText(txt)) return;
             probe.textContent = firstColumnCueTokenForMeasure(txt) || txt;
             col0Max = Math.max(col0Max, probe.getBoundingClientRect().width);
         });
+        if (minCol0Floor <= 0) {
+            applyFirstColumnMeasureTypography(probe, rows[0] || null);
+            probe.textContent = FIRST_COLUMN_MIN_PROBE_TEXT;
+            minCol0Floor = probe.getBoundingClientRect().width;
+        }
         probe.remove();
-        return Math.ceil(Math.max(col0Max, minCol0Floor) + paddingWidth) + 2;
+        const measured = Math.max(col0Max, minCol0Floor);
+        const borderSlack = 1;
+        const nowrapBuffer = 4;
+        return Math.ceil(measured + paddingWidth + borderSlack + nowrapBuffer);
     }
 
     function measureBroadcastRowHeights(rows) {
@@ -4818,37 +4963,16 @@ function indexToColumnLetter(colIndex) {
         if (cellStyle) {
             paddingWidth = (parseFloat(cellStyle.paddingLeft) || 0) + (parseFloat(cellStyle.paddingRight) || 0);
         }
-        widths[0] = Math.ceil(digitsWidth + paddingWidth);
+        widths[0] = maxCols > 1
+            ? measureFirstColumnLayoutWidth(rows, maxCols, paddingWidth)
+            : Math.ceil(digitsWidth + paddingWidth);
 
         const isBroadcasting = document.body.classList.contains('broadcasting');
         /* XLSX & 3-column DOCX: col0 shrink-to-fit, cols 2 and 3 split remainder 50/50 (avoids docx path that gave col3 all rounding slack). */
         const equalSplitThreeTextCols = (isCurrentFileXlsx() || isCurrentFileDocx()) && maxCols >= 3 && !isBroadcasting;
 
         if (equalSplitThreeTextCols) {
-            const probe = document.createElement('span');
-            probe.style.position = 'absolute';
-            probe.style.visibility = 'hidden';
-            probe.style.whiteSpace = 'pre';
-            const tf = window.getComputedStyle(teleprompterText);
-            probe.style.fontFamily = tf.fontFamily;
-            probe.style.fontSize = isOverviewMode ? '12px' : tf.fontSize;
-            probe.style.lineHeight = isOverviewMode ? '1.2' : tf.lineHeight;
-            document.body.appendChild(probe);
-            probe.textContent = '99';
-            const minCol0Floor = probe.getBoundingClientRect().width;
-            let col0Max = 0;
-            rows.forEach(row => {
-                const cols = row.querySelectorAll('.script-column');
-                if (cols.length < 3) return;
-                const cell = cols[0]?.querySelector('.cell-content') || cols[0]?.querySelector('.cell-locker') || cols[0];
-                const txt = (cell?.textContent || '').trim();
-                if (!isCueLikeFirstColumnText(txt)) return;
-                probe.textContent = firstColumnCueTokenForMeasure(txt) || txt;
-                col0Max = Math.max(col0Max, probe.getBoundingClientRect().width);
-            });
-            probe.remove();
-            /* Tight floor: two-digit width (not 4×'0'); col0Max grows for |v### / longer cues; tiny subpixel buffer */
-            widths[0] = Math.ceil(Math.max(col0Max, minCol0Floor) + paddingWidth) + 2;
+            widths[0] = measureFirstColumnLayoutWidth(rows, maxCols, paddingWidth);
             const gridInnerW = (isBroadcasting && extendedFixedWidth != null && extendedFixedWidth > 0)
                 ? extendedFixedWidth
                 : getTeleprompterContentWidthPx();
@@ -4885,9 +5009,7 @@ function indexToColumnLetter(colIndex) {
             const contentIndices = mainVisibleIndices.filter(j => j >= 1);
             const hasCol0 = mainVisibleIndices.indexOf(0) >= 0;
             if (hasCol0) {
-                widths[0] = isBroadcasting
-                    ? measureFirstColumnLayoutWidth(rows, maxCols, paddingWidth)
-                    : Math.ceil(digitsWidth + paddingWidth);
+                widths[0] = measureFirstColumnLayoutWidth(rows, maxCols, paddingWidth);
             } else {
                 widths[0] = 0;
             }
@@ -4951,20 +5073,21 @@ function indexToColumnLetter(colIndex) {
                     } else if (width > 0) {
                         col.style.flex = `0 0 ${width}px`;
                         col.style.width = `${width}px`;
-                        col.style.minWidth = '0';
+                        col.style.minWidth = idx === 0 ? `${width}px` : '0';
                     } else {
                         col.style.flex = '';
                         col.style.width = '';
                         col.style.minWidth = '0';
                     }
-                } else if (!isBroadcasting && isLastVisible && !(equalSplitThreeTextCols && maxCols === 3 && idx === maxCols - 1)) {
-                    /* Last visible column grows to fill so col 2 expands when col 3 is hidden */
+                } else if (!isBroadcasting && isLastVisible) {
+                    /* Last visible column grows to fill the stage width (rounding slack / hidden columns). */
                     col.style.flex = `1 1 0%`;
                     col.style.minWidth = '0';
                     col.style.width = 'auto';
                 } else {
                     col.style.flex = width > 0 ? `0 0 ${width}px` : '';
                     col.style.width = width > 0 ? `${width}px` : '';
+                    col.style.minWidth = (idx === 0 && width > 0) ? `${width}px` : '';
                 }
             });
         });
@@ -5549,7 +5672,7 @@ if (toggleRunlistButton && runlistPanel && resizer) {
         const isHidden = runlistPanel.classList.toggle('hidden');
         resizer.classList.toggle('hidden', isHidden);
         toggleRunlistButton.title = isHidden ? 'Show Runlist' : 'Hide Runlist';
-        applyBroadcastMainViewportWidth();
+        applyMainScriptViewportWidth();
     };
 }
 
@@ -6123,7 +6246,7 @@ if (resizer && runlistPanel) {
             resizing = false;
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
-            applyBroadcastMainViewportWidth();
+            applyMainScriptViewportWidth();
         }
     });
 }
@@ -6470,21 +6593,13 @@ function convertDocxHtmlToXlsxStructure(html) {
             el.querySelectorAll('tr').forEach(tr => {
                 const rowDiv = document.createElement('div');
                 rowDiv.className = 'script-row-wrapper';
-                const allCells = Array.from(tr.querySelectorAll('td, th'));
-                const cells = allCells.slice(0, MAX_COLUMNS);
-                const extras = allCells.slice(MAX_COLUMNS);
-                const extraText = extras.map(c => (c.innerText || c.textContent || '').trim()).join(' ').trim();
-                cells.forEach((cell, i) => {
+                const cells = Array.from(tr.querySelectorAll('td, th')).slice(0, MAX_COLUMNS);
+                cells.forEach((cell) => {
                     const colDiv = document.createElement('div');
                     colDiv.className = 'script-column';
                     const contentDiv = document.createElement('div');
                     contentDiv.className = 'cell-content';
-                    let html = cell.innerHTML || '';
-                    if (i === cells.length - 1 && extraText) {
-                        const safe = extraText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                        html = (html.trim() ? html.trim() + ' ' : '') + safe;
-                    }
-                    contentDiv.innerHTML = html;
+                    contentDiv.innerHTML = cell.innerHTML || '';
                     colDiv.appendChild(contentDiv);
                     rowDiv.appendChild(colDiv);
                 });
@@ -6506,38 +6621,40 @@ function convertDocxHtmlToXlsxStructure(html) {
     return container.outerHTML;
 }
 
-/** Normalize HTML to max 3 columns. Merges extra cells into the 3rd. Returns { html, wasTrimmed }. */
+/** Drop columns after the third in table scripts. Returns { html, wasTrimmed }. */
 function normalizeContentToMax3Columns(html) {
     if (!html || typeof html !== 'string' || !html.trim()) return { html: html || '', wasTrimmed: false };
     const temp = document.createElement('div');
     temp.innerHTML = html;
     let wasTrimmed = false;
     temp.querySelectorAll('.script-row-wrapper').forEach(row => {
-        const cols = row.querySelectorAll('.script-column');
+        const cols = Array.from(row.querySelectorAll(':scope > .script-column'));
         if (cols.length > MAX_COLUMNS) {
             wasTrimmed = true;
-            const extras = Array.from(cols).slice(MAX_COLUMNS);
-            const extraText = extras.map(c => (c.innerText || c.textContent || '').trim()).join(' ').trim();
-            extras.forEach(c => c.remove());
-            const third = row.querySelector('.script-column:nth-child(3)');
-            if (third) {
-                const cell = third.querySelector('.cell-content') || third.querySelector('.cell-locker') || third;
-                if (cell && extraText) cell.textContent = (cell.textContent || '').trim() + (cell.textContent?.trim() ? ' ' : '') + extraText;
-            }
+            cols.slice(MAX_COLUMNS).forEach(c => c.remove());
         }
     });
     temp.querySelectorAll('table tr').forEach(tr => {
         const cells = Array.from(tr.querySelectorAll('td, th'));
         if (cells.length > MAX_COLUMNS) {
             wasTrimmed = true;
-            const third = cells[MAX_COLUMNS - 1];
-            const extras = cells.slice(MAX_COLUMNS);
-            const extraText = extras.map(c => (c.innerText || c.textContent || '').trim()).join(' ').trim();
-            extras.forEach(c => c.remove());
-            if (third && extraText) third.textContent = (third.textContent || '').trim() + (third.textContent?.trim() ? ' ' : '') + extraText;
+            cells.slice(MAX_COLUMNS).forEach(c => c.remove());
         }
     });
     return { html: temp.innerHTML, wasTrimmed };
+}
+
+function trimScriptTableToMaxColumns(root = teleprompterText) {
+    if (!root) return false;
+    let wasTrimmed = false;
+    root.querySelectorAll('.script-row-wrapper').forEach(row => {
+        const cols = Array.from(row.querySelectorAll(':scope > .script-column'));
+        if (cols.length > MAX_COLUMNS) {
+            wasTrimmed = true;
+            cols.slice(MAX_COLUMNS).forEach(c => c.remove());
+        }
+    });
+    return wasTrimmed;
 }
 
 /** Unicode non-breaking hyphen (U+2011); regular hyphen U+002D still breaks at line wrap. */
@@ -6582,7 +6699,7 @@ async function processFileContent(file, index) {
                 text = parsed.html;
                 const { html: normalized, wasTrimmed } = normalizeContentToMax3Columns(text);
                 text = normalized;
-                if (wasTrimmed) alert(`"${file.name}" had more than ${MAX_COLUMNS} columns. Extra columns were merged into column ${MAX_COLUMNS}.`);
+                if (wasTrimmed) alert(`"${file.name}" had more than ${MAX_COLUMNS} columns. Columns after column ${MAX_COLUMNS} were ignored.`);
                 const inferred = detectColumnMetadataFromHtml(text);
                 const meta = parsed.metadata && typeof parsed.metadata === 'object' ? parsed.metadata : null;
                 const count = Math.max(0, Math.min(MAX_COLUMNS, Number(meta?.columnCount) || inferred.columnCount || 0));
@@ -6620,10 +6737,6 @@ async function processFileContent(file, index) {
                     let html = '<div class="script-container">';
                     json.forEach((row) => {
                         const cells = selectedCols.map(colIdx => row[colIdx] != null ? String(row[colIdx]).trim() : '');
-                        if (allCols.length > maxCols) {
-                            const extra = allCols.slice(maxCols).map(colIdx => row[colIdx] != null ? String(row[colIdx]).trim() : '').join(' ').trim();
-                            if (extra && cells.length >= maxCols) cells[maxCols - 1] = (cells[maxCols - 1] || '') + (cells[maxCols - 1] ? ' ' : '') + extra;
-                        }
                         html += '<div class="script-row-wrapper">';
                         cells.forEach(val => {
                             let cellText = val || '';
@@ -6642,7 +6755,7 @@ async function processFileContent(file, index) {
                     updateRunlistRowColumnToggles(slot);
                     onRunlistFileContentReady(slot);
                     if (allCols.length > maxCols) {
-                        alert(`"${file.name}" has ${allCols.length} columns. Teleprompter uses a maximum of ${MAX_COLUMNS} columns. Extra columns were merged into column ${MAX_COLUMNS}.`);
+                        alert(`"${file.name}" has ${allCols.length} columns. Teleprompter uses a maximum of ${MAX_COLUMNS} columns. Columns after column ${MAX_COLUMNS} were ignored.`);
                     }
                     console.log("Excel imported with " + selectedCols.length + " column(s). Use file checkboxes to show/hide columns.");
                 } catch (innerErr) {
@@ -6665,7 +6778,7 @@ async function processFileContent(file, index) {
                         contentStore[slot] = html;
                         fileShowSyncGuide[slot] = fileShowSyncGuide[slot] !== false;
                         updateRunlistRowColumnToggles(slot);
-                        if (wasTrimmed) alert(`"${file.name}" had more than ${MAX_COLUMNS} columns. Extra columns were merged into column ${MAX_COLUMNS}.`);
+                        if (wasTrimmed) alert(`"${file.name}" had more than ${MAX_COLUMNS} columns. Columns after column ${MAX_COLUMNS} were ignored.`);
                         console.log("Docx converted successfully");
                         onRunlistFileContentReady(slot);
                     })
@@ -6791,7 +6904,7 @@ function processTableColumns() {
         rows.forEach(tr => {
             const rowDiv = document.createElement('div');
             rowDiv.className = 'script-row-wrapper';
-            tr.querySelectorAll('td, th').forEach(cell => {
+            Array.from(tr.querySelectorAll('td, th')).slice(0, MAX_COLUMNS).forEach(cell => {
                 const colDiv = document.createElement('div');
                 colDiv.className = 'script-column';
                 const contentDiv = document.createElement('div');
@@ -6831,6 +6944,7 @@ function processTableColumns() {
     splitMultiLineCellsIntoRows();
     /* Ensure blank/empty rows have nbsp so they keep height and stay separated */
     ensureEmptyRowsHaveNbsp();
+    trimScriptTableToMaxColumns();
 }
 
 /** Set empty cell-content to nbsp so blank rows preserve height and separation. */
@@ -6944,10 +7058,6 @@ function loadFileContent(file, index) {
                 let html = '<div class="script-container">';
                 json.forEach((row) => {
                     const cells = selectedCols.map(colIdx => row[colIdx] != null ? String(row[colIdx]).trim() : '');
-                    if (allCols.length > maxCols) {
-                        const extra = allCols.slice(maxCols).map(colIdx => row[colIdx] != null ? String(row[colIdx]).trim() : '').join(' ').trim();
-                        if (extra && cells.length >= maxCols) cells[maxCols - 1] = (cells[maxCols - 1] || '') + (cells[maxCols - 1] ? ' ' : '') + extra;
-                    }
                     html += '<div class="script-row-wrapper">';
                     cells.forEach(val => {
                         let cellText = val || '';
@@ -7125,9 +7235,9 @@ function checkTopPillAndGoToPreviousFile() {
     const rect = topPill.getBoundingClientRect();
     const pad = 22; /* px tolerance for sync line vs pill */
     const indicatorOverlapsPill = indicatorY >= rect.top - pad && indicatorY <= rect.bottom + pad;
-    /* Fast wheel/trackpad can skip the overlap frame; whole pill still visible but entirely above sync line */
+    /* Fast wheel/trackpad can skip the overlap frame; whole pill still visible but entirely below sync line */
     const pillVisibleInView = rect.bottom > viewRect.top + 6 && rect.top < viewRect.bottom - 6;
-    const pillScrolledPastSyncLine = rect.bottom < indicatorY - 8 && pillVisibleInView;
+    const pillScrolledPastSyncLine = rect.top > indicatorY + 8 && pillVisibleInView;
 
     if (!indicatorOverlapsPill && !pillScrolledPastSyncLine) {
         topPillTriggerFired = false;
@@ -7161,7 +7271,8 @@ function checkBottomPillAndAdvanceToNextFile() {
     const pad = 22; /* mirror top-pill tolerance */
     const indicatorOverlapsPill = indicatorY >= rect.top - pad && indicatorY <= rect.bottom + pad;
     const pillVisibleInView = rect.bottom > viewRect.top + 6 && rect.top < viewRect.bottom - 6;
-    const pillScrolledPastSyncLine = rect.top > indicatorY + 8 && pillVisibleInView;
+    /* Fast wheel/trackpad can skip the overlap frame; whole pill still visible but entirely above sync line */
+    const pillScrolledPastSyncLine = rect.bottom < indicatorY - 8 && pillVisibleInView;
 
     if (!indicatorOverlapsPill && !pillScrolledPastSyncLine) {
         bottomPillTriggerFired = false;
@@ -7574,6 +7685,7 @@ function wrapCellContentInBlock() {
         });
         toMove.forEach(n => firstCell.insertBefore(n, firstCell.firstChild));
     });
+    trimScriptTableToMaxColumns();
     /* Pad short rows so every row matches the max column count in this script (fixes orphan line# rows after export/edits). */
     const gridRows = teleprompterText.querySelectorAll('.script-container .script-row-wrapper');
     if (gridRows.length > 0) {
@@ -8063,6 +8175,7 @@ function updateFilenamePills() {
     }
     shrinkAllPillsToFit();
     if (typeof updateTopScrollChrome === 'function') updateTopScrollChrome({ preserveScroll: true });
+    if (typeof updateBottomScrollChrome === 'function') updateBottomScrollChrome({ preserveScroll: true });
     pushMirrorPillLabels();
 }
 
@@ -8191,6 +8304,7 @@ function loadScriptToEditor(index, options) {
             fontSizeSelect.value = '12';
             lastFontChangeSource = 'size';
             applyFontSizeOnlyToAllContent('12');
+            prepareOverviewRowLayout();
         } else {
             btnOverviewToggle.classList.remove('overview-active');
             document.body.classList.remove('overview-mode');
@@ -8204,7 +8318,7 @@ function loadScriptToEditor(index, options) {
     if (window.__fontSizeDebug) console.log('[FontSize] REPORT loadScriptToEditor LOADED', { index, fileName: fileStore[index]?.name, contentLen: (content && content.length) || 0, rootFontSize: teleprompterText.style.fontSize || '(none)', rootFontFamily: teleprompterText.style.fontFamily || '(none)' });
     requestAnimationFrame(() => {
         refreshSelectFontTarget();
-        syncColumnWidths(true);
+        applyMainScriptViewportWidth();
         /* Replace {BKMK} with bookmark (red dot + number in list) after layout so formatting is unchanged */
         console.log('[BKMK] rAF: about to call convertBkmkPlaceholdersToBookmarks for file index', index);
         convertBkmkPlaceholdersToBookmarks();
@@ -8544,17 +8658,11 @@ extendMonitorButton.onclick = async () => {
     /* If user had Aa (overview) on, temporarily exit so we measure row heights with normal font (same as Extend then Aa). */
     const wasInOverview = document.body.classList.contains('overview-mode') || isOverviewMode;
     if (wasInOverview) {
-        const rawRestore = savedFontSizeBeforeOverview || '80';
-        const restore = (rawRestore && rawRestore !== '12') ? rawRestore : '80';
-        if (fontSizeSelect) {
-            fontSizeSelect.value = restore;
-            lastFontChangeSource = 'size';
-        }
-        applyFontSizeOnlyToAllContent(restore);
         isOverviewMode = false;
         document.body.classList.remove('overview-mode');
         const btnO = document.getElementById('btn-overview-toggle');
         if (btnO) btnO.classList.remove('overview-active');
+        restoreScriptTypographyAfterOverview();
         flattenRedundantSpans();
         void teleprompterText.offsetHeight;
         syncColumnWidths();
@@ -8666,7 +8774,7 @@ extendMonitorButton.onclick = async () => {
                 /* Re-enter Aa (overview) if we temporarily exited so result matches Extend then Aa */
                 if (wasInOverview) {
                     broadcastEditMode = true;
-                    savedFontSizeBeforeOverview = fontSizeSelect ? fontSizeSelect.value : '80';
+                    captureOverviewSavedFontSize();
                     if (fontSizeSelect) {
                         fontSizeSelect.value = '12';
                         lastFontChangeSource = 'size';
@@ -8927,10 +9035,10 @@ window.addEventListener('resize', () => {
             window.resizeTo(extendedWindowWidth, extendedWindowHeight);
         }
         if (mirrorRunlistEdgeActive) syncMirrorRunlistOverlayTop();
-        applyBroadcastMainViewportWidth();
     }
-    syncColumnWidths(true);
+    applyMainScriptViewportWidth();
     if (typeof updateTopScrollChrome === 'function') updateTopScrollChrome({ preserveScroll: true });
+    if (typeof updateBottomScrollChrome === 'function') updateBottomScrollChrome({ preserveScroll: true });
     syncMirrorStyles();
     if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
     if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
