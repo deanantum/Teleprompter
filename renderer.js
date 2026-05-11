@@ -214,6 +214,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let extendedWindowWidth = null; /* 5:4 outer window size for main and mirror */
     let extendedWindowHeight = null;
     const MIRROR_RUNLIST_EDGE_PX = 12;
+    const TABLE_FIRST_COLUMN_FONT_PX = 14;
     let mirrorRunlistEdgeActive = false;
     let mirrorRunlistOverlayOpen = false;
     let charCountsPerRow = [];
@@ -2128,6 +2129,7 @@ document.addEventListener('DOMContentLoaded', function() {
         teleprompterText.style.fontFamily = family;
         teleprompterText.style.fontSize = size + 'px';
         teleprompterText.style.color = color;
+        applyTableFirstColumnFontLock();
         requestAnimationFrame(() => {
             skipCaretFontSelectSync = false;
         });
@@ -2155,6 +2157,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
         if (typeof shrinkAllPillsToFit === 'function') shrinkAllPillsToFit();
+        applyTableFirstColumnFontLock();
     }
 
     function updateFontSelectsFromCaret() {
@@ -2183,7 +2186,43 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function documentHasTableLayout() {
+        const rows = teleprompterText?.querySelectorAll('.script-row-wrapper') ?? [];
+        if (!rows.length) return false;
+        let maxCols = 0;
+        rows.forEach(row => {
+            maxCols = Math.max(maxCols, row.querySelectorAll('.script-column').length);
+        });
+        return maxCols > 1;
+    }
+
+    function isLockedFirstTableColumnElement(el) {
+        if (!el || el === teleprompterText) return false;
+        const col = el.closest?.('.script-column');
+        if (!col) return false;
+        const row = col.closest('.script-row-wrapper');
+        if (!row) return false;
+        const cols = row.querySelectorAll('.script-column');
+        return cols.length > 0 && cols[0] === col;
+    }
+
+    function applyTableFirstColumnFontLock() {
+        if (!documentHasTableLayout() || isOverviewMode) return;
+        const lockPx = TABLE_FIRST_COLUMN_FONT_PX + 'px';
+        teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
+            if (row.classList.contains('row-font-12')) return;
+            const col = row.querySelector('.script-column:first-child');
+            if (!col) return;
+            col.style.fontSize = lockPx;
+            col.querySelectorAll('*').forEach(el => {
+                if (el.classList?.contains('color-span-inline')) return;
+                el.style.fontSize = lockPx;
+            });
+        });
+    }
+
     function applyFontToAllContent(fontVal, sizeVal) {
+        const skipFirstCol = documentHasTableLayout() && !isOverviewMode;
         if (FONT_SIZE_DEBUG()) {
             const all = teleprompterText.querySelectorAll('*');
             let skipped = 0, applied = 0;
@@ -2205,19 +2244,24 @@ document.addEventListener('DOMContentLoaded', function() {
         teleprompterText.querySelectorAll('*').forEach(el => {
             /* Skip custom color spans – preserve highlight/color. Format spans get the new font/size when applying to all. */
             if (el.classList?.contains('color-span-inline')) return;
+            if (skipFirstCol && isLockedFirstTableColumnElement(el)) return;
             if (fontVal) el.style.fontFamily = fontVal;
             if (sizeVal) el.style.fontSize = sizeVal + 'px';
         });
+        if (skipFirstCol) applyTableFirstColumnFontLock();
     }
 
     /** Apply only font size so font family (and other) changes from Aa/un-Aa stay. */
     function applyFontSizeOnlyToAllContent(sizeVal) {
         if (!sizeVal) return;
+        const skipFirstCol = documentHasTableLayout() && !isOverviewMode;
         teleprompterText.style.fontSize = sizeVal + 'px';
         teleprompterText.querySelectorAll('*').forEach(el => {
             if (el.classList?.contains('color-span-inline')) return;
+            if (skipFirstCol && isLockedFirstTableColumnElement(el)) return;
             el.style.fontSize = sizeVal + 'px';
         });
+        if (skipFirstCol) applyTableFirstColumnFontLock();
     }
 
     /** Focus editor without scrolling the view (avoids jumping to top when applying from ribbon / font target). */
@@ -8171,6 +8215,7 @@ function loadScriptToEditor(index, options) {
         wrapCellContentInBlock();
         applyKeywordPills();
         syncColumnWidths(true);
+        applyTableFirstColumnFontLock();
         shrinkAllPillsToFit();
         if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
             contentStore[currentFileIndex] = teleprompterText.innerHTML.trim();
