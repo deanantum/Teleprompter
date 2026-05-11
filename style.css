@@ -1812,14 +1812,14 @@ body.broadcasting #teleprompter-view {
 }
 body.broadcasting #teleprompter-view::-webkit-scrollbar {
     display: block;
-    width: 8px;
+    width: 12px;
 }
 body.broadcasting #teleprompter-view::-webkit-scrollbar-track {
     background: transparent;
 }
 body.broadcasting #teleprompter-view::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.38);
-    border-radius: 8px;
+    border-radius: 10px;
     border: 2px solid transparent;
     background-clip: padding-box;
 }
