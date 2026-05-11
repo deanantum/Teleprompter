@@ -229,19 +229,28 @@
                 var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
                 if (!req) return;
                 try {
-                    var result = req.call(el);
+                    var result = req.call(el, { navigationUI: 'hide' });
                     if (result && typeof result.catch === 'function') {
                         result.catch(function() {});
                     }
-                } catch (_) {}
+                } catch (_) {
+                    try {
+                        var fallback = req.call(el);
+                        if (fallback && typeof fallback.catch === 'function') {
+                            fallback.catch(function() {});
+                        }
+                    } catch (_) {}
+                }
             }
 
             function scheduleMirrorFullscreenAttempts() {
                 if (debugMode) return;
-                [0, 40, 120, 300, 700, 1500, 3000].forEach(function(ms) {
+                [0, 40, 120, 300, 700, 1500, 3000, 5000].forEach(function(ms) {
                     setTimeout(enterFullscreen, ms);
                 });
             }
+
+            window.__teleprompterScheduleMirrorFullscreen = scheduleMirrorFullscreenAttempts;
 
             function setMirrorDebugMode(enabled) {
                 debugMode = !!enabled;
@@ -264,7 +273,13 @@
             });
             window.addEventListener('pointerdown', function() {
                 if (!debugMode) enterFullscreen();
-            }, { once: true });
+            }, true);
+            window.addEventListener('keydown', function(e) {
+                if (debugMode) return;
+                if (e.key === 'Enter' || e.key === ' ') {
+                    enterFullscreen();
+                }
+            });
         })();
     </script>
     <script>
@@ -667,7 +682,21 @@
                         var w = parseInt(data.width, 10), h = parseInt(data.height, 10);
                         if (!isNaN(left) && !isNaN(top)) window.moveTo(left, top);
                         if (!isNaN(w) && w > 0 && !isNaN(h) && h > 0) window.resizeTo(w, h);
+                        if (typeof window.__teleprompterScheduleMirrorFullscreen === 'function') {
+                            window.__teleprompterScheduleMirrorFullscreen();
+                        }
                     } catch (err) {}
+                }
+                if (type === 'updateRowHeights' && data.rowHeights && Array.isArray(data.rowHeights)) {
+                    var mirrorRows = display.querySelectorAll('.script-row-wrapper');
+                    if (mirrorRows.length === data.rowHeights.length) {
+                        data.rowHeights.forEach(function(h, i) {
+                            if (mirrorRows[i] && typeof h === 'number' && h > 0) {
+                                mirrorRows[i].style.minHeight = h + 'px';
+                                mirrorRows[i].style.height = h + 'px';
+                            }
+                        });
+                    }
                 }
             }
 
