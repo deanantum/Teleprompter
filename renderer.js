@@ -4560,7 +4560,7 @@ function indexToColumnLetter(colIndex) {
         const viewCs = window.getComputedStyle(teleprompterView);
         const viewPl = parseFloat(viewCs.paddingLeft) || 0;
         const viewPr = parseFloat(viewCs.paddingRight) || 0;
-        return Math.max(100, Math.floor(rightEdge - (viewRect.left + viewPl) - viewPr - 2));
+        return Math.max(100, Math.floor(rightEdge - (viewRect.left + viewPl) - viewPr));
     }
 
     function applyBroadcastMainViewportWidth() {
@@ -4890,15 +4890,35 @@ function indexToColumnLetter(colIndex) {
         const lastVisibleIdx = useVisibleColumns && visibleIndices && visibleIndices.length > 0
             ? visibleIndices[visibleIndices.length - 1]
             : (maxCols > 0 ? maxCols - 1 : 0);
+        let lastMainVisibleIdx = lastVisibleIdx;
+        if (effectiveVisibleIndices && effectiveVisibleIndices.length > 0) {
+            const contentVisibleCount = effectiveVisibleIndices.filter(i => i >= 1).length;
+            const mainVisibleIndices = (isBroadcasting && contentVisibleCount >= 2)
+                ? effectiveVisibleIndices.slice(0, -1)
+                : effectiveVisibleIndices;
+            if (mainVisibleIndices.length) {
+                lastMainVisibleIdx = mainVisibleIndices[mainVisibleIndices.length - 1];
+            }
+        }
         rows.forEach(row => {
             const cols = row.querySelectorAll('.script-column');
             cols.forEach((col, idx) => {
                 const isLastVisible = idx === lastVisibleIdx;
                 const width = widths[idx] || 0;
                 if (isBroadcasting) {
-                    col.style.flex = width > 0 ? `0 0 ${width}px` : '';
-                    col.style.width = width > 0 ? `${width}px` : '';
-                    col.style.minWidth = '0';
+                    if (idx === lastMainVisibleIdx) {
+                        col.style.flex = '1 1 0%';
+                        col.style.minWidth = '0';
+                        col.style.width = 'auto';
+                    } else if (width > 0) {
+                        col.style.flex = `0 0 ${width}px`;
+                        col.style.width = `${width}px`;
+                        col.style.minWidth = '0';
+                    } else {
+                        col.style.flex = '';
+                        col.style.width = '';
+                        col.style.minWidth = '0';
+                    }
                 } else if (!isBroadcasting && isLastVisible && !(equalSplitThreeTextCols && maxCols === 3 && idx === maxCols - 1)) {
                     /* Last visible column grows to fill so col 2 expands when col 3 is hidden */
                     col.style.flex = `1 1 0%`;
