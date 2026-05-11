@@ -3377,6 +3377,7 @@ document.addEventListener('DOMContentLoaded', function() {
             setTimeout(sendPendingMirrorPosition, 600);
         }
         pushMirrorDebugMode();
+        requestMirrorFullscreen();
         syncColumnWidths(true);
         refreshMirrorData();
         syncMirrorStyles();
@@ -7961,11 +7962,39 @@ function getMirrorDebugMode() {
     }
 }
 
+function syncDebugModeBadge() {
+    const badge = document.getElementById('debug-mode-badge');
+    if (!badge) return;
+    const on = getMirrorDebugMode();
+    badge.classList.toggle('hidden', !on);
+    badge.setAttribute('aria-hidden', on ? 'false' : 'true');
+}
+
 function pushMirrorDebugMode() {
     if (!mirrorWindow || mirrorWindow.closed) return;
     try {
         mirrorWindow.postMessage({ type: 'setMirrorDebugMode', enabled: getMirrorDebugMode() }, '*');
     } catch (_) {}
+}
+
+function requestMirrorFullscreen() {
+    if (!mirrorWindow || mirrorWindow.closed || getMirrorDebugMode()) return;
+    const tryOnce = () => {
+        if (!mirrorWindow || mirrorWindow.closed || getMirrorDebugMode()) return;
+        try {
+            mirrorWindow.focus();
+        } catch (_) {}
+        try {
+            mirrorWindow.postMessage({ type: 'requestMirrorFullscreen' }, '*');
+        } catch (_) {}
+        try {
+            const doc = mirrorWindow.document;
+            const root = doc && doc.documentElement;
+            const req = root && (root.requestFullscreen || root.webkitRequestFullscreen || root.msRequestFullscreen);
+            if (req) req.call(root).catch(() => {});
+        } catch (_) {}
+    };
+    [0, 60, 180, 400, 900, 1800].forEach((ms) => setTimeout(tryOnce, ms));
 }
 
 /** Scroll sync: content Y at viewport top + row origins (not scroll ratio — different window heights). */
@@ -7998,6 +8027,97 @@ function getSecondMonitorPosition() {
     }
 }
 
+function pickSecondaryScreen(screenDetails) {
+    const current = screenDetails?.currentScreen;
+    const screens = screenDetails?.screens;
+    if (!current || !Array.isArray(screens) || screens.length < 2) return null;
+    const differs = (screen) => screen !== current && (
+        screen.availLeft !== current.availLeft ||
+        screen.availTop !== current.availTop ||
+        screen.availWidth !== current.availWidth ||
+        screen.availHeight !== current.availHeight
+    );
+    return screens.find(differs) || screens.find((screen) => screen !== current) || null;
+}
+
+async function resolveMirrorScreens() {
+    let currentScreen = null;
+    let secondaryScreen = null;
+    if (!('getScreenDetails' in window)) return { currentScreen, secondaryScreen };
+    try {
+        const screenDetails = await window.getScreenDetails();
+        currentScreen = screenDetails.currentScreen || null;
+        secondaryScreen = pickSecondaryScreen(screenDetails);
+    } catch (err) {
+        console.warn('getScreenDetails failed:', err);
+    }
+    return { currentScreen, secondaryScreen };
+}
+
+function getFallbackMirrorPosition(mirrorW, mirrorH) {
+    const gap = 48;
+    const screenLeft = window.screen.availLeft || 0;
+    const screenTop = window.screen.availTop || 0;
+    const screenW = window.screen.availWidth || 1920;
+    const screenH = window.screen.availHeight || 1080;
+    const pos = getSecondMonitorPosition();
+    let mirrorLeft = screenLeft;
+    let mirrorTop = screenTop;
+    switch (pos) {
+        case 'left':
+            mirrorLeft = screenLeft - mirrorW - gap;
+            break;
+        case 'above':
+            mirrorTop = screenTop - mirrorH - gap;
+            break;
+        case 'below':
+            mirrorTop = screenTop + screenH + gap;
+            break;
+        case 'right':
+        default:
+            mirrorLeft = screenLeft + screenW + gap;
+            break;
+    }
+    return { left: mirrorLeft, top: mirrorTop };
+}
+
+function describeMultiscreenSupport() {
+    if (window.location.protocol === 'file:') {
+        return 'Open the app from http://localhost (not the file directly). Run "npx serve" in this folder, then open http://localhost:3000 in Chrome or Edge.';
+    }
+    if (!('getScreenDetails' in window)) {
+        const ua = navigator.userAgent;
+        if (/Safari\//i.test(ua) && !/Chrome|Chromium|Edg\//i.test(ua)) {
+            return 'Safari cannot place windows on another display automatically. Open this app in Chrome or Edge over http://localhost, then use Request multi-screen access.';
+        }
+        return 'Your browser does not expose multiple displays. Choose Left or Right under Second monitor, click Extend, then drag the mirror window to the other display.';
+    }
+    return '';
+}
+
+async function refreshMultiscreenStatus(el) {
+    if (!el) return;
+    const blocked = describeMultiscreenSupport();
+    if (blocked) {
+        el.textContent = blocked;
+        return;
+    }
+    try {
+        const screenDetails = await window.getScreenDetails();
+        const screens = screenDetails?.screens?.length || 0;
+        const secondary = pickSecondaryScreen(screenDetails);
+        if (screens > 1 && secondary) {
+            el.textContent = 'Access allowed (' + screens + ' displays). Use Extend Monitor to open the mirror on the other display.';
+        } else if (screens > 1) {
+            el.textContent = 'Access allowed (' + screens + ' displays). No secondary display was detected for placement.';
+        } else {
+            el.textContent = 'Access allowed (1 display). Connect a second monitor, then try again.';
+        }
+    } catch (err) {
+        el.textContent = 'Permission denied or failed. Allow Window management for this site in the browser prompt, then try again.';
+    }
+}
+
 if (secondMonitorPositionRadios && secondMonitorPositionRadios.length) {
     try {
         const saved = localStorage.getItem(SECOND_MONITOR_STORAGE_KEY);
@@ -8022,12 +8142,16 @@ if (mirrorDebugModeCheckbox) {
         if (savedDebug === 'true') mirrorDebugModeCheckbox.checked = true;
         if (savedDebug === 'false') mirrorDebugModeCheckbox.checked = false;
     } catch (_) {}
+    syncDebugModeBadge();
     mirrorDebugModeCheckbox.addEventListener('change', () => {
         try {
             localStorage.setItem(MIRROR_DEBUG_MODE_STORAGE_KEY, mirrorDebugModeCheckbox.checked ? 'true' : 'false');
         } catch (_) {}
+        syncDebugModeBadge();
         pushMirrorDebugMode();
     });
+} else {
+    syncDebugModeBadge();
 }
 
 const btnRequestMultiscreen = document.getElementById('btn-request-multiscreen');
@@ -8035,22 +8159,7 @@ const multiscreenStatusEl = document.getElementById('multiscreen-status');
 if (btnRequestMultiscreen && multiscreenStatusEl) {
     btnRequestMultiscreen.addEventListener('click', async () => {
         multiscreenStatusEl.textContent = '';
-        const isFileProtocol = window.location.protocol === 'file:';
-        if (isFileProtocol) {
-            multiscreenStatusEl.textContent = 'Open the app from http://localhost (not the file directly). Run "npx serve" in this folder, then open http://localhost:3000 in Chrome.';
-            return;
-        }
-        if (!('getScreenDetails' in window)) {
-            multiscreenStatusEl.textContent = 'Multi-screen API not available (Chrome on Mac or file://). Use Left/Right; if the mirror doesn\'t move, drag it to your other monitor.';
-            return;
-        }
-        try {
-            const screenDetails = await window.getScreenDetails();
-            const n = screenDetails.screens ? screenDetails.screens.length : 0;
-            multiscreenStatusEl.textContent = n > 1 ? 'Access allowed (' + n + ' screen(s)).' : 'Allowed (1 screen).';
-        } catch (err) {
-            multiscreenStatusEl.textContent = 'Denied or failed. Using Left/Right for mirror.';
-        }
+        await refreshMultiscreenStatus(multiscreenStatusEl);
     });
 }
 
@@ -8131,14 +8240,7 @@ extendMonitorButton.onclick = async () => {
     }
 
     try {
-        let currentScreen = null;
-        let secondaryScreen = null;
-
-        if ('getScreenDetails' in window) {
-            const screenDetails = await window.getScreenDetails();
-            currentScreen = screenDetails.currentScreen;
-            secondaryScreen = screenDetails.screens.find(s => s !== currentScreen) || null;
-        }
+        const { currentScreen, secondaryScreen } = await resolveMirrorScreens();
 
         /* 5:4 aspect ratio, fixed for both views */
         const availW = currentScreen ? currentScreen.availWidth : (window.screen.availWidth || 800);
@@ -8221,43 +8323,21 @@ extendMonitorButton.onclick = async () => {
 
         /* Position mirror on other monitor: use getScreenDetails when available, else user's "second monitor position" setting */
         let mirrorLeft, mirrorTop;
+        const mirrorW = extendedWindowWidth;
+        const mirrorH = extendedWindowHeight;
         if (secondaryScreen) {
             mirrorLeft = secondaryScreen.availLeft;
             mirrorTop = secondaryScreen.availTop;
         } else {
-            const pos = getSecondMonitorPosition();
-            const pw = window.screen.availWidth || 1920;
-            const ph = window.screen.availHeight || 1080;
-            const gap = 50;
-            const assumedOtherW = 1920;
-            const assumedOtherH = 1080;
-            switch (pos) {
-                case 'left':
-                    mirrorLeft = -assumedOtherW - gap;
-                    mirrorTop = 0;
-                    break;
-                case 'above':
-                    mirrorLeft = 0;
-                    mirrorTop = -assumedOtherH - gap;
-                    break;
-                case 'below':
-                    mirrorLeft = 0;
-                    mirrorTop = ph + gap;
-                    break;
-                case 'right':
-                default:
-                    mirrorLeft = Math.max(pw + gap, 2560);
-                    mirrorTop = 0;
-                    break;
-            }
+            const fallback = getFallbackMirrorPosition(mirrorW, mirrorH);
+            mirrorLeft = fallback.left;
+            mirrorTop = fallback.top;
         }
         /* Same 5:4 ratio and fixed width as main: both views use extendedWindowWidth × extendedWindowHeight so teleprompter layout matches. */
-        const mirrorW = extendedWindowWidth;
-        const mirrorH = extendedWindowHeight;
         const specs = `left=${mirrorLeft},top=${mirrorTop},width=${mirrorW},height=${mirrorH},toolbar=no,menubar=no,location=no,status=no,scrollbars=no`;
 
+        pendingMirrorPosition = { left: mirrorLeft, top: mirrorTop, width: mirrorW, height: mirrorH };
         if (!secondaryScreen) {
-            pendingMirrorPosition = { left: mirrorLeft, top: mirrorTop, width: mirrorW, height: mirrorH };
             const posLabel = getSecondMonitorPosition();
             console.log('Mirror manual position: ' + posLabel + ' → x=' + mirrorLeft + ', y=' + mirrorTop + ', size ' + mirrorW + '×' + mirrorH);
             const toast = document.getElementById('mirror-placement-toast');
@@ -8270,12 +8350,13 @@ extendMonitorButton.onclick = async () => {
                 setTimeout(function() { toast.classList.add('hidden'); }, 8000);
             }
         } else {
-            pendingMirrorPosition = null;
+            console.log('Mirror screen position: x=' + mirrorLeft + ', y=' + mirrorTop + ', size ' + mirrorW + '×' + mirrorH);
         }
 
         const mirrorUrl = 'mirror.html?v=' + Date.now() + (getMirrorDebugMode() ? '&debug=1' : '');
         mirrorWindow = window.open(mirrorUrl, 'TeleprompterMirror', specs);
         if (mirrorWindow) {
+            requestMirrorFullscreen();
             if (mirrorCloseCheckInterval) clearInterval(mirrorCloseCheckInterval);
             mirrorCloseCheckInterval = setInterval(() => {
                 if (mirrorWindow && mirrorWindow.closed) {
@@ -8285,7 +8366,9 @@ extendMonitorButton.onclick = async () => {
 
             const sendWhenReady = () => {
                 pushMirrorDebugMode();
-                if (!secondaryScreen && pendingMirrorPosition) {
+                requestMirrorFullscreen();
+                sendPendingMirrorPosition();
+                if (pendingMirrorPosition) {
                     try {
                         mirrorWindow.moveTo(mirrorLeft, mirrorTop);
                         mirrorWindow.resizeTo(mirrorW, mirrorH);
