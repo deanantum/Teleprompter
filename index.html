@@ -216,6 +216,31 @@
         </div>
 
         <main class="content-area">
+            <aside id="runlist-panel">
+                <div class="runlist-section">
+                    <div class="runlist-ribbon">
+                        <span class="section-label">Files</span>
+                        <button id="btn-move-file-up" title="Move Up"><i class="fa-solid fa-arrow-up"></i></button>
+                        <button id="btn-move-file-down" title="Move Down"><i class="fa-solid fa-arrow-down"></i></button>
+                    </div>
+                    <div class="runlist-files"></div>
+                </div>
+                <div id="runlist-bookmark-resizer" class="panel-resizer" title="Drag to resize"></div>
+                <div class="bookmark-section">
+                    <div class="bookmark-list-header">
+                        <span class="section-label">Bookmarks</span>
+                        <div class="bookmark-buttons">
+                            <button id="btn-new-bookmark" title="New Bookmark"><i class="fa-solid fa-bookmark"></i></button>
+                            <button id="btn-prev-bookmark" title="Previous Bookmark"><i class="fa-solid fa-backward"></i></button>
+                            <button id="btn-next-bookmark" title="Next Bookmark"><i class="fa-solid fa-forward"></i></button>
+                        </div>
+                    </div>
+                    <div class="bookmark-list"></div>
+                </div>
+            </aside>
+
+            <div id="resizer"></div>
+
             <div class="teleprompter-stage">
                 <div id="debug-mode-badge" class="debug-mode-badge hidden" aria-hidden="true">Debug Mode</div>
 								<div id="page-turn-overlay" class="page-turn-overlay" aria-hidden="true"></div>
@@ -249,32 +274,7 @@
 									} catch (_) {}
 								})();
 								</script>
-						</div>
-            
-            <div id="resizer"></div>
-            
-            <aside id="runlist-panel">
-                <div class="runlist-section">
-                    <div class="runlist-ribbon">
-                        <span class="section-label">Files</span>
-                        <button id="btn-move-file-up" title="Move Up"><i class="fa-solid fa-arrow-up"></i></button>
-                        <button id="btn-move-file-down" title="Move Down"><i class="fa-solid fa-arrow-down"></i></button>
-                    </div>
-                    <div class="runlist-files"></div>
-                </div>
-                <div id="runlist-bookmark-resizer" class="panel-resizer" title="Drag to resize"></div>
-                <div class="bookmark-section">
-                    <div class="bookmark-list-header">
-                        <span class="section-label">Bookmarks</span>
-                        <div class="bookmark-buttons">
-                            <button id="btn-new-bookmark" title="New Bookmark"><i class="fa-solid fa-bookmark"></i></button>
-                            <button id="btn-prev-bookmark" title="Previous Bookmark"><i class="fa-solid fa-backward"></i></button>
-                            <button id="btn-next-bookmark" title="Next Bookmark"><i class="fa-solid fa-forward"></i></button>
-                        </div>
-                    </div>
-                    <div class="bookmark-list"></div>
-                </div>
-            </aside>
+            </div>
         </main>
     </div>
 
