@@ -108,6 +108,25 @@ body {
     z-index: 3;
     outline: none;
     padding: 0;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.42) transparent;
+}
+#teleprompter-view::-webkit-scrollbar {
+    display: block;
+    width: 12px;
+}
+#teleprompter-view::-webkit-scrollbar-track {
+    background: transparent;
+}
+#teleprompter-view::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.38);
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+#teleprompter-view::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.55);
+    background-clip: padding-box;
 }
 
 
@@ -392,6 +411,7 @@ body.format-pickup-mode #teleprompter-text,
 
 #teleprompter-text {
     width: 100%;
+    max-width: 100%;
     min-height: 100%;
     margin: 0;
     padding: 0 0 0 var(--indicator-gutter, 40px); 
@@ -1807,25 +1827,6 @@ body.broadcasting #teleprompter-view {
     padding-left: var(--extend-left-gap) !important;
     box-sizing: border-box;
     overflow-x: hidden;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.42) transparent;
-}
-body.broadcasting #teleprompter-view::-webkit-scrollbar {
-    display: block;
-    width: 12px;
-}
-body.broadcasting #teleprompter-view::-webkit-scrollbar-track {
-    background: transparent;
-}
-body.broadcasting #teleprompter-view::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.38);
-    border-radius: 10px;
-    border: 2px solid transparent;
-    background-clip: padding-box;
-}
-body.broadcasting #teleprompter-view::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.55);
-    background-clip: padding-box;
 }
 /* No padding/gap when broadcasting - tight rows */
 body.broadcasting #teleprompter-text {
@@ -1879,6 +1880,15 @@ body.broadcasting #teleprompter-text .script-column .cell-content div {
 
 /* First column always black background */
 #teleprompter-text .script-row-wrapper .script-column:first-child { background-color: #000000 !important; }
+/* Cue/ID column: keep compact tokens on one line (avoid 2-digit wrap when col0 is shrink-fit). */
+#teleprompter-text .script-container .script-row-wrapper .script-column:first-child .cell-locker,
+#teleprompter-text .script-container .script-row-wrapper .script-column:first-child .cell-content,
+#teleprompter-text .script-container .script-row-wrapper .script-column:first-child .cell-content p,
+#teleprompter-text .script-container .script-row-wrapper .script-column:first-child .cell-content div {
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
+}
 
 
 #teleprompter-text.global-fill-active,
@@ -1975,6 +1985,17 @@ body.broadcasting:not(.overview-mode) #teleprompter-text .script-row-wrapper.row
 }
 
 /* Aa mode: glow at the line between 2nd and 3rd column, out both sides (same gradient shape) */
+body.overview-mode #teleprompter-text .script-row-wrapper {
+    align-items: flex-start !important;
+    height: auto !important;
+    min-height: 0 !important;
+}
+body.overview-mode #teleprompter-text .script-row-wrapper .script-column,
+body.overview-mode #teleprompter-text .script-row-wrapper .cell-locker,
+body.overview-mode #teleprompter-text .script-row-wrapper .cell-content,
+body.overview-mode #teleprompter-text .script-row-wrapper .cell-content * {
+    line-height: 1.2 !important;
+}
 body.overview-mode #teleprompter-text .script-row-wrapper.row-col2-one-more .script-column:nth-child(2) {
     background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.75) 6%, rgba(0, 45, 4, 0.2) 14%, transparent 20%),
                 linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.75) 6%, rgba(0, 45, 4, 0.2) 14%, transparent 20%), transparent !important;
