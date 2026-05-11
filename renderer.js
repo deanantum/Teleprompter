@@ -209,6 +209,9 @@ document.addEventListener('DOMContentLoaded', function() {
     let extendedFixedWidth = null;  /* When broadcasting: fixed table width so main/mirror stay aligned */
     let extendedWindowWidth = null; /* 5:4 outer window size for main and mirror */
     let extendedWindowHeight = null;
+    const MIRROR_RUNLIST_EDGE_PX = 12;
+    let mirrorRunlistEdgeActive = false;
+    let mirrorRunlistOverlayOpen = false;
     let charCountsPerRow = [];
     let rowColorsCache = []; /* Stores row color classes from unextended view so colors don't change when extended */
     let rowFont12Cache = []; /* Rows containing |v use font 12, cache for extended view */
@@ -3659,50 +3662,7 @@ function indexToColumnLetter(colIndex) {
         if (!document.body.classList.contains('broadcasting')) return;
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
         if (rows.length === 0) return;
-        const scriptColWidth = lastColumnWidthPx != null && lastColumnWidthPx > 0 ? lastColumnWidthPx : 400;
-        const mainStyle = window.getComputedStyle(teleprompterText);
-        const probe = document.createElement('div');
-        probe.style.position = 'absolute';
-        probe.style.left = '-9999px';
-        probe.style.top = '0';
-        probe.style.width = scriptColWidth + 'px';
-        probe.style.fontSize = mainStyle.fontSize || '';
-        probe.style.fontFamily = mainStyle.fontFamily || '';
-        probe.style.lineHeight = '1.1';
-        probe.style.whiteSpace = 'pre-wrap';
-        probe.style.wordWrap = 'break-word';
-        probe.style.padding = '0';
-        probe.style.margin = '0';
-        probe.style.boxSizing = 'border-box';
-        document.body.appendChild(probe);
-        const numCols = rows[0] ? rows[0].querySelectorAll('.script-column').length : 0;
-        const contentIndices = getVisibleContentColumnIndices(numCols);
-        const mirrorColWidth = lastColumnWidthPx != null && lastColumnWidthPx > 0 ? lastColumnWidthPx : scriptColWidth;
-        measuredRowHeights = rows.map(row => {
-            const cols = row.querySelectorAll('.script-column');
-            let maxH = 1;
-            contentIndices.forEach(idx => {
-                const col = cols[idx];
-                if (!col) return;
-                let colW = Math.floor(col.getBoundingClientRect().width);
-                if (colW < 2 || col.classList.contains('broadcast-hidden')) {
-                    colW = idx === numCols - 1 ? mirrorColWidth : scriptColWidth;
-                }
-                colW = Math.max(20, colW);
-                if (colW > 0) {
-                    probe.style.width = colW + 'px';
-                    const cell = col.querySelector('.cell-locker') || col.querySelector('.cell-content') || col;
-                    const text = cell ? (cell.innerText || '').trim() || '\u00A0' : '\u00A0';
-                    probe.textContent = text;
-                    probe.style.fontSize = row.classList.contains('row-font-12') ? '12px' : (mainStyle.fontSize || '');
-                    probe.style.lineHeight = row.classList.contains('row-font-12') ? '1.2' : '1.1';
-                    const h = Math.max(1, probe.scrollHeight || 0);
-                    if (h > maxH) maxH = h;
-                }
-            });
-            return maxH;
-        });
-        probe.remove();
+        measuredRowHeights = measureBroadcastRowHeights(rows);
         rows.forEach((row, i) => {
             const h = measuredRowHeights[i];
             if (h > 0) {
@@ -3744,17 +3704,7 @@ function indexToColumnLetter(colIndex) {
         });
         void teleprompterText.offsetHeight;
         const viewportMax = Math.min(2000, (window.innerHeight || 800) * 2);
-        const mainActualHeights = rows.map(row => {
-            const cols = row.querySelectorAll('.script-column');
-            let maxSh = 1;
-            contentIndices.forEach(idx => {
-                const col = cols[idx];
-                const el = col ? (col.querySelector('.cell-locker') || col.querySelector('.cell-content') || col) : null;
-                const sh = el ? (el.scrollHeight || 0) : 0;
-                if (sh > maxSh) maxSh = sh;
-            });
-            return Math.max(1, Math.min(Math.floor(maxSh || 1), viewportMax));
-        });
+        const mainActualHeights = measureBroadcastRowHeights(rows).map(h => Math.max(1, Math.min(Math.floor(h || 1), viewportMax)));
         /* Merge with mirror reported so both views get same height */
         if (mirrorReportedRowHeights.length === rows.length) {
             measuredRowHeights = mainActualHeights.map((mh, i) => {
@@ -4499,6 +4449,7 @@ function indexToColumnLetter(colIndex) {
         extendedWindowHeight = null;
         teleprompterText.style.width = '';
         teleprompterText.style.maxWidth = '';
+        disableMirrorRunlistEdgeMode();
         document.body.classList.remove('broadcasting');
         applyBroadcastingVisibility();
         syncColumnWidths();
@@ -4518,22 +4469,25 @@ function indexToColumnLetter(colIndex) {
         return Math.max(0, Math.floor(teleprompterText.clientWidth - pl - pr));
     }
 
-    /** Main script width in extend mode: stop at the files/bookmarks resizer, not the full window. */
+    /** Main script width in extend mode: stop at #resizer, not under Files/Bookmarks. */
     function getBroadcastTeleprompterTextWidthPx() {
-        if (!teleprompterView) return 0;
+        if (!teleprompterView || !teleprompterText) return 0;
         void teleprompterView.offsetHeight;
-        const viewRect = teleprompterView.getBoundingClientRect();
-        let rightEdge = viewRect.right;
+        const stageRect = teleprompterStage
+            ? teleprompterStage.getBoundingClientRect()
+            : teleprompterView.getBoundingClientRect();
+        let rightEdge = stageRect.right;
         if (resizer && !resizer.classList.contains('hidden')) {
             const resizerRect = resizer.getBoundingClientRect();
             if (resizerRect.width > 0) {
                 rightEdge = Math.min(rightEdge, resizerRect.left);
             }
         }
+        const viewRect = teleprompterView.getBoundingClientRect();
         const viewCs = window.getComputedStyle(teleprompterView);
-        const pl = parseFloat(viewCs.paddingLeft) || 0;
-        const pr = parseFloat(viewCs.paddingRight) || 0;
-        return Math.max(100, Math.floor(rightEdge - viewRect.left - pl - pr));
+        const viewPl = parseFloat(viewCs.paddingLeft) || 0;
+        const viewPr = parseFloat(viewCs.paddingRight) || 0;
+        return Math.max(100, Math.floor(rightEdge - (viewRect.left + viewPl) - viewPr - 2));
     }
 
     function applyBroadcastMainViewportWidth() {
@@ -4551,6 +4505,67 @@ function indexToColumnLetter(colIndex) {
         }
     }
 
+    function syncMirrorRunlistOverlayTop() {
+        const header = document.querySelector('.top-ribbon');
+        if (!header) return;
+        document.documentElement.style.setProperty(
+            '--mirror-runlist-top',
+            Math.round(header.getBoundingClientRect().bottom) + 'px'
+        );
+    }
+
+    function setMirrorRunlistOverlayOpen(open) {
+        if (!mirrorRunlistEdgeActive || !runlistPanel) return;
+        const next = !!open;
+        if (next === mirrorRunlistOverlayOpen) return;
+        mirrorRunlistOverlayOpen = next;
+        document.body.classList.toggle('mirror-runlist-overlay-open', next);
+        if (toggleRunlistButton) {
+            toggleRunlistButton.title = next ? 'Hide Runlist' : 'Show Runlist';
+        }
+    }
+
+    function onMirrorRunlistEdgeMouseMove(e) {
+        if (!mirrorRunlistEdgeActive) return;
+        if (e.clientX >= window.innerWidth - MIRROR_RUNLIST_EDGE_PX) {
+            setMirrorRunlistOverlayOpen(true);
+        }
+    }
+
+    function onMirrorRunlistPanelMouseLeave(e) {
+        if (!mirrorRunlistEdgeActive || !mirrorRunlistOverlayOpen) return;
+        const related = e.relatedTarget;
+        if (related && runlistPanel.contains(related)) return;
+        setMirrorRunlistOverlayOpen(false);
+    }
+
+    function enableMirrorRunlistEdgeMode() {
+        if (!runlistPanel || !resizer || mirrorRunlistEdgeActive) return;
+        mirrorRunlistEdgeActive = true;
+        mirrorRunlistOverlayOpen = false;
+        syncMirrorRunlistOverlayTop();
+        runlistPanel.classList.remove('hidden');
+        resizer.classList.add('hidden');
+        document.body.classList.add('mirror-runlist-edge-mode');
+        document.body.classList.remove('mirror-runlist-overlay-open');
+        document.addEventListener('mousemove', onMirrorRunlistEdgeMouseMove, true);
+        runlistPanel.addEventListener('mouseleave', onMirrorRunlistPanelMouseLeave, true);
+        if (toggleRunlistButton) toggleRunlistButton.title = 'Show Runlist';
+        applyBroadcastMainViewportWidth();
+    }
+
+    function disableMirrorRunlistEdgeMode() {
+        if (!mirrorRunlistEdgeActive) return;
+        mirrorRunlistEdgeActive = false;
+        mirrorRunlistOverlayOpen = false;
+        document.removeEventListener('mousemove', onMirrorRunlistEdgeMouseMove, true);
+        if (runlistPanel) runlistPanel.removeEventListener('mouseleave', onMirrorRunlistPanelMouseLeave, true);
+        document.body.classList.remove('mirror-runlist-edge-mode', 'mirror-runlist-overlay-open');
+        if (runlistPanel) runlistPanel.classList.remove('hidden');
+        if (resizer) resizer.classList.remove('hidden');
+        if (toggleRunlistButton) toggleRunlistButton.title = 'Show/Hide Runlist';
+    }
+
     /** First column is sized from cue-style cells only — not section labels like "Pause" in col1 of sparse rows. */
     function isCueLikeFirstColumnText(raw) {
         const t = (raw || '').trim();
@@ -4566,6 +4581,85 @@ function indexToColumnLetter(colIndex) {
         const t = (raw || '').trim();
         if (!t) return '';
         return (t.split(/\s+/)[0] || t).trim();
+    }
+
+    function measureFirstColumnLayoutWidth(rows, maxCols, paddingWidth) {
+        if (maxCols < 2) return Math.ceil(paddingWidth);
+        const probe = document.createElement('span');
+        probe.style.position = 'absolute';
+        probe.style.visibility = 'hidden';
+        probe.style.whiteSpace = 'pre';
+        const tf = window.getComputedStyle(teleprompterText);
+        probe.style.fontFamily = tf.fontFamily;
+        probe.style.fontSize = isOverviewMode ? '12px' : tf.fontSize;
+        probe.style.lineHeight = isOverviewMode ? '1.2' : tf.lineHeight;
+        document.body.appendChild(probe);
+        probe.textContent = '99';
+        const minCol0Floor = probe.getBoundingClientRect().width;
+        let col0Max = 0;
+        rows.forEach(row => {
+            const cols = row.querySelectorAll('.script-column');
+            if (cols.length < 2) return;
+            const cell = cols[0]?.querySelector('.cell-content') || cols[0]?.querySelector('.cell-locker') || cols[0];
+            const txt = (cell?.textContent || '').trim();
+            if (!isCueLikeFirstColumnText(txt)) return;
+            probe.textContent = firstColumnCueTokenForMeasure(txt) || txt;
+            col0Max = Math.max(col0Max, probe.getBoundingClientRect().width);
+        });
+        probe.remove();
+        return Math.ceil(Math.max(col0Max, minCol0Floor) + paddingWidth) + 2;
+    }
+
+    function measureBroadcastRowHeights(rows) {
+        if (!rows.length) return [];
+        const numCols = rows[0].querySelectorAll('.script-column').length;
+        const scriptColWidth = lastColumnWidthPx != null && lastColumnWidthPx > 0 ? lastColumnWidthPx : 400;
+        const mirrorColWidth = scriptColWidth;
+        const mainStyle = window.getComputedStyle(teleprompterText);
+        const probe = document.createElement('div');
+        probe.style.position = 'absolute';
+        probe.style.left = '-9999px';
+        probe.style.top = '0';
+        probe.style.whiteSpace = 'pre-wrap';
+        probe.style.wordWrap = 'break-word';
+        probe.style.padding = '0';
+        probe.style.margin = '0';
+        probe.style.boxSizing = 'border-box';
+        document.body.appendChild(probe);
+        const heights = rows.map(row => {
+            const cols = row.querySelectorAll('.script-column');
+            let maxH = 1;
+            cols.forEach((col, idx) => {
+                if (col.classList.contains('broadcast-hidden')) return;
+                let colW = Math.floor(col.getBoundingClientRect().width);
+                if (colW < 2) {
+                    colW = idx === numCols - 1 ? mirrorColWidth : scriptColWidth;
+                }
+                colW = Math.max(20, colW);
+                probe.style.width = colW + 'px';
+                probe.style.fontSize = row.classList.contains('row-font-12') ? '12px' : (mainStyle.fontSize || '');
+                probe.style.fontFamily = mainStyle.fontFamily || '';
+                probe.style.lineHeight = row.classList.contains('row-font-12') ? '1.2' : '1.1';
+                const cell = col.querySelector('.cell-locker') || col.querySelector('.cell-content') || col;
+                const text = cell ? (cell.innerText || '').trim() || '\u00A0' : '\u00A0';
+                probe.textContent = text;
+                maxH = Math.max(maxH, Math.max(1, probe.scrollHeight || 0));
+            });
+            const mirrorCol = cols[numCols - 1];
+            if (mirrorCol) {
+                probe.style.width = mirrorColWidth + 'px';
+                probe.style.fontSize = row.classList.contains('row-font-12') ? '12px' : (mainStyle.fontSize || '');
+                probe.style.fontFamily = mainStyle.fontFamily || '';
+                probe.style.lineHeight = row.classList.contains('row-font-12') ? '1.2' : '1.1';
+                const mirrorCell = mirrorCol.querySelector('.cell-locker') || mirrorCol.querySelector('.cell-content') || mirrorCol;
+                const mirrorText = mirrorCell ? (mirrorCell.innerText || '').trim() || '\u00A0' : '\u00A0';
+                probe.textContent = mirrorText;
+                maxH = Math.max(maxH, Math.max(1, probe.scrollHeight || 0));
+            }
+            return maxH;
+        });
+        probe.remove();
+        return heights;
     }
 
     function syncColumnWidths(forceLineSpacing) {
@@ -4673,7 +4767,9 @@ function indexToColumnLetter(colIndex) {
             const contentIndices = mainVisibleIndices.filter(j => j >= 1);
             const hasCol0 = mainVisibleIndices.indexOf(0) >= 0;
             if (hasCol0) {
-                widths[0] = Math.ceil(digitsWidth + paddingWidth);
+                widths[0] = isBroadcasting
+                    ? measureFirstColumnLayoutWidth(rows, maxCols, paddingWidth)
+                    : Math.ceil(digitsWidth + paddingWidth);
             } else {
                 widths[0] = 0;
             }
@@ -5301,6 +5397,10 @@ if (btnMoveFileDown) btnMoveFileDown.onclick = () => moveFileInRunlist('down');
 
 if (toggleRunlistButton && runlistPanel && resizer) {
     toggleRunlistButton.onclick = () => {
+        if (mirrorRunlistEdgeActive) {
+            setMirrorRunlistOverlayOpen(!mirrorRunlistOverlayOpen);
+            return;
+        }
         const isHidden = runlistPanel.classList.toggle('hidden');
         resizer.classList.toggle('hidden', isHidden);
         toggleRunlistButton.title = isHidden ? 'Show Runlist' : 'Hide Runlist';
@@ -8250,6 +8350,7 @@ extendMonitorButton.onclick = async () => {
         mirrorWindow.close();
         mirrorWindow = null;
         measuredRowHeights = [];
+        disableMirrorRunlistEdgeMode();
         document.body.classList.remove('broadcasting');
         applyBroadcastingVisibility();
         syncColumnWidths();
@@ -8294,6 +8395,7 @@ extendMonitorButton.onclick = async () => {
     }
 
     document.body.classList.add('broadcasting');
+    enableMirrorRunlistEdgeMode();
     void teleprompterText.offsetHeight;
     applyBroadcastingVisibility();
     syncColumnWidths();
@@ -8328,52 +8430,11 @@ extendMonitorButton.onclick = async () => {
         teleprompterText.style.maxWidth = extendedFixedWidth + 'px';
 
         /* Table is now at final width; sync column widths again so layout is correct, then measure row heights */
-        syncColumnWidths();
+        syncColumnWidths(true);
+        applyRowShortColumnLineSpacing();
         void teleprompterText.offsetHeight;
         const rowsForMeasure = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
-        const scriptColWidth = lastColumnWidthPx;
-        const mainStyle = window.getComputedStyle(teleprompterText);
-        const probe = document.createElement('div');
-        probe.style.position = 'absolute';
-        probe.style.left = '-9999px';
-        probe.style.top = '0';
-        probe.style.width = (scriptColWidth != null && scriptColWidth > 0 ? scriptColWidth : 400) + 'px';
-        probe.style.fontSize = mainStyle.fontSize || '';
-        probe.style.fontFamily = mainStyle.fontFamily || '';
-        probe.style.lineHeight = '1.1';
-        probe.style.whiteSpace = 'pre-wrap';
-        probe.style.wordWrap = 'break-word';
-        probe.style.padding = '0';
-        probe.style.margin = '0';
-        probe.style.boxSizing = 'border-box';
-        document.body.appendChild(probe);
-        measuredRowHeights = rowsForMeasure.map(row => {
-            const cols = row.querySelectorAll('.script-column');
-            const numCols = cols.length;
-            const contentIndices = getVisibleContentColumnIndices(numCols);
-            let visibleMax = 1;
-            if (contentIndices.length > 0) {
-                const visibleHeights = contentIndices.map(idx => {
-                    const col = cols[idx];
-                    if (!col) return 0;
-                    const cell = col.querySelector('.cell-locker') || col.querySelector('.cell-content') || col;
-                    return cell ? (cell.scrollHeight || 0) : 0;
-                });
-                visibleMax = Math.max(1, ...visibleHeights);
-            }
-            const mirrorCol = cols[numCols - 1];
-            let mirrorH = 0;
-            if (mirrorCol && scriptColWidth != null && scriptColWidth > 0) {
-                const cell = mirrorCol.querySelector('.cell-locker') || mirrorCol.querySelector('.cell-content') || mirrorCol;
-                const text = cell ? (cell.innerText || '').trim() || '\u00A0' : '\u00A0';
-                probe.textContent = text;
-                probe.style.fontSize = row.classList.contains('row-font-12') ? '12px' : (mainStyle.fontSize || '');
-                probe.style.lineHeight = row.classList.contains('row-font-12') ? '1.2' : '1.1';
-                mirrorH = probe.scrollHeight || 0;
-            }
-            return Math.max(1, visibleMax, mirrorH);
-        });
-        probe.remove();
+        measuredRowHeights = measureBroadcastRowHeights(rowsForMeasure);
         rowsForMeasure.forEach((row, i) => {
             const h = measuredRowHeights[i];
             if (h > 0) {
@@ -8699,6 +8760,7 @@ window.addEventListener('resize', () => {
         if (window.outerWidth !== extendedWindowWidth || window.outerHeight !== extendedWindowHeight) {
             window.resizeTo(extendedWindowWidth, extendedWindowHeight);
         }
+        if (mirrorRunlistEdgeActive) syncMirrorRunlistOverlayTop();
         applyBroadcastMainViewportWidth();
     }
     syncColumnWidths(true);
