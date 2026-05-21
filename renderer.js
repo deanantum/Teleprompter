@@ -4021,6 +4021,8 @@ function indexToColumnLetter(colIndex) {
 
     const ROW_COLOR_CLASSES = ['row-lines-same', 'row-col2-more', 'row-col3-more', 'row-col3-much-more', 'row-col2-one-more', 'row-col3-one-more'];
     const ROW_STRETCH_MARKERS = ['row-stretch-col2', 'row-stretch-col3'];
+    /** Extended view: main = columns 1–2 (index 0–1), mirror = column 3 (index 2); never show column 4+. */
+    const BROADCAST_MAX_COLUMNS = 3;
     const TP_ROW_BALANCE_KEY = 'data-tp-row-balance-key';
     let tpLineBalanceDebounceTimer = null;
 
@@ -4180,7 +4182,7 @@ function indexToColumnLetter(colIndex) {
             const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
             if (rows.length === 0) return;
             const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
-            if (maxCols !== 3) return;
+            if (maxCols < BROADCAST_MAX_COLUMNS) return;
 
             /* Clear line-balance only on columns that are not the stretched one (avoids wiping then failing to re-apply after format changes). */
             rows.forEach(row => {
@@ -4310,7 +4312,7 @@ function indexToColumnLetter(colIndex) {
         if (rows.length === 0) return;
 
         const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
-        if (maxCols !== 3) {
+        if (maxCols < BROADCAST_MAX_COLUMNS) {
             rows.forEach(row => {
                 ROW_COLOR_CLASSES.forEach(c => row.classList.remove(c));
                 ROW_STRETCH_MARKERS.forEach(c => row.classList.remove(c));
@@ -4363,8 +4365,8 @@ function indexToColumnLetter(colIndex) {
         /* Left text column = col2 (green when more), right text column = col3 (red when more). DOM order: index 0 = numbers, 1 = left, 2 = right. */
         const WORD_DIFF_GLOW = 5;   /* word count difference >= this → glow */
         const WORD_DIFF_FILL = 10;  /* word count difference >= this → fill */
-        const idxCol2 = Math.max(0, maxCols - 2);  /* left = col2 → green when more */
-        const idxCol3 = maxCols - 1;               /* right = col3 → red when more */
+        const idxCol2 = 1;
+        const idxCol3 = 2;
         /* Require this margin (px) to *change* which column is stretched; in the dead zone keep previous (avoids stretch toggling on bold/focus/sync). */
         const STRETCH_HEIGHT_HYSTERESIS_PX = 4;
 
@@ -4559,6 +4561,37 @@ function indexToColumnLetter(colIndex) {
         return last >= 0 ? last : (maxCols > 0 ? maxCols - 1 : 0);
     }
 
+    function getBroadcastMirrorColumnIndex(maxCols) {
+        if (maxCols >= BROADCAST_MAX_COLUMNS) return BROADCAST_MAX_COLUMNS - 1;
+        return getLastVisibleColumnIndex(maxCols);
+    }
+
+    function trimCellsForMirrorBroadcast(cells) {
+        if (!cells || !cells.length) return cells || [];
+        return cells.length > BROADCAST_MAX_COLUMNS ? cells.slice(0, BROADCAST_MAX_COLUMNS) : cells;
+    }
+
+    function getMirrorRowColorClass(row, rowIndex, rowColorsList) {
+        const fromDom = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
+        if (fromDom) return fromDom;
+        if (rowColorsList && rowColorsList[rowIndex]) return rowColorsList[rowIndex];
+        return '';
+    }
+
+    function buildMirrorTableRowPayload(row, rowIndex, rowColorsList) {
+        const cols = row.querySelectorAll('.script-column');
+        const cells = trimCellsForMirrorBroadcast(Array.from(cols).map(col => {
+            const c = col.querySelector('.cell-content') || col;
+            return getMirrorCellHtml(c);
+        }));
+        const colorClass = getMirrorRowColorClass(row, rowIndex, rowColorsList);
+        const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
+        const stretchParts = ROW_STRETCH_MARKERS.filter(c => row.classList.contains(c));
+        const rowClass = [colorClass, keywordPill, ...stretchParts].filter(Boolean).join(' ');
+        const font12 = row.classList.contains('row-font-12');
+        return { cells, rowClass, font12 };
+    }
+
     /** Number of visible columns (per file checkboxes). When 1, main and mirror show the same column. */
     function getVisibleColumnCount(maxCols) {
         const vis = currentFileIndex >= 0 && fileColumnVisibility[currentFileIndex] ? fileColumnVisibility[currentFileIndex] : null;
@@ -4602,30 +4635,18 @@ function indexToColumnLetter(colIndex) {
                 /* e.g. font ribbon cleared heights async — mirror would get no rowHeights and collapse rows */
                 measureRowHeightsWithProbeForBroadcasting();
             }
-            if (broadcastEditMode && rows.length > 0) {
+            if (rows.length > 0) {
                 buildCharCountsPerRow();
                 applyRowColors();
             }
         }
-        /* Copy full table to mirror (all columns); mirror shows the last visible column (per file checkboxes). */
+        /* Copy table to mirror (max 3 columns); mirror shows column 3 (index 2) when present. */
         const pillPayload = getMirrorPillPayload();
         if (rows.length > 0 && isBroadcasting) {
             const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
-            const visibleColumnIndex = getLastVisibleColumnIndex(maxCols);
-            const rowData = rows.map(row => {
-                const cols = row.querySelectorAll('.script-column');
-                const cells = Array.from(cols).map(col => {
-                    const c = col.querySelector('.cell-content') || col;
-                    return getMirrorCellHtml(c);
-                });
-                const colorClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
-                const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
-                const stretchParts = ROW_STRETCH_MARKERS.filter(c => row.classList.contains(c));
-                const rowClass = [colorClass, keywordPill, ...stretchParts].filter(Boolean).join(' ');
-                const font12 = row.classList.contains('row-font-12');
-                return { cells, rowClass, font12 };
-            });
+            const visibleColumnIndex = getBroadcastMirrorColumnIndex(maxCols);
             const rowColors = (rowColorsCache.length === rows.length) ? rowColorsCache : rows.map(row => ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '');
+            const rowData = rows.map((row, i) => buildMirrorTableRowPayload(row, i, rowColors));
             const rowFont12 = (rowFont12Cache.length === rows.length) ? rowFont12Cache : rows.map(row => row.classList.contains('row-font-12'));
             const rowHeights = (measuredRowHeights.length === rows.length) ? measuredRowHeights : null;
             mirrorWindow.postMessage({
@@ -4640,22 +4661,10 @@ function indexToColumnLetter(colIndex) {
                 layout: getMirrorLayoutMetrics()
             }, '*');
         } else if (rows.length > 0) {
-            const rowData = rows.map(row => {
-                const cols = row.querySelectorAll('.script-column');
-                const cells = Array.from(cols).map(col => {
-                    const c = col.querySelector('.cell-content') || col;
-                    return getMirrorCellHtml(c);
-                });
-                const colorClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
-                const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
-                const stretchParts = ROW_STRETCH_MARKERS.filter(c => row.classList.contains(c));
-                const rowClass = [colorClass, keywordPill, ...stretchParts].filter(Boolean).join(' ');
-                const font12 = row.classList.contains('row-font-12');
-                return { cells, rowClass, font12 };
-            });
             const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
-            const visibleColumnIndex = getLastVisibleColumnIndex(maxCols);
+            const visibleColumnIndex = getBroadcastMirrorColumnIndex(maxCols);
             const rowColors = rows.map(row => ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '');
+            const rowData = rows.map((row, i) => buildMirrorTableRowPayload(row, i, rowColors));
             const rowFont12 = rows.map(row => row.classList.contains('row-font-12'));
             mirrorWindow.postMessage({
                 type: 'loadContent',
@@ -4697,15 +4706,20 @@ function indexToColumnLetter(colIndex) {
         if ((!visibleIndices || visibleIndices.length === 0) && maxCols > 1) {
             contentVisibleCount = maxCols - 1;
         }
-        const lastVisible = isBroadcasting && maxCols > 0 ? getLastVisibleColumnIndex(maxCols) : -1;
-        const hideLastOnMain = isBroadcasting && contentVisibleCount >= 2 && lastVisible >= 0;
+        const mirrorColIdx = isBroadcasting && maxCols > 0 ? getBroadcastMirrorColumnIndex(maxCols) : -1;
+        const useFixedThreeColSplit = isBroadcasting && maxCols >= BROADCAST_MAX_COLUMNS;
+        const hideMirrorColOnMain = useFixedThreeColSplit
+            || (isBroadcasting && contentVisibleCount >= 2 && mirrorColIdx >= 0);
         rows.forEach(row => {
             const cols = row.querySelectorAll('.script-column');
-            cols.forEach(col => col.classList.remove('broadcast-hidden'));
-            /* When 2+ content columns visible: main shows all except the last; mirror shows the last. When only 1 content column: main shows same as mirror. */
-            if (hideLastOnMain && cols[lastVisible]) {
-                cols[lastVisible].classList.add('broadcast-hidden');
-            }
+            cols.forEach((col, idx) => {
+                col.classList.remove('broadcast-hidden');
+                if (isBroadcasting && idx >= BROADCAST_MAX_COLUMNS) {
+                    col.classList.add('broadcast-hidden');
+                } else if (hideMirrorColOnMain && idx === mirrorColIdx) {
+                    col.classList.add('broadcast-hidden');
+                }
+            });
         });
         if (isBroadcasting) {
             /* Keep locked heights (set by extend flow); only clear when leaving broadcasting */
@@ -5068,10 +5082,12 @@ function indexToColumnLetter(colIndex) {
             widths[0] = availableWidth;
         } else if (!equalSplitThreeTextCols && useVisibleColumns && effectiveVisibleIndices) {
             const contentVisibleCount = effectiveVisibleIndices.filter(i => i >= 1).length;
-            /* In extend mode with 2+ content columns: main shows all visible except the last (mirror shows the last). */
-            const mainVisibleIndices = (isBroadcasting && contentVisibleCount >= 2)
-                ? effectiveVisibleIndices.slice(0, -1)
-                : effectiveVisibleIndices;
+            /* 3-column extend: main = cols 1–2 (index 0–1); mirror = col 3 (index 2). Else last visible goes to mirror. */
+            const mainVisibleIndices = (isBroadcasting && maxCols >= BROADCAST_MAX_COLUMNS)
+                ? [0, 1]
+                : (isBroadcasting && contentVisibleCount >= 2)
+                    ? effectiveVisibleIndices.slice(0, -1)
+                    : effectiveVisibleIndices;
             const contentIndices = mainVisibleIndices.filter(j => j >= 1);
             const hasCol0 = mainVisibleIndices.indexOf(0) >= 0;
             if (hasCol0) {
@@ -5098,7 +5114,7 @@ function indexToColumnLetter(colIndex) {
 
         /* When broadcasting, mirror shows one column; set its width for mirror layout. */
         if (isBroadcasting && maxCols > 0 && nVisible > 0) {
-            const lastIdx = getLastVisibleColumnIndex(maxCols);
+            const lastIdx = getBroadcastMirrorColumnIndex(maxCols);
             const contentRemainingForMirror = Math.max(0, availableWidth - (widths[0] || 0));
             lastColumnWidthPx = (lastIdx < widths.length && widths[lastIdx] > 0)
                 ? widths[lastIdx]
@@ -5119,9 +5135,11 @@ function indexToColumnLetter(colIndex) {
         let lastMainVisibleIdx = lastVisibleIdx;
         if (effectiveVisibleIndices && effectiveVisibleIndices.length > 0) {
             const contentVisibleCount = effectiveVisibleIndices.filter(i => i >= 1).length;
-            const mainVisibleIndices = (isBroadcasting && contentVisibleCount >= 2)
-                ? effectiveVisibleIndices.slice(0, -1)
-                : effectiveVisibleIndices;
+            const mainVisibleIndices = (isBroadcasting && maxCols >= BROADCAST_MAX_COLUMNS)
+                ? [0, 1]
+                : (isBroadcasting && contentVisibleCount >= 2)
+                    ? effectiveVisibleIndices.slice(0, -1)
+                    : effectiveVisibleIndices;
             if (mainVisibleIndices.length) {
                 lastMainVisibleIdx = mainVisibleIndices[mainVisibleIndices.length - 1];
             }
