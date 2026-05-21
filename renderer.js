@@ -4594,33 +4594,44 @@ function indexToColumnLetter(colIndex) {
         return { cells, rowClass, font12 };
     }
 
-    /** Copy computed row-guide paint from main column 2 so mirror column 3 matches exactly. */
+    const MIRROR_GUIDE_PAINT_BY_CLASS = {
+        'row-col2-one-more': {
+            rowBackground: '#000000',
+            columnBackgroundColor: '#000000',
+            columnBackgroundImage: 'linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%), linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%)',
+            color: ''
+        },
+        'row-col3-one-more': {
+            rowBackground: '#000000',
+            columnBackgroundColor: '#000000',
+            columnBackgroundImage: 'linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%)',
+            color: ''
+        },
+        'row-col2-more': { rowBackground: '#002D04', columnBackgroundColor: '#002D04', color: '#ffffff' },
+        'row-col3-more': { rowBackground: '#531516', columnBackgroundColor: '#531516', color: '#ffffff' },
+        'row-col3-much-more': { rowBackground: '#531516', columnBackgroundColor: '#531516', color: '#ffffff' }
+    };
+
+    /** Row-guide paint for mirror column 3 (same classes/hex as main column 2). */
     function getMirrorRowGuideStylesFromMain(rows) {
-        const isTransparent = (s) => !s || s === 'transparent' || s === 'rgba(0, 0, 0, 0)';
         return Array.from(rows).map(row => {
             const cls = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
             if (!cls || cls === 'row-lines-same') return null;
+            const preset = MIRROR_GUIDE_PAINT_BY_CLASS[cls];
+            if (preset) return { ...preset };
             const cols = row.querySelectorAll('.script-column');
             const col2 = cols[1];
             if (!col2) return null;
-            const rowCs = window.getComputedStyle(row);
             const colCs = window.getComputedStyle(col2);
             const bgImg = colCs.backgroundImage;
             const bgc = colCs.backgroundColor;
-            let columnBackground = colCs.background;
-            if (isTransparent(columnBackground) || columnBackground === 'none' || columnBackground === 'initial') {
-                if (bgImg && bgImg !== 'none') {
-                    columnBackground = bgImg;
-                    if (!isTransparent(bgc)) columnBackground += ' ' + bgc;
-                } else {
-                    columnBackground = isTransparent(bgc) ? '' : bgc;
-                }
-            }
-            return {
-                rowBackground: rowCs.backgroundColor,
-                columnBackground,
+            const out = {
+                rowBackground: window.getComputedStyle(row).backgroundColor,
+                columnBackgroundColor: bgc,
                 color: colCs.color
             };
+            if (bgImg && bgImg !== 'none') out.columnBackgroundImage = bgImg;
+            return out;
         });
     }
 
