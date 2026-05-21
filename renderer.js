@@ -179,7 +179,11 @@ document.addEventListener('DOMContentLoaded', function() {
     let spacebarControlsPlay = true; /* false after any mouse click so only Option+A starts; Option+A resets so spacebar works again */
     let isMouseControlActive = true;
     let scrollSpeed = 0;
+    let displayScrollSpeed = 0; /* Smoothed speed used by the scroll loop (lerps toward scrollSpeed) */
     let scrollAccum = 0; /* Fractional accumulator so small speeds (0.1, 0.2) actually scroll */
+    let scrollLastFrameTime = 0;
+    const SCROLL_SPEED_SMOOTH_TAU_SEC = 0.12; /* Time constant for speed changes (keyboard / slider) */
+    const SCROLL_FRAME_MS = 1000 / 60; /* scrollSpeed is defined as px per frame at 60fps */
     let scrollInterval = null;
     let lastActiveSpeed = 1;
     let isInvertScroll = false;
@@ -1718,9 +1722,17 @@ document.addEventListener('DOMContentLoaded', function() {
     function startScrolling() {
         if (isTeleprompting) return;
         isTeleprompting = true;
-        const move = () => {
+        scrollLastFrameTime = 0;
+        displayScrollSpeed = scrollSpeed;
+        const move = (now) => {
             if (!isTeleprompting) return;
-            scrollAccum += scrollSpeed;
+            const t = typeof now === 'number' ? now : performance.now();
+            const dtMs = scrollLastFrameTime ? Math.min(48, t - scrollLastFrameTime) : SCROLL_FRAME_MS;
+            scrollLastFrameTime = t;
+            const dtSec = dtMs / 1000;
+            const smoothAlpha = 1 - Math.exp(-dtSec / SCROLL_SPEED_SMOOTH_TAU_SEC);
+            displayScrollSpeed += (scrollSpeed - displayScrollSpeed) * smoothAlpha;
+            scrollAccum += displayScrollSpeed * (dtMs / SCROLL_FRAME_MS);
             const delta = Math.trunc(scrollAccum);
             if (delta !== 0) {
                 teleprompterView.scrollTop += delta;
@@ -1780,6 +1792,8 @@ document.addEventListener('DOMContentLoaded', function() {
         isTeleprompting = false;
         isPaused = false;
         scrollAccum = 0;
+        displayScrollSpeed = 0;
+        scrollLastFrameTime = 0;
         if (animationFrameId) cancelAnimationFrame(animationFrameId);
         animationFrameId = null;
         teleprompterView.scrollTop = 0;
@@ -1851,6 +1865,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('mousedown', () => { spacebarControlsPlay = false; }, true);
 
     let heldKeyInterval = null;
+    let heldArrowKey = null;
+    const HELD_KEY_TICK_MS = 32;
     /** isRepeat: true when called from the hold interval. When !isInvertScroll, Down/Left stops at 0. When isInvertScroll, Up/Right stops at 0 (opposite direction). */
     const applyArrowStep = (key, step, isRepeat = false) => {
         let v = parseFloat(speedSlider.value) || 0;
@@ -1892,20 +1908,24 @@ document.addEventListener('DOMContentLoaded', function() {
         if (['ArrowLeft', 'ArrowDown', 'ArrowRight', 'ArrowUp'].includes(key)) {
             e.preventDefault();
             e.stopPropagation();
+            /* OS key-repeat and controllers that re-send keydown: don't restart ramp or double-step */
+            if (heldArrowKey === key && heldKeyInterval) return;
             if (e.repeat && heldKeyInterval) return;
 
             if (heldKeyInterval) clearInterval(heldKeyInterval);
-            applyArrowStep(key, 0.1, false);  /* initial press: can cross zero */
+            heldArrowKey = key;
+            applyArrowStep(key, 0.1 * scrollSensitivity, false);  /* initial press: can cross zero */
             const heldKeyStart = Date.now();
             heldKeyInterval = setInterval(() => {
                 const elapsedSec = (Date.now() - heldKeyStart) / 1000;
-                const step = 0.1 * (1 + elapsedSec * 2);
+                const step = 0.1 * scrollSensitivity * (1 + elapsedSec * 2) * (HELD_KEY_TICK_MS / 80);
                 applyArrowStep(key, step, true);  /* repeat: stop at 0, don't cross */
-            }, 80);
+            }, HELD_KEY_TICK_MS);
         }
     }, true);
     document.addEventListener('keyup', (e) => {
         if (['ArrowLeft', 'ArrowDown', 'ArrowRight', 'ArrowUp'].includes(e.key)) {
+            if (heldArrowKey === e.key) heldArrowKey = null;
             if (heldKeyInterval) {
                 clearInterval(heldKeyInterval);
                 heldKeyInterval = null;
@@ -2013,13 +2033,17 @@ document.addEventListener('DOMContentLoaded', function() {
         if (shuttle !== 0) {
             if (shuttleHoldStart === 0) shuttleHoldStart = now;
             const holdSec = (now - shuttleHoldStart) / 1000;
-            const accel = Math.min(SHUTTLE_ACCEL_MAX, SHUTTLE_ACCEL_BASE + holdSec * 40);
-            const delta = Math.round((shuttle > 0 ? 1 : -1) * accel);
-            if (teleprompterView) {
+            if (isTeleprompting && !isPaused && speedSlider) {
+                const key = shuttle > 0 ? 'ArrowUp' : 'ArrowDown';
+                const step = 0.08 * scrollSensitivity * (1 + holdSec * 2) * Math.min(7, Math.abs(shuttle));
+                applyArrowStep(key, step, true);
+            } else if (teleprompterView) {
+                const accel = Math.min(SHUTTLE_ACCEL_MAX, SHUTTLE_ACCEL_BASE + holdSec * 40);
+                const delta = Math.round((shuttle > 0 ? 1 : -1) * accel);
                 const maxScroll = teleprompterView.scrollHeight - teleprompterView.clientHeight;
                 teleprompterView.scrollTop = Math.max(0, Math.min(maxScroll, teleprompterView.scrollTop + delta));
+                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
             }
-            if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
         } else {
             shuttleHoldStart = 0;
         }
