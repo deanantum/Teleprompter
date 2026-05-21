@@ -70,9 +70,23 @@
         }
         .mirror-table .script-column.mirror-visible {
             display: flex !important;
+            position: relative;
             width: var(--mirror-content-width, 100%);
             max-width: var(--mirror-content-width, 100%);
             min-width: 0;
+        }
+        .mirror-table .mirror-row-color-fill {
+            position: absolute;
+            left: 0;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 0;
+            pointer-events: none;
+        }
+        .mirror-table .script-column.mirror-visible > .cell-content {
+            position: relative;
+            z-index: 1;
         }
         .mirror-table .cell-content {
             flex: 1;
@@ -329,6 +343,7 @@
             const display = document.getElementById('mirror-content');
             let skipNextScrollPost = false;
             let lastPixelSyncData = null;
+            let lastRowGuideStyles = null;
             const mirrorChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('teleprompter-mirror-sync') : null;
 
             function postToMain(payload) {
@@ -376,8 +391,24 @@
             var MIRROR_GREEN_GLOW = 'linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%), linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%), transparent';
             var MIRROR_RED_GLOW = 'linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), transparent';
 
-            /** Paint row guide colors on the visible column (inline so copied span styles cannot override). */
-            function applyMirrorRowGuideColors(displayRoot) {
+            function mirrorRowGuideStyleFromClasses(row) {
+                if (row.classList.contains('row-col2-one-more')) {
+                    return { rowBackground: '#000000', columnBackground: MIRROR_GREEN_GLOW, color: '' };
+                }
+                if (row.classList.contains('row-col3-one-more')) {
+                    return { rowBackground: '#000000', columnBackground: MIRROR_RED_GLOW, color: '' };
+                }
+                if (row.classList.contains('row-col2-more')) {
+                    return { rowBackground: '#002D04', columnBackground: '#002D04', color: '#ffffff' };
+                }
+                if (row.classList.contains('row-col3-more') || row.classList.contains('row-col3-much-more')) {
+                    return { rowBackground: '#531516', columnBackground: '#531516', color: '#ffffff' };
+                }
+                return null;
+            }
+
+            /** Paint row guide on mirror column 3 using main column 2 computed styles or class fallback + fill layer. */
+            function applyMirrorRowGuideColors(displayRoot, styleList) {
                 if (!displayRoot) return;
                 var rows = displayRoot.querySelectorAll('.script-row-wrapper');
                 for (var ri = 0; ri < rows.length; ri++) {
@@ -385,46 +416,34 @@
                     var col = row.querySelector('.script-column.mirror-visible');
                     if (!col) continue;
                     var cell = col.querySelector('.cell-content');
-                    var rowFill = '#000000';
-                    var colBg = '';
-                    var textColor = '';
-                    if (row.classList.contains('row-col2-one-more')) {
-                        rowFill = '#000000';
-                        colBg = MIRROR_GREEN_GLOW;
-                    } else if (row.classList.contains('row-col3-one-more')) {
-                        rowFill = '#000000';
-                        colBg = MIRROR_RED_GLOW;
-                    } else if (row.classList.contains('row-col2-more')) {
-                        rowFill = '#002D04';
-                        colBg = '#002D04';
-                        textColor = '#ffffff';
-                    } else if (row.classList.contains('row-col3-more') || row.classList.contains('row-col3-much-more')) {
-                        rowFill = '#531516';
-                        colBg = '#531516';
-                        textColor = '#ffffff';
-                    } else {
-                        continue;
-                    }
-                    row.style.setProperty('background-color', rowFill, 'important');
-                    if (colBg.indexOf('gradient') >= 0) {
-                        col.style.setProperty('background', colBg, 'important');
-                    } else {
-                        col.style.setProperty('background', colBg, 'important');
-                        col.style.setProperty('background-color', colBg, 'important');
-                    }
+                    var st = (styleList && styleList[ri]) ? styleList[ri] : null;
+                    if (!st || !st.columnBackground) st = mirrorRowGuideStyleFromClasses(row);
+                    var oldFill = col.querySelector('.mirror-row-color-fill');
+                    if (oldFill) oldFill.remove();
+                    row.style.removeProperty('background-color');
+                    col.style.removeProperty('background');
+                    col.style.removeProperty('background-color');
                     if (cell) {
-                        if (textColor) {
-                            cell.style.setProperty('color', textColor, 'important');
-                            cell.style.setProperty('background-color', colBg, 'important');
-                        } else {
-                            cell.style.removeProperty('color');
-                            cell.style.removeProperty('background-color');
-                        }
-                        var descendants = cell.querySelectorAll('*');
-                        for (var di = 0; di < descendants.length; di++) {
-                            descendants[di].style.setProperty('background', 'transparent', 'important');
-                            descendants[di].style.setProperty('background-color', 'transparent', 'important');
-                            if (textColor) descendants[di].style.setProperty('color', textColor, 'important');
+                        cell.style.removeProperty('background');
+                        cell.style.removeProperty('background-color');
+                        cell.style.removeProperty('color');
+                    }
+                    if (!st || !st.columnBackground) continue;
+                    if (st.rowBackground) row.style.setProperty('background-color', st.rowBackground, 'important');
+                    var layer = document.createElement('div');
+                    layer.className = 'mirror-row-color-fill';
+                    layer.setAttribute('aria-hidden', 'true');
+                    layer.style.setProperty('background', st.columnBackground, 'important');
+                    col.insertBefore(layer, col.firstChild);
+                    if (cell) {
+                        if (st.color) {
+                            cell.style.setProperty('color', st.color, 'important');
+                            var descendants = cell.querySelectorAll('*');
+                            for (var di = 0; di < descendants.length; di++) {
+                                descendants[di].style.setProperty('background', 'transparent', 'important');
+                                descendants[di].style.setProperty('background-color', 'transparent', 'important');
+                                descendants[di].style.setProperty('color', st.color, 'important');
+                            }
                         }
                     }
                 }
@@ -764,7 +783,8 @@
                                 });
                             }
                         }
-                        applyMirrorRowGuideColors(display);
+                        if (data.rowGuideStyles) lastRowGuideStyles = data.rowGuideStyles;
+                        applyMirrorRowGuideColors(display, lastRowGuideStyles);
                         applyMirrorLayout(data.layout);
                         var visIdx = typeof data.visibleColumnIndex === 'number' ? data.visibleColumnIndex : 0;
                         var hasRowHeights = data.rowHeights && Array.isArray(data.rowHeights) && data.rowHeights.length > 0;
@@ -772,9 +792,9 @@
                         requestAnimationFrame(function() {
                             requestAnimationFrame(function() {
                                 if (layoutSnap) applyMirrorLayout(layoutSnap);
-                                applyMirrorRowGuideColors(display);
+                                applyMirrorRowGuideColors(display, lastRowGuideStyles);
                                 if (!hasRowHeights) applyMirrorShortColumnLineBalance(display, visIdx);
-                                applyMirrorRowGuideColors(display);
+                                applyMirrorRowGuideColors(display, lastRowGuideStyles);
                             });
                         });
                     }
@@ -794,15 +814,17 @@
                 if (type === 'pixelSync') {
                     lastPixelSyncData = data;
                     skipNextScrollPost = true;
+                    if (data.rowGuideStyles) lastRowGuideStyles = data.rowGuideStyles;
                     applyMirrorPills(data);
                     if (data.layout) applyMirrorLayout(data.layout);
                     void container.offsetHeight;
                     applyMirrorScrollSync(data);
                     applyMirrorIndicatorGuide(data);
+                    applyMirrorRowGuideColors(display, lastRowGuideStyles);
                     requestAnimationFrame(function() {
                         applyMirrorScrollSync(data);
                         applyMirrorIndicatorGuide(data);
-                        applyMirrorRowGuideColors(display);
+                        applyMirrorRowGuideColors(display, lastRowGuideStyles);
                     });
                 }
                 if (type === 'setPosition') {
@@ -826,7 +848,7 @@
                             }
                         });
                     }
-                    applyMirrorRowGuideColors(display);
+                    applyMirrorRowGuideColors(display, lastRowGuideStyles);
                 }
             }
 
