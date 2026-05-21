@@ -3827,12 +3827,14 @@ function indexToColumnLetter(colIndex) {
 
 		function syncMirrorByPixels() {
         if (isUpdatingFromMirrorScroll || !mirrorWindow || mirrorWindow.closed) return;
+        const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
         mirrorWindow.postMessage({
                 type: 'pixelSync',
                 ...getMirrorScrollSyncPayload(),
                 indicatorPosition: getIndicatorPositionPercent(),
                 indicatorViewportPx: getIndicatorViewportOffsetPx(),
                 layout: getMirrorLayoutMetrics(),
+                rowGuideStyles: rows.length > 0 ? getMirrorRowGuideStylesFromMain(rows) : [],
                 ...getMirrorPillPayload()
             }, '*');
     }
@@ -4592,6 +4594,36 @@ function indexToColumnLetter(colIndex) {
         return { cells, rowClass, font12 };
     }
 
+    /** Copy computed row-guide paint from main column 2 so mirror column 3 matches exactly. */
+    function getMirrorRowGuideStylesFromMain(rows) {
+        const isTransparent = (s) => !s || s === 'transparent' || s === 'rgba(0, 0, 0, 0)';
+        return Array.from(rows).map(row => {
+            const cls = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
+            if (!cls || cls === 'row-lines-same') return null;
+            const cols = row.querySelectorAll('.script-column');
+            const col2 = cols[1];
+            if (!col2) return null;
+            const rowCs = window.getComputedStyle(row);
+            const colCs = window.getComputedStyle(col2);
+            const bgImg = colCs.backgroundImage;
+            const bgc = colCs.backgroundColor;
+            let columnBackground = colCs.background;
+            if (isTransparent(columnBackground) || columnBackground === 'none' || columnBackground === 'initial') {
+                if (bgImg && bgImg !== 'none') {
+                    columnBackground = bgImg;
+                    if (!isTransparent(bgc)) columnBackground += ' ' + bgc;
+                } else {
+                    columnBackground = isTransparent(bgc) ? '' : bgc;
+                }
+            }
+            return {
+                rowBackground: rowCs.backgroundColor,
+                columnBackground,
+                color: colCs.color
+            };
+        });
+    }
+
     /** Number of visible columns (per file checkboxes). When 1, main and mirror show the same column. */
     function getVisibleColumnCount(maxCols) {
         const vis = currentFileIndex >= 0 && fileColumnVisibility[currentFileIndex] ? fileColumnVisibility[currentFileIndex] : null;
@@ -4649,12 +4681,14 @@ function indexToColumnLetter(colIndex) {
             const rowData = rows.map((row, i) => buildMirrorTableRowPayload(row, i, rowColors));
             const rowFont12 = (rowFont12Cache.length === rows.length) ? rowFont12Cache : rows.map(row => row.classList.contains('row-font-12'));
             const rowHeights = (measuredRowHeights.length === rows.length) ? measuredRowHeights : null;
+            const rowGuideStyles = getMirrorRowGuideStylesFromMain(rows);
             mirrorWindow.postMessage({
                 type: 'loadContent',
                 table: rowData,
                 visibleColumnIndex,
                 contentWidth,
                 rowColors,
+                rowGuideStyles,
                 rowFont12,
                 rowHeights,
                 ...pillPayload,
@@ -4666,12 +4700,14 @@ function indexToColumnLetter(colIndex) {
             const rowColors = rows.map(row => ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '');
             const rowData = rows.map((row, i) => buildMirrorTableRowPayload(row, i, rowColors));
             const rowFont12 = rows.map(row => row.classList.contains('row-font-12'));
+            const rowGuideStyles = getMirrorRowGuideStylesFromMain(rows);
             mirrorWindow.postMessage({
                 type: 'loadContent',
                 table: rowData,
                 visibleColumnIndex,
                 contentWidth,
                 rowColors,
+                rowGuideStyles,
                 rowFont12,
                 ...pillPayload,
                 layout: getMirrorLayoutMetrics()
