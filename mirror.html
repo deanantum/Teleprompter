@@ -105,26 +105,6 @@
         .mirror-table .script-row-wrapper.row-col2-more { background-color: #002D04 !important; color: #ffffff !important; }
         .mirror-table .script-row-wrapper.row-col3-more,
         .mirror-table .script-row-wrapper.row-col3-much-more { background-color: #531516 !important; color: #ffffff !important; }
-        /* Mirror shows one column (.mirror-visible); apply glow/fill on that column (main uses nth-child(2)+:last-child or broadcast-hidden overrides). */
-        .mirror-table .script-row-wrapper.row-col2-one-more .script-column.mirror-visible {
-            background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
-                        linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
-                        transparent !important;
-        }
-        .mirror-table .script-row-wrapper.row-col3-one-more .script-column.mirror-visible {
-            background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
-                        linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
-                        transparent !important;
-        }
-        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible { background-color: #002D04 !important; }
-        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible,
-        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible .cell-content { color: #ffffff !important; }
-        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible,
-        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible { background-color: #531516 !important; }
-        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible,
-        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible .cell-content,
-        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible,
-        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible .cell-content { color: #ffffff !important; }
         /* Match main: line spacing on shorter column fills row when red/green (stretch classes from main) */
         .mirror-table .script-row-wrapper.row-stretch-col2 .script-column.mirror-visible .cell-content,
         .mirror-table .script-row-wrapper.row-stretch-col2 .script-column.mirror-visible .cell-content *,
@@ -147,43 +127,60 @@
         .mirror-table .script-row-wrapper.keyword-pill-red {
             background-color: #dc2626 !important; color: #000000 !important;
         }
-        .mirror-table .script-row-wrapper.keyword-pill-red .script-column,
-        .mirror-table .script-row-wrapper.keyword-pill-red .cell-content,
-        .mirror-table .script-row-wrapper.keyword-pill-red .script-column * {
+        .mirror-table .script-row-wrapper.keyword-pill-red:not([class*="row-col"]) .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-red:not([class*="row-col"]) .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-red:not([class*="row-col"]) .script-column * {
             color: #000000 !important; background: transparent !important; border: none !important;
         }
         .mirror-table .script-row-wrapper.keyword-pill-yellow {
             background-color: #ffda03 !important; color: #000000 !important;
         }
-        .mirror-table .script-row-wrapper.keyword-pill-yellow .script-column,
-        .mirror-table .script-row-wrapper.keyword-pill-yellow .cell-content,
-        .mirror-table .script-row-wrapper.keyword-pill-yellow .script-column * {
+        .mirror-table .script-row-wrapper.keyword-pill-yellow:not([class*="row-col"]) .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-yellow:not([class*="row-col"]) .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-yellow:not([class*="row-col"]) .script-column * {
             color: #000000 !important; background: transparent !important; border: none !important;
         }
         .mirror-table .script-row-wrapper.keyword-pill-green {
             background-color: #22c55e !important; color: #000000 !important;
         }
-        .mirror-table .script-row-wrapper.keyword-pill-green .script-column,
-        .mirror-table .script-row-wrapper.keyword-pill-green .cell-content,
-        .mirror-table .script-row-wrapper.keyword-pill-green .script-column * {
+        .mirror-table .script-row-wrapper.keyword-pill-green:not([class*="row-col"]) .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-green:not([class*="row-col"]) .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-green:not([class*="row-col"]) .script-column * {
             color: #000000 !important; background: transparent !important; border: none !important;
         }
         .mirror-table .script-row-wrapper.keyword-pill-blue {
             background-color: #2563eb !important; color: #ffffff !important;
         }
-        .mirror-table .script-row-wrapper.keyword-pill-blue .script-column,
-        .mirror-table .script-row-wrapper.keyword-pill-blue .cell-content,
-        .mirror-table .script-row-wrapper.keyword-pill-blue .script-column * {
+        .mirror-table .script-row-wrapper.keyword-pill-blue:not([class*="row-col"]) .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-blue:not([class*="row-col"]) .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-blue:not([class*="row-col"]) .script-column * {
             color: #ffffff !important; background: transparent !important; border: none !important;
         }
         .mirror-table .script-row-wrapper.keyword-pill-white {
             background-color: #ffffff !important; color: #000000 !important;
         }
-        .mirror-table .script-row-wrapper.keyword-pill-white .script-column,
-        .mirror-table .script-row-wrapper.keyword-pill-white .cell-content,
-        .mirror-table .script-row-wrapper.keyword-pill-white .script-column * {
+        .mirror-table .script-row-wrapper.keyword-pill-white:not([class*="row-col"]) .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-white:not([class*="row-col"]) .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-white:not([class*="row-col"]) .script-column * {
             color: #000000 !important; background: transparent !important; border: none !important;
         }
+        /* Column 3 on mirror: same row red/green glow+fill as column 2 on main (shared row class from main). */
+        .mirror-table .script-row-wrapper.row-col2-one-more .script-column.mirror-visible {
+            background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
+                        linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
+                        transparent !important;
+        }
+        .mirror-table .script-row-wrapper.row-col3-one-more .script-column.mirror-visible {
+            background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
+                        linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
+                        transparent !important;
+        }
+        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible .cell-content { background-color: #002D04 !important; color: #ffffff !important; }
+        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible .cell-content,
+        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible .cell-content { background-color: #531516 !important; color: #ffffff !important; }
         #mirror-sync-guide {
             position: fixed;
             left: 0;
@@ -649,13 +646,21 @@
                     applyMirrorPills(data);
                     if (data.table && Array.isArray(data.table)) {
                         var visibleColumnIndex = typeof data.visibleColumnIndex === 'number' ? data.visibleColumnIndex : 0;
+                        if (visibleColumnIndex >= 3) visibleColumnIndex = 2;
                         if (data.contentWidth) {
                             document.documentElement.style.setProperty('--mirror-content-width', data.contentWidth);
                         }
+                        var rowColorNames = ['row-lines-same', 'row-col2-more', 'row-col3-more', 'row-col3-much-more', 'row-col2-one-more', 'row-col3-one-more'];
                         var html = '';
-                        data.table.forEach(function(row) {
-                            var cells = row.cells || [];
-                            var rowClass = (row.rowClass || '') + (row.font12 ? ' mirror-row-font-12' : '');
+                        data.table.forEach(function(row, ri) {
+                            var cells = (row.cells || []).slice(0, 3);
+                            var rowClass = (row.rowClass || '').trim();
+                            if (data.rowColors && data.rowColors[ri]) {
+                                var rc = data.rowColors[ri];
+                                if (rc && rowClass.indexOf(rc) < 0) rowClass = (rowClass + ' ' + rc).trim();
+                            }
+                            if (!rowClass && data.rowColors && data.rowColors[ri]) rowClass = data.rowColors[ri];
+                            rowClass += (row.font12 ? ' mirror-row-font-12' : '');
                             html += '<div class="script-row-wrapper' + (rowClass ? ' ' + rowClass.trim() : '') + '">';
                             cells.forEach(function(cellText, ci) {
                                 var visible = (ci === visibleColumnIndex) ? ' mirror-visible' : '';
@@ -665,6 +670,14 @@
                             html += '</div>';
                         });
                         display.innerHTML = html;
+                        if (data.rowColors && Array.isArray(data.rowColors)) {
+                            var builtRows = display.querySelectorAll('.script-row-wrapper');
+                            data.rowColors.forEach(function(rc, ri) {
+                                if (!rc || !builtRows[ri]) return;
+                                rowColorNames.forEach(function(c) { builtRows[ri].classList.remove(c); });
+                                builtRows[ri].classList.add(rc);
+                            });
+                        }
                         if (data.rowHeights && Array.isArray(data.rowHeights)) {
                             var mirrorRows = display.querySelectorAll('.script-row-wrapper');
                             if (mirrorRows.length === data.rowHeights.length) {
