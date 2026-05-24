@@ -70,24 +70,9 @@
         }
         .mirror-table .script-column.mirror-visible {
             display: flex !important;
-            position: relative;
             width: var(--mirror-content-width, 100%);
             max-width: var(--mirror-content-width, 100%);
             min-width: 0;
-        }
-        .mirror-table .mirror-row-color-fill {
-            position: absolute;
-            left: 0;
-            top: 0;
-            right: 0;
-            bottom: 0;
-            z-index: 0;
-            pointer-events: none;
-            background-repeat: no-repeat;
-        }
-        .mirror-table .script-column.mirror-visible > .cell-content {
-            position: relative;
-            z-index: 1;
         }
         .mirror-table .cell-content {
             flex: 1;
@@ -95,10 +80,14 @@
             line-height: 1.1 !important;
             font-size: inherit;
             word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+            max-width: 100%;
             white-space: pre-wrap;
             color: inherit;
             padding: 0;
             margin: 0;
+            min-width: 0;
         }
         .mirror-table .cell-content b,
         .mirror-table .cell-content i,
@@ -142,66 +131,42 @@
         .mirror-table .script-row-wrapper.keyword-pill-red {
             background-color: #dc2626 !important; color: #000000 !important;
         }
-        .mirror-table .script-row-wrapper.keyword-pill-red:not([class*="row-col"]) .script-column,
-        .mirror-table .script-row-wrapper.keyword-pill-red:not([class*="row-col"]) .cell-content,
-        .mirror-table .script-row-wrapper.keyword-pill-red:not([class*="row-col"]) .script-column * {
+        .mirror-table .script-row-wrapper.keyword-pill-red .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-red .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-red .script-column * {
             color: #000000 !important; background: transparent !important; border: none !important;
         }
         .mirror-table .script-row-wrapper.keyword-pill-yellow {
             background-color: #ffda03 !important; color: #000000 !important;
         }
-        .mirror-table .script-row-wrapper.keyword-pill-yellow:not([class*="row-col"]) .script-column,
-        .mirror-table .script-row-wrapper.keyword-pill-yellow:not([class*="row-col"]) .cell-content,
-        .mirror-table .script-row-wrapper.keyword-pill-yellow:not([class*="row-col"]) .script-column * {
+        .mirror-table .script-row-wrapper.keyword-pill-yellow .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-yellow .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-yellow .script-column * {
             color: #000000 !important; background: transparent !important; border: none !important;
         }
         .mirror-table .script-row-wrapper.keyword-pill-green {
             background-color: #22c55e !important; color: #000000 !important;
         }
-        .mirror-table .script-row-wrapper.keyword-pill-green:not([class*="row-col"]) .script-column,
-        .mirror-table .script-row-wrapper.keyword-pill-green:not([class*="row-col"]) .cell-content,
-        .mirror-table .script-row-wrapper.keyword-pill-green:not([class*="row-col"]) .script-column * {
+        .mirror-table .script-row-wrapper.keyword-pill-green .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-green .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-green .script-column * {
             color: #000000 !important; background: transparent !important; border: none !important;
         }
         .mirror-table .script-row-wrapper.keyword-pill-blue {
             background-color: #2563eb !important; color: #ffffff !important;
         }
-        .mirror-table .script-row-wrapper.keyword-pill-blue:not([class*="row-col"]) .script-column,
-        .mirror-table .script-row-wrapper.keyword-pill-blue:not([class*="row-col"]) .cell-content,
-        .mirror-table .script-row-wrapper.keyword-pill-blue:not([class*="row-col"]) .script-column * {
+        .mirror-table .script-row-wrapper.keyword-pill-blue .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-blue .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-blue .script-column * {
             color: #ffffff !important; background: transparent !important; border: none !important;
         }
         .mirror-table .script-row-wrapper.keyword-pill-white {
             background-color: #ffffff !important; color: #000000 !important;
         }
-        .mirror-table .script-row-wrapper.keyword-pill-white:not([class*="row-col"]) .script-column,
-        .mirror-table .script-row-wrapper.keyword-pill-white:not([class*="row-col"]) .cell-content,
-        .mirror-table .script-row-wrapper.keyword-pill-white:not([class*="row-col"]) .script-column * {
+        .mirror-table .script-row-wrapper.keyword-pill-white .script-column,
+        .mirror-table .script-row-wrapper.keyword-pill-white .cell-content,
+        .mirror-table .script-row-wrapper.keyword-pill-white .script-column * {
             color: #000000 !important; background: transparent !important; border: none !important;
-        }
-        /* Column 3 on mirror: same row red/green glow+fill as column 2 on main (shared row class from main). */
-        .mirror-table .script-row-wrapper.row-col2-one-more .script-column.mirror-visible {
-            background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
-                        linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
-                        transparent !important;
-        }
-        .mirror-table .script-row-wrapper.row-col3-one-more .script-column.mirror-visible {
-            background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
-                        linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
-                        transparent !important;
-        }
-        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible,
-        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible .cell-content,
-        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible .cell-content * { background-color: #002D04 !important; color: #ffffff !important; }
-        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible,
-        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible,
-        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible .cell-content,
-        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible .cell-content,
-        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible .cell-content *,
-        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible .cell-content * { background-color: #531516 !important; color: #ffffff !important; }
-        .mirror-table .script-column.mirror-visible {
-            align-self: stretch;
-            min-height: 100%;
         }
         #mirror-sync-guide {
             position: fixed;
@@ -342,9 +307,8 @@
         (function() {
             const container = document.getElementById('scroll-container');
             const display = document.getElementById('mirror-content');
-            let skipNextScrollPost = false;
+            let suppressMirrorScrollPosts = 0;
             let lastPixelSyncData = null;
-            let lastRowGuideStyles = null;
             const mirrorChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('teleprompter-mirror-sync') : null;
 
             function postToMain(payload) {
@@ -367,17 +331,6 @@
                 return !!(probe.textContent || '').replace(/\u00a0/g, ' ').trim();
             }
 
-            function stripMirrorCellInlineBackgrounds(html) {
-                if (!html || html.indexOf('<') === -1) return html;
-                var probe = document.createElement('div');
-                probe.innerHTML = html;
-                probe.querySelectorAll('[style]').forEach(function(el) {
-                    el.style.removeProperty('background');
-                    el.style.removeProperty('background-color');
-                });
-                return probe.innerHTML;
-            }
-
             function normalizeMirrorCellMarkup(cell) {
                 if (cell == null) return '\u00A0';
                 var raw = String(cell).trim();
@@ -386,122 +339,7 @@
                 if (raw.indexOf('<') === -1) {
                     return escapeHtml(raw).replace(/\n/g, '<br>');
                 }
-                return stripMirrorCellInlineBackgrounds(raw.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ''));
-            }
-
-            var MIRROR_GREEN_GLOW = 'linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%), linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%), transparent';
-            var MIRROR_RED_GLOW = 'linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), transparent';
-
-            function mirrorRowGuideStyleFromClasses(row) {
-                if (row.classList.contains('row-col2-one-more')) {
-                    return {
-                        rowBackground: '#000000',
-                        columnBackgroundColor: '#000000',
-                        columnBackgroundImage: MIRROR_GREEN_GLOW,
-                        color: ''
-                    };
-                }
-                if (row.classList.contains('row-col3-one-more')) {
-                    return {
-                        rowBackground: '#000000',
-                        columnBackgroundColor: '#000000',
-                        columnBackgroundImage: MIRROR_RED_GLOW,
-                        color: ''
-                    };
-                }
-                if (row.classList.contains('row-col2-more')) {
-                    return { rowBackground: '#002D04', columnBackgroundColor: '#002D04', color: '#ffffff' };
-                }
-                if (row.classList.contains('row-col3-more') || row.classList.contains('row-col3-much-more')) {
-                    return { rowBackground: '#531516', columnBackgroundColor: '#531516', color: '#ffffff' };
-                }
-                return null;
-            }
-
-            function normalizeMirrorGuideStyle(raw, row) {
-                var st = mirrorRowGuideStyleFromClasses(row);
-                if (st) return st;
-                if (!raw) return null;
-                st = {
-                    rowBackground: raw.rowBackground || '#000000',
-                    columnBackgroundColor: raw.columnBackgroundColor || '',
-                    columnBackgroundImage: raw.columnBackgroundImage || '',
-                    color: raw.color || ''
-                };
-                if (!st.columnBackgroundColor && raw.columnBackground) {
-                    var bg = String(raw.columnBackground);
-                    if (bg.indexOf('gradient') >= 0) {
-                        st.columnBackgroundImage = bg;
-                        st.columnBackgroundColor = st.rowBackground;
-                    } else {
-                        st.columnBackgroundColor = bg;
-                    }
-                }
-                return st;
-            }
-
-            function paintMirrorGuideOnColumn(row, col, cell, st) {
-                if (!st || (!st.columnBackgroundColor && !st.columnBackgroundImage)) return;
-                var fillColor = st.columnBackgroundColor || st.rowBackground || '#000000';
-                if (st.rowBackground) row.style.setProperty('background-color', st.rowBackground, 'important');
-                col.style.setProperty('align-self', 'stretch', 'important');
-                col.style.setProperty('min-height', '100%', 'important');
-                col.style.setProperty('background-color', fillColor, 'important');
-                var layer = document.createElement('div');
-                layer.className = 'mirror-row-color-fill';
-                layer.setAttribute('aria-hidden', 'true');
-                layer.style.setProperty('background-color', fillColor, 'important');
-                if (st.columnBackgroundImage) {
-                    layer.style.setProperty('background-image', st.columnBackgroundImage, 'important');
-                    layer.style.setProperty('background-repeat', 'no-repeat', 'important');
-                }
-                col.insertBefore(layer, col.firstChild);
-                if (cell) {
-                    cell.style.setProperty('position', 'relative', 'important');
-                    cell.style.setProperty('z-index', '1', 'important');
-                    cell.style.setProperty('min-height', '100%', 'important');
-                    cell.style.setProperty('background-color', 'transparent', 'important');
-                    cell.style.setProperty('background', 'transparent', 'important');
-                    if (st.color) {
-                        cell.style.setProperty('color', st.color, 'important');
-                        var descendants = cell.querySelectorAll('*');
-                        for (var di = 0; di < descendants.length; di++) {
-                            descendants[di].style.setProperty('background', 'transparent', 'important');
-                            descendants[di].style.setProperty('background-color', 'transparent', 'important');
-                            descendants[di].style.setProperty('color', st.color, 'important');
-                        }
-                    }
-                }
-            }
-
-            /** Paint row guide on mirror column 3 (class hex first; matches main column 2). */
-            function applyMirrorRowGuideColors(displayRoot, styleList) {
-                if (!displayRoot) return;
-                var rows = displayRoot.querySelectorAll('.script-row-wrapper');
-                var useList = styleList && styleList.length === rows.length;
-                for (var ri = 0; ri < rows.length; ri++) {
-                    var row = rows[ri];
-                    var col = row.querySelector('.script-column.mirror-visible');
-                    if (!col) continue;
-                    var cell = col.querySelector('.cell-content');
-                    var oldFill = col.querySelector('.mirror-row-color-fill');
-                    if (oldFill) oldFill.remove();
-                    row.style.removeProperty('background-color');
-                    col.style.removeProperty('background');
-                    col.style.removeProperty('background-color');
-                    col.style.removeProperty('background-image');
-                    if (cell) {
-                        cell.style.removeProperty('background');
-                        cell.style.removeProperty('background-color');
-                        cell.style.removeProperty('background-image');
-                        cell.style.removeProperty('color');
-                        cell.style.removeProperty('min-height');
-                    }
-                    var st = mirrorRowGuideStyleFromClasses(row);
-                    if (!st && useList) st = normalizeMirrorGuideStyle(styleList[ri], row);
-                    if (!st) st = normalizeMirrorGuideStyle(null, row);
-                    paintMirrorGuideOnColumn(row, col, cell, st);
-                }
+                return raw.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
             }
 
             function mirrorBalanceColWidthPx(col) {
@@ -795,21 +633,13 @@
                     applyMirrorPills(data);
                     if (data.table && Array.isArray(data.table)) {
                         var visibleColumnIndex = typeof data.visibleColumnIndex === 'number' ? data.visibleColumnIndex : 0;
-                        if (visibleColumnIndex >= 3) visibleColumnIndex = 2;
                         if (data.contentWidth) {
                             document.documentElement.style.setProperty('--mirror-content-width', data.contentWidth);
                         }
-                        var rowColorNames = ['row-lines-same', 'row-col2-more', 'row-col3-more', 'row-col3-much-more', 'row-col2-one-more', 'row-col3-one-more'];
                         var html = '';
-                        data.table.forEach(function(row, ri) {
-                            var cells = (row.cells || []).slice(0, 3);
-                            var rowClass = (row.rowClass || '').trim();
-                            if (data.rowColors && data.rowColors[ri]) {
-                                var rc = data.rowColors[ri];
-                                if (rc && rowClass.indexOf(rc) < 0) rowClass = (rowClass + ' ' + rc).trim();
-                            }
-                            if (!rowClass && data.rowColors && data.rowColors[ri]) rowClass = data.rowColors[ri];
-                            rowClass += (row.font12 ? ' mirror-row-font-12' : '');
+                        data.table.forEach(function(row) {
+                            var cells = row.cells || [];
+                            var rowClass = (row.rowClass || '') + (row.font12 ? ' mirror-row-font-12' : '');
                             html += '<div class="script-row-wrapper' + (rowClass ? ' ' + rowClass.trim() : '') + '">';
                             cells.forEach(function(cellText, ci) {
                                 var visible = (ci === visibleColumnIndex) ? ' mirror-visible' : '';
@@ -819,14 +649,6 @@
                             html += '</div>';
                         });
                         display.innerHTML = html;
-                        if (data.rowColors && Array.isArray(data.rowColors)) {
-                            var builtRows = display.querySelectorAll('.script-row-wrapper');
-                            data.rowColors.forEach(function(rc, ri) {
-                                if (!rc || !builtRows[ri]) return;
-                                rowColorNames.forEach(function(c) { builtRows[ri].classList.remove(c); });
-                                builtRows[ri].classList.add(rc);
-                            });
-                        }
                         if (data.rowHeights && Array.isArray(data.rowHeights)) {
                             var mirrorRows = display.querySelectorAll('.script-row-wrapper');
                             if (mirrorRows.length === data.rowHeights.length) {
@@ -838,8 +660,6 @@
                                 });
                             }
                         }
-                        if (data.rowGuideStyles) lastRowGuideStyles = data.rowGuideStyles;
-                        applyMirrorRowGuideColors(display, lastRowGuideStyles);
                         applyMirrorLayout(data.layout);
                         var visIdx = typeof data.visibleColumnIndex === 'number' ? data.visibleColumnIndex : 0;
                         var hasRowHeights = data.rowHeights && Array.isArray(data.rowHeights) && data.rowHeights.length > 0;
@@ -847,9 +667,7 @@
                         requestAnimationFrame(function() {
                             requestAnimationFrame(function() {
                                 if (layoutSnap) applyMirrorLayout(layoutSnap);
-                                applyMirrorRowGuideColors(display, lastRowGuideStyles);
                                 if (!hasRowHeights) applyMirrorShortColumnLineBalance(display, visIdx);
-                                applyMirrorRowGuideColors(display, lastRowGuideStyles);
                             });
                         });
                     }
@@ -868,19 +686,22 @@
                 }
                 if (type === 'pixelSync') {
                     lastPixelSyncData = data;
-                    skipNextScrollPost = true;
-                    if (data.rowGuideStyles) lastRowGuideStyles = data.rowGuideStyles;
-                    applyMirrorPills(data);
-                    if (data.layout) applyMirrorLayout(data.layout);
-                    void container.offsetHeight;
+                    var scrollOnly = !!data.scrollOnly;
+                    suppressMirrorScrollPosts = scrollOnly ? 4 : 2;
+                    if (!scrollOnly) {
+                        applyMirrorPills(data);
+                        if (data.layout) applyMirrorLayout(data.layout);
+                        void container.offsetHeight;
+                    }
                     applyMirrorScrollSync(data);
                     applyMirrorIndicatorGuide(data);
-                    applyMirrorRowGuideColors(display, lastRowGuideStyles);
-                    requestAnimationFrame(function() {
-                        applyMirrorScrollSync(data);
-                        applyMirrorIndicatorGuide(data);
-                        applyMirrorRowGuideColors(display, lastRowGuideStyles);
-                    });
+                    if (!scrollOnly) {
+                        requestAnimationFrame(function() {
+                            suppressMirrorScrollPosts = 2;
+                            applyMirrorScrollSync(data);
+                            applyMirrorIndicatorGuide(data);
+                        });
+                    }
                 }
                 if (type === 'setPosition') {
                     try {
@@ -903,13 +724,12 @@
                             }
                         });
                     }
-                    applyMirrorRowGuideColors(display, lastRowGuideStyles);
                 }
             }
 
             container.addEventListener('scroll', function() {
-                if (skipNextScrollPost) {
-                    skipNextScrollPost = false;
+                if (suppressMirrorScrollPosts > 0) {
+                    suppressMirrorScrollPosts--;
                     return;
                 }
                 postToMain({
@@ -920,8 +740,23 @@
                 });
             });
 
+            var mirrorViewportReportTimer = null;
+            function reportMirrorViewportWidth() {
+                if (!container) return;
+                var cs = window.getComputedStyle(container);
+                var pl = parseFloat(cs.paddingLeft) || 0;
+                var pr = parseFloat(cs.paddingRight) || 0;
+                var w = Math.floor(container.clientWidth - pl - pr);
+                if (w > 50) postToMain({ type: 'mirrorViewportWidth', contentWidthPx: w });
+            }
+            function scheduleMirrorViewportReport() {
+                if (mirrorViewportReportTimer) clearTimeout(mirrorViewportReportTimer);
+                mirrorViewportReportTimer = setTimeout(reportMirrorViewportWidth, 80);
+            }
+
             window.addEventListener('message', handleMessage);
             window.addEventListener('resize', function() {
+                scheduleMirrorViewportReport();
                 if (lastPixelSyncData) applyMirrorIndicatorGuide(lastPixelSyncData);
             });
 
@@ -929,6 +764,7 @@
 
             ensureMirrorTopChrome();
             postToMain({ type: 'mirrorReady' });
+            scheduleMirrorViewportReport();
         })();
     </script>
 </body>
