@@ -179,11 +179,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let spacebarControlsPlay = true; /* false after any mouse click so only Option+A starts; Option+A resets so spacebar works again */
     let isMouseControlActive = true;
     let scrollSpeed = 0;
-    let displayScrollSpeed = 0; /* Smoothed speed used by the scroll loop (lerps toward scrollSpeed) */
     let scrollAccum = 0; /* Fractional accumulator so small speeds (0.1, 0.2) actually scroll */
-    let scrollLastFrameTime = 0;
-    const SCROLL_SPEED_SMOOTH_TAU_SEC = 0.12; /* Time constant for speed changes (keyboard / slider) */
-    const SCROLL_FRAME_MS = 1000 / 60; /* scrollSpeed is defined as px per frame at 60fps */
     let scrollInterval = null;
     let lastActiveSpeed = 1;
     let isInvertScroll = false;
@@ -220,7 +216,11 @@ document.addEventListener('DOMContentLoaded', function() {
     let extendedFixedWidth = null;  /* When broadcasting: fixed table width so main/mirror stay aligned */
     let extendedWindowWidth = null; /* 5:4 outer window size for main and mirror */
     let extendedWindowHeight = null;
+    /** Measured script column width inside mirror #scroll-container (from mirrorViewportWidth). */
+    let mirrorViewportContentWidthPx = null;
     const MIRROR_RUNLIST_EDGE_PX = 12;
+    const MIRROR_SCROLL_PADDING_LEFT = 32;
+    const MIRROR_SCROLLBAR_ALLOWANCE = 14;
     const TABLE_FIRST_COLUMN_FONT_PX = 14;
     const FIRST_COLUMN_MIN_PROBE_TEXT = '999';
     let mirrorRunlistEdgeActive = false;
@@ -1719,20 +1719,26 @@ document.addEventListener('DOMContentLoaded', function() {
         }, { passive: false, capture: true });
     }
 
+    function hideRunlistForPlayback() {
+        if (mirrorRunlistEdgeActive) {
+            setMirrorRunlistOverlayOpen(false);
+            return;
+        }
+        if (runlistPanel) runlistPanel.classList.add('hidden');
+        if (resizer) resizer.classList.add('hidden');
+        if (toggleRunlistButton) toggleRunlistButton.title = 'Show Runlist';
+        applyMainScriptViewportWidth();
+    }
+
     function startScrolling() {
         if (isTeleprompting) return;
+        hideRunlistForPlayback();
+        if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(1200);
+        if (typeof resetPillTriggerState === 'function') resetPillTriggerState();
         isTeleprompting = true;
-        scrollLastFrameTime = 0;
-        displayScrollSpeed = scrollSpeed;
-        const move = (now) => {
+        const move = () => {
             if (!isTeleprompting) return;
-            const t = typeof now === 'number' ? now : performance.now();
-            const dtMs = scrollLastFrameTime ? Math.min(48, t - scrollLastFrameTime) : SCROLL_FRAME_MS;
-            scrollLastFrameTime = t;
-            const dtSec = dtMs / 1000;
-            const smoothAlpha = 1 - Math.exp(-dtSec / SCROLL_SPEED_SMOOTH_TAU_SEC);
-            displayScrollSpeed += (scrollSpeed - displayScrollSpeed) * smoothAlpha;
-            scrollAccum += displayScrollSpeed * (dtMs / SCROLL_FRAME_MS);
+            scrollAccum += scrollSpeed;
             const delta = Math.trunc(scrollAccum);
             if (delta !== 0) {
                 teleprompterView.scrollTop += delta;
@@ -1792,8 +1798,6 @@ document.addEventListener('DOMContentLoaded', function() {
         isTeleprompting = false;
         isPaused = false;
         scrollAccum = 0;
-        displayScrollSpeed = 0;
-        scrollLastFrameTime = 0;
         if (animationFrameId) cancelAnimationFrame(animationFrameId);
         animationFrameId = null;
         teleprompterView.scrollTop = 0;
@@ -1816,11 +1820,15 @@ document.addEventListener('DOMContentLoaded', function() {
             addBookmarkAtCursor();
             return;
         }
-        const isPrevSegment = e.altKey && (e.code === 'ArrowUp' || e.key === 'ArrowUp');
-        const isNextSegment = e.altKey && (e.code === 'ArrowDown' || e.key === 'ArrowDown');
-        if (isPrevSegment || isNextSegment) {
+        const isPrevBookmark = e.altKey && (e.code === 'ArrowUp' || e.key === 'ArrowUp');
+        const isNextBookmark = e.altKey && (e.code === 'ArrowDown' || e.key === 'ArrowDown');
+        if (isPrevBookmark || isNextBookmark) {
             e.preventDefault();
             e.stopPropagation();
+            const runBookmarkNav = () => {
+                if (isPrevBookmark) goToPrevBookmark();
+                else goToNextBookmark();
+            };
             const inEditor = document.activeElement === teleprompterText || teleprompterText.contains(document.activeElement);
             if (inEditor) {
                 teleprompterText.setAttribute('contenteditable', 'false');
@@ -1828,14 +1836,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 requestAnimationFrame(() => {
                     teleprompterText.setAttribute('contenteditable', 'true');
                     teleprompterView.focus();
-                    requestAnimationFrame(() => {
-                        if (isPrevSegment) goToPrevBookmark();
-                        else goToNextBookmark();
-                    });
+                    requestAnimationFrame(runBookmarkNav);
                 });
             } else {
-                if (isPrevSegment) goToPrevBookmark();
-                else goToNextBookmark();
+                runBookmarkNav();
+            }
+            return;
+        }
+        const isPrevScript = e.altKey && (e.code === 'Comma' || e.key === ',');
+        const isNextScript = e.altKey && (e.code === 'Period' || e.key === '.');
+        if (isPrevScript || isNextScript) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (isPrevScript) {
+                if (currentFileIndex > 0 && typeof loadScriptToEditor === 'function') {
+                    loadScriptToEditor(currentFileIndex - 1, { scrollToTop: true });
+                }
+            } else if (fileStore?.length && currentFileIndex >= 0 && currentFileIndex < fileStore.length - 1 && typeof loadScriptToEditor === 'function') {
+                loadScriptToEditor(currentFileIndex + 1, { scrollToTop: true, triggerNewTalkPill: true });
             }
             return;
         }
@@ -1865,8 +1883,6 @@ document.addEventListener('DOMContentLoaded', function() {
     document.addEventListener('mousedown', () => { spacebarControlsPlay = false; }, true);
 
     let heldKeyInterval = null;
-    let heldArrowKey = null;
-    const HELD_KEY_TICK_MS = 32;
     /** isRepeat: true when called from the hold interval. When !isInvertScroll, Down/Left stops at 0. When isInvertScroll, Up/Right stops at 0 (opposite direction). */
     const applyArrowStep = (key, step, isRepeat = false) => {
         let v = parseFloat(speedSlider.value) || 0;
@@ -1908,24 +1924,20 @@ document.addEventListener('DOMContentLoaded', function() {
         if (['ArrowLeft', 'ArrowDown', 'ArrowRight', 'ArrowUp'].includes(key)) {
             e.preventDefault();
             e.stopPropagation();
-            /* OS key-repeat and controllers that re-send keydown: don't restart ramp or double-step */
-            if (heldArrowKey === key && heldKeyInterval) return;
             if (e.repeat && heldKeyInterval) return;
 
             if (heldKeyInterval) clearInterval(heldKeyInterval);
-            heldArrowKey = key;
-            applyArrowStep(key, 0.1 * scrollSensitivity, false);  /* initial press: can cross zero */
+            applyArrowStep(key, 0.1, false);  /* initial press: can cross zero */
             const heldKeyStart = Date.now();
             heldKeyInterval = setInterval(() => {
                 const elapsedSec = (Date.now() - heldKeyStart) / 1000;
-                const step = 0.1 * scrollSensitivity * (1 + elapsedSec * 2) * (HELD_KEY_TICK_MS / 80);
+                const step = 0.1 * (1 + elapsedSec * 2);
                 applyArrowStep(key, step, true);  /* repeat: stop at 0, don't cross */
-            }, HELD_KEY_TICK_MS);
+            }, 80);
         }
     }, true);
     document.addEventListener('keyup', (e) => {
         if (['ArrowLeft', 'ArrowDown', 'ArrowRight', 'ArrowUp'].includes(e.key)) {
-            if (heldArrowKey === e.key) heldArrowKey = null;
             if (heldKeyInterval) {
                 clearInterval(heldKeyInterval);
                 heldKeyInterval = null;
@@ -2033,17 +2045,13 @@ document.addEventListener('DOMContentLoaded', function() {
         if (shuttle !== 0) {
             if (shuttleHoldStart === 0) shuttleHoldStart = now;
             const holdSec = (now - shuttleHoldStart) / 1000;
-            if (isTeleprompting && !isPaused && speedSlider) {
-                const key = shuttle > 0 ? 'ArrowUp' : 'ArrowDown';
-                const step = 0.08 * scrollSensitivity * (1 + holdSec * 2) * Math.min(7, Math.abs(shuttle));
-                applyArrowStep(key, step, true);
-            } else if (teleprompterView) {
-                const accel = Math.min(SHUTTLE_ACCEL_MAX, SHUTTLE_ACCEL_BASE + holdSec * 40);
-                const delta = Math.round((shuttle > 0 ? 1 : -1) * accel);
+            const accel = Math.min(SHUTTLE_ACCEL_MAX, SHUTTLE_ACCEL_BASE + holdSec * 40);
+            const delta = Math.round((shuttle > 0 ? 1 : -1) * accel);
+            if (teleprompterView) {
                 const maxScroll = teleprompterView.scrollHeight - teleprompterView.clientHeight;
                 teleprompterView.scrollTop = Math.max(0, Math.min(maxScroll, teleprompterView.scrollTop + delta));
-                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
             }
+            if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
         } else {
             shuttleHoldStart = 0;
         }
@@ -3508,7 +3516,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     document.addEventListener('mousedown', handleColorBoxSelect, true);
 
-    teleprompterView.addEventListener('scroll', syncMirrorByPixels);
+    teleprompterView.addEventListener('scroll', () => {
+        /* During auto-scroll the rAF loop owns mirror sync; scroll events here caused double-sync + feedback. */
+        if (!isTeleprompting) syncMirrorByPixels();
+    });
     let bookmarkHighlightRaf = null;
     teleprompterView.addEventListener('scroll', () => {
         if (typeof checkTopPillAndGoToPreviousFile === 'function') checkTopPillAndGoToPreviousFile();
@@ -3571,6 +3582,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function handleMirrorScroll(data) {
         if (!mirrorWindow || mirrorWindow.closed) return;
+        /* Main window is the scroll leader while auto-scrolling; ratio-based echo causes oscillation. */
+        if (isTeleprompting) return;
         if (!data || typeof data.scrollTop !== 'number') return;
         isUpdatingFromMirrorScroll = true;
         const maxScroll = data.scrollHeight - data.clientHeight;
@@ -3598,6 +3611,16 @@ document.addEventListener('DOMContentLoaded', function() {
             }, '*');
         } catch (_) {}
     }
+    function handleMirrorViewportWidth(data) {
+        if (!document.body.classList.contains('broadcasting') || !mirrorWindow || mirrorWindow.closed) return;
+        const w = typeof data.contentWidthPx === 'number'
+            ? Math.floor(data.contentWidthPx)
+            : parseInt(data.contentWidthPx, 10);
+        if (isNaN(w) || w < 50 || mirrorViewportContentWidthPx === w) return;
+        mirrorViewportContentWidthPx = w;
+        relayoutBroadcastAfterMirrorWidthChange();
+    }
+
     function handleMirrorReady() {
         if (pendingMirrorPosition) {
             sendPendingMirrorPosition();
@@ -3611,6 +3634,7 @@ document.addEventListener('DOMContentLoaded', function() {
         refreshMirrorData();
         syncMirrorStyles();
         [0, 60, 200, 450].forEach((ms) => setTimeout(() => pushMirrorLeaderLayout(), ms));
+        [120, 400, 900].forEach((ms) => setTimeout(() => relayoutBroadcastAfterMirrorWidthChange(), ms));
     }
 
     let overflowReportCount = 0;
@@ -3648,6 +3672,7 @@ document.addEventListener('DOMContentLoaded', function() {
             try {
                 const data = e.data || {};
                 if (data.type === 'mirrorReady') handleMirrorReady();
+                if (data.type === 'mirrorViewportWidth') handleMirrorViewportWidth(data);
                 if (data.type === 'mirrorScroll') handleMirrorScroll(data);
                 if (data.type === 'rowOverflowReport') handleRowOverflowReport(data);
                 if (data.type === 'rowHeightsReport') handleRowHeightsReport(data);
@@ -3659,6 +3684,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const data = e.data || {};
             if (data.type === 'mirrorReady') handleMirrorReady();
+            if (data.type === 'mirrorViewportWidth') handleMirrorViewportWidth(data);
             if (data.type === 'mirrorScroll') handleMirrorScroll(data);
             if (data.type === 'rowOverflowReport') handleRowOverflowReport(data);
             if (data.type === 'rowHeightsReport') handleRowHeightsReport(data);
@@ -3851,16 +3877,19 @@ function indexToColumnLetter(colIndex) {
 
 		function syncMirrorByPixels() {
         if (isUpdatingFromMirrorScroll || !mirrorWindow || mirrorWindow.closed) return;
-        const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
-        mirrorWindow.postMessage({
-                type: 'pixelSync',
-                ...getMirrorScrollSyncPayload(),
-                indicatorPosition: getIndicatorPositionPercent(),
-                indicatorViewportPx: getIndicatorViewportOffsetPx(),
-                layout: getMirrorLayoutMetrics(),
-                rowGuideStyles: rows.length > 0 ? getMirrorRowGuideStylesFromMain(rows) : [],
-                ...getMirrorPillPayload()
-            }, '*');
+        const scrollOnly = isTeleprompting;
+        const payload = {
+            type: 'pixelSync',
+            scrollOnly,
+            ...getMirrorScrollSyncPayload(),
+            indicatorPosition: getIndicatorPositionPercent(),
+            indicatorViewportPx: getIndicatorViewportOffsetPx()
+        };
+        if (!scrollOnly) {
+            payload.layout = getMirrorLayoutMetrics();
+            Object.assign(payload, getMirrorPillPayload());
+        }
+        mirrorWindow.postMessage(payload, '*');
     }
 
     /** Measures row height from line count × line-height (formula-based). Uses tight line-height and full width to avoid over-measurement. */
@@ -4047,8 +4076,6 @@ function indexToColumnLetter(colIndex) {
 
     const ROW_COLOR_CLASSES = ['row-lines-same', 'row-col2-more', 'row-col3-more', 'row-col3-much-more', 'row-col2-one-more', 'row-col3-one-more'];
     const ROW_STRETCH_MARKERS = ['row-stretch-col2', 'row-stretch-col3'];
-    /** Extended view: main = columns 1–2 (index 0–1), mirror = column 3 (index 2); never show column 4+. */
-    const BROADCAST_MAX_COLUMNS = 3;
     const TP_ROW_BALANCE_KEY = 'data-tp-row-balance-key';
     let tpLineBalanceDebounceTimer = null;
 
@@ -4208,7 +4235,7 @@ function indexToColumnLetter(colIndex) {
             const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
             if (rows.length === 0) return;
             const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
-            if (maxCols < BROADCAST_MAX_COLUMNS) return;
+            if (maxCols !== 3) return;
 
             /* Clear line-balance only on columns that are not the stretched one (avoids wiping then failing to re-apply after format changes). */
             rows.forEach(row => {
@@ -4338,7 +4365,7 @@ function indexToColumnLetter(colIndex) {
         if (rows.length === 0) return;
 
         const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
-        if (maxCols < BROADCAST_MAX_COLUMNS) {
+        if (maxCols !== 3) {
             rows.forEach(row => {
                 ROW_COLOR_CLASSES.forEach(c => row.classList.remove(c));
                 ROW_STRETCH_MARKERS.forEach(c => row.classList.remove(c));
@@ -4391,8 +4418,8 @@ function indexToColumnLetter(colIndex) {
         /* Left text column = col2 (green when more), right text column = col3 (red when more). DOM order: index 0 = numbers, 1 = left, 2 = right. */
         const WORD_DIFF_GLOW = 5;   /* word count difference >= this → glow */
         const WORD_DIFF_FILL = 10;  /* word count difference >= this → fill */
-        const idxCol2 = 1;
-        const idxCol3 = 2;
+        const idxCol2 = Math.max(0, maxCols - 2);  /* left = col2 → green when more */
+        const idxCol3 = maxCols - 1;               /* right = col3 → red when more */
         /* Require this margin (px) to *change* which column is stretched; in the dead zone keep previous (avoids stretch toggling on bold/focus/sync). */
         const STRETCH_HEIGHT_HYSTERESIS_PX = 4;
 
@@ -4587,78 +4614,6 @@ function indexToColumnLetter(colIndex) {
         return last >= 0 ? last : (maxCols > 0 ? maxCols - 1 : 0);
     }
 
-    function getBroadcastMirrorColumnIndex(maxCols) {
-        if (maxCols >= BROADCAST_MAX_COLUMNS) return BROADCAST_MAX_COLUMNS - 1;
-        return getLastVisibleColumnIndex(maxCols);
-    }
-
-    function trimCellsForMirrorBroadcast(cells) {
-        if (!cells || !cells.length) return cells || [];
-        return cells.length > BROADCAST_MAX_COLUMNS ? cells.slice(0, BROADCAST_MAX_COLUMNS) : cells;
-    }
-
-    function getMirrorRowColorClass(row, rowIndex, rowColorsList) {
-        const fromDom = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
-        if (fromDom) return fromDom;
-        if (rowColorsList && rowColorsList[rowIndex]) return rowColorsList[rowIndex];
-        return '';
-    }
-
-    function buildMirrorTableRowPayload(row, rowIndex, rowColorsList) {
-        const cols = row.querySelectorAll('.script-column');
-        const cells = trimCellsForMirrorBroadcast(Array.from(cols).map(col => {
-            const c = col.querySelector('.cell-content') || col;
-            return getMirrorCellHtml(c);
-        }));
-        const colorClass = getMirrorRowColorClass(row, rowIndex, rowColorsList);
-        const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
-        const stretchParts = ROW_STRETCH_MARKERS.filter(c => row.classList.contains(c));
-        const rowClass = [colorClass, keywordPill, ...stretchParts].filter(Boolean).join(' ');
-        const font12 = row.classList.contains('row-font-12');
-        return { cells, rowClass, font12 };
-    }
-
-    const MIRROR_GUIDE_PAINT_BY_CLASS = {
-        'row-col2-one-more': {
-            rowBackground: '#000000',
-            columnBackgroundColor: '#000000',
-            columnBackgroundImage: 'linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%), linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%)',
-            color: ''
-        },
-        'row-col3-one-more': {
-            rowBackground: '#000000',
-            columnBackgroundColor: '#000000',
-            columnBackgroundImage: 'linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%)',
-            color: ''
-        },
-        'row-col2-more': { rowBackground: '#002D04', columnBackgroundColor: '#002D04', color: '#ffffff' },
-        'row-col3-more': { rowBackground: '#531516', columnBackgroundColor: '#531516', color: '#ffffff' },
-        'row-col3-much-more': { rowBackground: '#531516', columnBackgroundColor: '#531516', color: '#ffffff' }
-    };
-
-    /** Row-guide paint for mirror column 3 (same classes/hex as main column 2). */
-    function getMirrorRowGuideStylesFromMain(rows) {
-        return Array.from(rows).map(row => {
-            const cls = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
-            if (!cls || cls === 'row-lines-same') return null;
-            const preset = MIRROR_GUIDE_PAINT_BY_CLASS[cls];
-            if (preset) return { ...preset };
-            const cols = row.querySelectorAll('.script-column');
-            const col2 = cols[1];
-            if (!col2) return null;
-            const colCs = window.getComputedStyle(col2);
-            const bgImg = colCs.backgroundImage;
-            const bgc = colCs.backgroundColor;
-            const out = {
-                rowBackground: window.getComputedStyle(row).backgroundColor,
-                columnBackgroundColor: bgc,
-                color: colCs.color
-            };
-            if (bgImg && bgImg !== 'none') out.columnBackgroundImage = bgImg;
-            return out;
-        });
-    }
-
     /** Number of visible columns (per file checkboxes). When 1, main and mirror show the same column. */
     function getVisibleColumnCount(maxCols) {
         const vis = currentFileIndex >= 0 && fileColumnVisibility[currentFileIndex] ? fileColumnVisibility[currentFileIndex] : null;
@@ -4702,47 +4657,67 @@ function indexToColumnLetter(colIndex) {
                 /* e.g. font ribbon cleared heights async — mirror would get no rowHeights and collapse rows */
                 measureRowHeightsWithProbeForBroadcasting();
             }
-            if (rows.length > 0) {
+            if (broadcastEditMode && rows.length > 0) {
                 buildCharCountsPerRow();
                 applyRowColors();
             }
         }
-        /* Copy table to mirror (max 3 columns); mirror shows column 3 (index 2) when present. */
+        /* Copy full table to mirror (all columns); mirror shows the last visible column (per file checkboxes). */
         const pillPayload = getMirrorPillPayload();
         if (rows.length > 0 && isBroadcasting) {
             const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
-            const visibleColumnIndex = getBroadcastMirrorColumnIndex(maxCols);
+            const visibleColumnIndex = getLastVisibleColumnIndex(maxCols);
+            const rowData = rows.map(row => {
+                const cols = row.querySelectorAll('.script-column');
+                const cells = Array.from(cols).map(col => {
+                    const c = col.querySelector('.cell-content') || col;
+                    return getMirrorCellHtml(c);
+                });
+                const colorClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
+                const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
+                const stretchParts = ROW_STRETCH_MARKERS.filter(c => row.classList.contains(c));
+                const rowClass = [colorClass, keywordPill, ...stretchParts].filter(Boolean).join(' ');
+                const font12 = row.classList.contains('row-font-12');
+                return { cells, rowClass, font12 };
+            });
             const rowColors = (rowColorsCache.length === rows.length) ? rowColorsCache : rows.map(row => ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '');
-            const rowData = rows.map((row, i) => buildMirrorTableRowPayload(row, i, rowColors));
             const rowFont12 = (rowFont12Cache.length === rows.length) ? rowFont12Cache : rows.map(row => row.classList.contains('row-font-12'));
             const rowHeights = (measuredRowHeights.length === rows.length) ? measuredRowHeights : null;
-            const rowGuideStyles = getMirrorRowGuideStylesFromMain(rows);
             mirrorWindow.postMessage({
                 type: 'loadContent',
                 table: rowData,
                 visibleColumnIndex,
                 contentWidth,
                 rowColors,
-                rowGuideStyles,
                 rowFont12,
                 rowHeights,
                 ...pillPayload,
                 layout: getMirrorLayoutMetrics()
             }, '*');
         } else if (rows.length > 0) {
+            const rowData = rows.map(row => {
+                const cols = row.querySelectorAll('.script-column');
+                const cells = Array.from(cols).map(col => {
+                    const c = col.querySelector('.cell-content') || col;
+                    return getMirrorCellHtml(c);
+                });
+                const colorClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
+                const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
+                const stretchParts = ROW_STRETCH_MARKERS.filter(c => row.classList.contains(c));
+                const rowClass = [colorClass, keywordPill, ...stretchParts].filter(Boolean).join(' ');
+                const font12 = row.classList.contains('row-font-12');
+                return { cells, rowClass, font12 };
+            });
             const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
-            const visibleColumnIndex = getBroadcastMirrorColumnIndex(maxCols);
+            const visibleColumnIndex = getLastVisibleColumnIndex(maxCols);
             const rowColors = rows.map(row => ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '');
-            const rowData = rows.map((row, i) => buildMirrorTableRowPayload(row, i, rowColors));
             const rowFont12 = rows.map(row => row.classList.contains('row-font-12'));
-            const rowGuideStyles = getMirrorRowGuideStylesFromMain(rows);
             mirrorWindow.postMessage({
                 type: 'loadContent',
                 table: rowData,
                 visibleColumnIndex,
                 contentWidth,
                 rowColors,
-                rowGuideStyles,
                 rowFont12,
                 ...pillPayload,
                 layout: getMirrorLayoutMetrics()
@@ -4777,20 +4752,15 @@ function indexToColumnLetter(colIndex) {
         if ((!visibleIndices || visibleIndices.length === 0) && maxCols > 1) {
             contentVisibleCount = maxCols - 1;
         }
-        const mirrorColIdx = isBroadcasting && maxCols > 0 ? getBroadcastMirrorColumnIndex(maxCols) : -1;
-        const useFixedThreeColSplit = isBroadcasting && maxCols >= BROADCAST_MAX_COLUMNS;
-        const hideMirrorColOnMain = useFixedThreeColSplit
-            || (isBroadcasting && contentVisibleCount >= 2 && mirrorColIdx >= 0);
+        const lastVisible = isBroadcasting && maxCols > 0 ? getLastVisibleColumnIndex(maxCols) : -1;
+        const hideLastOnMain = isBroadcasting && contentVisibleCount >= 2 && lastVisible >= 0;
         rows.forEach(row => {
             const cols = row.querySelectorAll('.script-column');
-            cols.forEach((col, idx) => {
-                col.classList.remove('broadcast-hidden');
-                if (isBroadcasting && idx >= BROADCAST_MAX_COLUMNS) {
-                    col.classList.add('broadcast-hidden');
-                } else if (hideMirrorColOnMain && idx === mirrorColIdx) {
-                    col.classList.add('broadcast-hidden');
-                }
-            });
+            cols.forEach(col => col.classList.remove('broadcast-hidden'));
+            /* When 2+ content columns visible: main shows all except the last; mirror shows the last. When only 1 content column: main shows same as mirror. */
+            if (hideLastOnMain && cols[lastVisible]) {
+                cols[lastVisible].classList.add('broadcast-hidden');
+            }
         });
         if (isBroadcasting) {
             /* Keep locked heights (set by extend flow); only clear when leaving broadcasting */
@@ -4811,6 +4781,7 @@ function indexToColumnLetter(colIndex) {
         }
         mirrorWindow = null;
         pendingMirrorPosition = null;
+        mirrorViewportContentWidthPx = null;
         broadcastEditMode = false;
         measuredRowHeights = [];
         extendedFixedWidth = null;
@@ -4852,6 +4823,57 @@ function indexToColumnLetter(colIndex) {
 
     function getTeleprompterContentWidthPx() {
         return getStageScriptContentWidthPx();
+    }
+
+    /** Usable width for the mirror script column (live measure, reported width, or frame estimate). */
+    function getMirrorViewportContentWidthPx() {
+        if (mirrorViewportContentWidthPx != null && mirrorViewportContentWidthPx > 50) {
+            return mirrorViewportContentWidthPx;
+        }
+        if (mirrorWindow && !mirrorWindow.closed) {
+            try {
+                const container = mirrorWindow.document.getElementById('scroll-container');
+                if (container) {
+                    const cs = mirrorWindow.getComputedStyle(container);
+                    const pl = parseFloat(cs.paddingLeft) || 0;
+                    const pr = parseFloat(cs.paddingRight) || 0;
+                    const w = container.clientWidth - pl - pr;
+                    if (w > 50) return Math.floor(w);
+                }
+            } catch (_) {}
+        }
+        const outer = (pendingMirrorPosition && pendingMirrorPosition.width > 0)
+            ? pendingMirrorPosition.width
+            : (mirrorWindow && !mirrorWindow.closed ? mirrorWindow.innerWidth : 0);
+        if (outer > 50) {
+            return Math.max(50, Math.floor(outer - MIRROR_SCROLL_PADDING_LEFT - MIRROR_SCROLLBAR_ALLOWANCE));
+        }
+        return null;
+    }
+
+    /** Mirror column wrap width = min(main allocation, mirror viewport) so neither display clips on the right. */
+    function clampBroadcastMirrorColumnWidth() {
+        if (!document.body.classList.contains('broadcasting')) return false;
+        const cap = getMirrorViewportContentWidthPx();
+        if (cap == null || cap <= 0) return false;
+        const prev = lastColumnWidthPx;
+        if (prev == null || prev <= 0) {
+            lastColumnWidthPx = cap;
+            return true;
+        }
+        if (prev > cap) {
+            lastColumnWidthPx = cap;
+            return true;
+        }
+        return false;
+    }
+
+    function relayoutBroadcastAfterMirrorWidthChange() {
+        if (!document.body.classList.contains('broadcasting')) return;
+        syncColumnWidths(true);
+        measureRowHeightsWithProbeForBroadcasting();
+        refreshMirrorData();
+        if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
     }
 
     /** Main script width in extend mode: use the stage width (runlist is docked on the left). */
@@ -5153,12 +5175,10 @@ function indexToColumnLetter(colIndex) {
             widths[0] = availableWidth;
         } else if (!equalSplitThreeTextCols && useVisibleColumns && effectiveVisibleIndices) {
             const contentVisibleCount = effectiveVisibleIndices.filter(i => i >= 1).length;
-            /* 3-column extend: main = cols 1–2 (index 0–1); mirror = col 3 (index 2). Else last visible goes to mirror. */
-            const mainVisibleIndices = (isBroadcasting && maxCols >= BROADCAST_MAX_COLUMNS)
-                ? [0, 1]
-                : (isBroadcasting && contentVisibleCount >= 2)
-                    ? effectiveVisibleIndices.slice(0, -1)
-                    : effectiveVisibleIndices;
+            /* In extend mode with 2+ content columns: main shows all visible except the last (mirror shows the last). */
+            const mainVisibleIndices = (isBroadcasting && contentVisibleCount >= 2)
+                ? effectiveVisibleIndices.slice(0, -1)
+                : effectiveVisibleIndices;
             const contentIndices = mainVisibleIndices.filter(j => j >= 1);
             const hasCol0 = mainVisibleIndices.indexOf(0) >= 0;
             if (hasCol0) {
@@ -5185,11 +5205,13 @@ function indexToColumnLetter(colIndex) {
 
         /* When broadcasting, mirror shows one column; set its width for mirror layout. */
         if (isBroadcasting && maxCols > 0 && nVisible > 0) {
-            const lastIdx = getBroadcastMirrorColumnIndex(maxCols);
+            const lastIdx = getLastVisibleColumnIndex(maxCols);
             const contentRemainingForMirror = Math.max(0, availableWidth - (widths[0] || 0));
             lastColumnWidthPx = (lastIdx < widths.length && widths[lastIdx] > 0)
                 ? widths[lastIdx]
                 : (useVisibleColumns && effectiveVisibleIndices && effectiveVisibleIndices.length > 1 ? contentRemainingForMirror : Math.floor(remaining / nVisible));
+            clampBroadcastMirrorColumnWidth();
+            if (lastColumnWidthPx > 0 && lastIdx < widths.length) widths[lastIdx] = lastColumnWidthPx;
         } else if (!isBroadcasting) {
             lastColumnWidthPx = (maxCols > 1 && rows[0]) ? rows[0].querySelectorAll('.script-column')[1]?.getBoundingClientRect().width || remaining / (maxCols - 1) : null;
         }
@@ -5206,11 +5228,9 @@ function indexToColumnLetter(colIndex) {
         let lastMainVisibleIdx = lastVisibleIdx;
         if (effectiveVisibleIndices && effectiveVisibleIndices.length > 0) {
             const contentVisibleCount = effectiveVisibleIndices.filter(i => i >= 1).length;
-            const mainVisibleIndices = (isBroadcasting && maxCols >= BROADCAST_MAX_COLUMNS)
-                ? [0, 1]
-                : (isBroadcasting && contentVisibleCount >= 2)
-                    ? effectiveVisibleIndices.slice(0, -1)
-                    : effectiveVisibleIndices;
+            const mainVisibleIndices = (isBroadcasting && contentVisibleCount >= 2)
+                ? effectiveVisibleIndices.slice(0, -1)
+                : effectiveVisibleIndices;
             if (mainVisibleIndices.length) {
                 lastMainVisibleIdx = mainVisibleIndices[mainVisibleIndices.length - 1];
             }
@@ -7437,8 +7457,9 @@ function checkTopPillAndGoToPreviousFile() {
     const currentScrollTop = view.scrollTop;
     const scrollDelta = lastScrollTopForPillTrigger != null ? currentScrollTop - lastScrollTopForPillTrigger : 0;
     const playingBackward = typeof scrollSpeed !== 'undefined' && scrollSpeed < 0;
-    const manualTowardTop = scrollDelta < 0;
-    const scrollingTowardPrev = playingBackward || manualTowardTop;
+    const scrollingTowardPrev = isTeleprompting
+        ? (playingBackward && scrollDelta < 0)
+        : scrollDelta < 0;
     if (!scrollingTowardPrev) return;
 
     const viewRect = view.getBoundingClientRect();
@@ -7473,7 +7494,10 @@ function checkBottomPillAndAdvanceToNextFile() {
     if (!hasNext) return;
     const currentScrollTop = view.scrollTop;
     const scrollDelta = lastScrollTopForPillTrigger != null ? currentScrollTop - lastScrollTopForPillTrigger : 0;
-    const scrollingDown = (typeof scrollSpeed !== 'undefined' && scrollSpeed > 0) || (scrollDelta > 0);
+    const playingForward = typeof scrollSpeed !== 'undefined' && scrollSpeed > 0;
+    const scrollingDown = isTeleprompting
+        ? (playingForward && scrollDelta > 0)
+        : scrollDelta > 0;
     if (!scrollingDown) return;
 
     const viewRect = view.getBoundingClientRect();
@@ -8828,6 +8852,46 @@ if (btnRequestMultiscreen && multiscreenStatusEl) {
 // 6. MIRROR WINDOW LOGIC (OS AWARE)
 // =========================================
 
+/** Leave Aa (overview or extended broadcast-edit) before extend or other layout-sensitive flows. */
+function exitAaMode() {
+    const inAa = isOverviewMode || document.body.classList.contains('overview-mode') || broadcastEditMode;
+    if (!inAa) return false;
+
+    const isExtended = document.body.classList.contains('broadcasting') && mirrorWindow && !mirrorWindow.closed;
+    broadcastEditMode = false;
+    isOverviewMode = false;
+    document.body.classList.remove('overview-mode');
+    const btnO = document.getElementById('btn-overview-toggle');
+    if (btnO) {
+        btnO.classList.remove('overview-active', 'broadcast-edit-active');
+        btnO.title = isExtended
+            ? 'Show all columns to edit (mirror stays open)'
+            : 'Toggle overview (size 12) / restore size';
+    }
+    restoreScriptTypographyAfterOverview();
+    flattenRedundantSpans();
+    if (isExtended) applyBroadcastingVisibility();
+    if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+    void teleprompterText.offsetHeight;
+    syncColumnWidths();
+    if (isExtended) {
+        processTableColumns();
+        if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+        syncColumnWidths();
+        measureRowHeightsWithProbeForBroadcasting();
+        if (mirrorWindow && !mirrorWindow.closed) {
+            syncMirrorStyles();
+            refreshMirrorData();
+        }
+    } else {
+        measureRowHeightsFromContent();
+    }
+    if (typeof refreshSelectFontTarget === 'function') refreshSelectFontTarget();
+    if (typeof updateFilenamePills === 'function') updateFilenamePills();
+    if (typeof syncEditorState === 'function') syncEditorState();
+    return true;
+}
+
 if (newBookmarkButton) newBookmarkButton.onclick = () => addBookmarkAtCursor();
 if (prevBookmarkButton) prevBookmarkButton.onclick = () => goToPrevBookmark();
 if (nextBookmarkButton) nextBookmarkButton.onclick = () => goToNextBookmark();
@@ -8845,6 +8909,7 @@ extendMonitorButton.onclick = async () => {
         }
         mirrorWindow.close();
         mirrorWindow = null;
+        mirrorViewportContentWidthPx = null;
         measuredRowHeights = [];
         disableMirrorRunlistEdgeMode();
         document.body.classList.remove('broadcasting');
@@ -8871,18 +8936,11 @@ extendMonitorButton.onclick = async () => {
 
     overflowReportCount = 0;
 
-    /* If user had Aa (overview) on, temporarily exit so we measure row heights with normal font (same as Extend then Aa). */
-    const wasInOverview = document.body.classList.contains('overview-mode') || isOverviewMode;
-    if (wasInOverview) {
-        isOverviewMode = false;
-        document.body.classList.remove('overview-mode');
-        const btnO = document.getElementById('btn-overview-toggle');
-        if (btnO) btnO.classList.remove('overview-active');
-        restoreScriptTypographyAfterOverview();
-        flattenRedundantSpans();
-        void teleprompterText.offsetHeight;
-        syncColumnWidths();
-    }
+    if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(3000);
+    if (typeof resetPillTriggerState === 'function') resetPillTriggerState();
+
+    /* Exit Aa first so extend measures and layouts in control (broadcast) view, not overview. */
+    exitAaMode();
 
     document.body.classList.add('broadcasting');
     enableMirrorRunlistEdgeMode();
@@ -8933,6 +8991,8 @@ extendMonitorButton.onclick = async () => {
             }
         });
         restoreScrollPosition();
+        if (typeof resetPillTriggerState === 'function') resetPillTriggerState();
+        if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(2000);
 
         /* Position mirror on other monitor: use getScreenDetails when available, else user's "second monitor position" setting */
         let mirrorLeft, mirrorTop;
@@ -9012,10 +9072,12 @@ extendMonitorButton.onclick = async () => {
                 const attemptRestore = () => {
                     restoreScrollPosition();
                     syncMirrorByPixels();
+                    if (typeof resetPillTriggerState === 'function') resetPillTriggerState();
                 };
                 requestAnimationFrame(attemptRestore);
                 requestAnimationFrame(() => requestAnimationFrame(attemptRestore));
                 setTimeout(attemptRestore, 100);
+                if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(2000);
                 [0, 40, 120, 350, 700].forEach((ms) => setTimeout(() => pushMirrorLeaderLayout(), ms));
             };
             mirrorWindow.addEventListener('load', sendWhenReady);
