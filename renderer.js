@@ -1344,7 +1344,20 @@ document.addEventListener('DOMContentLoaded', function() {
         const trigger = document.getElementById('font-target-trigger');
         const listEl = document.getElementById('font-target-list');
         if (!trigger || !listEl) return;
-        const current = skipCaretFontSelectSync ? '' : selectFontTarget.value;
+        const current = skipCaretFontSelectSync
+            ? (selectedFontTarget
+                ? fontTargetOptionValue({
+                    fontFamily: selectedFontTarget.fontFamily,
+                    fontSize: selectedFontTarget.fontSize,
+                    color: selectedFontTarget.color,
+                    backgroundColor: selectedFontTarget.backgroundColor,
+                    bold: selectedFontTarget.bold,
+                    italic: selectedFontTarget.italic,
+                    underline: selectedFontTarget.underline,
+                    plainBody: selectedFontTarget.plainBody,
+                })
+                : '')
+            : selectFontTarget.value;
         const opts = collectUniqueFontSizes();
         const rootScriptColor = (window.getComputedStyle(teleprompterText).color || '').trim();
         let matchedCurrent = false;
@@ -1410,14 +1423,17 @@ document.addEventListener('DOMContentLoaded', function() {
             const label = fontTargetMenuLabel(selectedFontTarget.fontFamily || '', selectedFontTarget.fontSize || '');
             const hasFontColor = isOpaqueColor(selectedFontTarget.color);
             const hasBgColor = isOpaqueColor(selectedFontTarget.backgroundColor);
-            const val = JSON.stringify({
+            const plainBody = !!selectedFontTarget.plainBody
+                || isPlainScriptBodyFontTarget({ color: selectedFontTarget.color, backgroundColor: selectedFontTarget.backgroundColor });
+            const val = fontTargetOptionValue({
                 fontFamily: selectedFontTarget.fontFamily || '',
                 fontSize: selectedFontTarget.fontSize || '',
-                color: hasFontColor ? selectedFontTarget.color : null,
-                backgroundColor: hasBgColor ? selectedFontTarget.backgroundColor : null,
+                color: selectedFontTarget.color,
+                backgroundColor: selectedFontTarget.backgroundColor,
                 bold: !!selectedFontTarget.bold,
                 italic: !!selectedFontTarget.italic,
                 underline: !!selectedFontTarget.underline,
+                plainBody,
             });
             const fallbackOpt = document.createElement('option');
             fallbackOpt.value = val;
@@ -1439,6 +1455,25 @@ document.addEventListener('DOMContentLoaded', function() {
                 !!selectedFontTarget.italic,
                 !!selectedFontTarget.underline
             );
+            return;
+        }
+
+        /* Keep explicit Select choice when using ribbon (size stepper, etc.) — only clear on editor/view click. */
+        if (selectedFontTarget && !skipCaretFontSelectSync) {
+            const plainBody = !!selectedFontTarget.plainBody
+                || isPlainScriptBodyFontTarget({ color: selectedFontTarget.color, backgroundColor: selectedFontTarget.backgroundColor });
+            const val = fontTargetOptionValue({
+                fontFamily: selectedFontTarget.fontFamily || '',
+                fontSize: selectedFontTarget.fontSize || '',
+                color: selectedFontTarget.color,
+                backgroundColor: selectedFontTarget.backgroundColor,
+                bold: !!selectedFontTarget.bold,
+                italic: !!selectedFontTarget.italic,
+                underline: !!selectedFontTarget.underline,
+                plainBody,
+            });
+            selectFontTarget.value = val;
+            updateFontTargetTriggerFromValue(val);
             return;
         }
 
@@ -1466,7 +1501,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (match) {
                     const val = fontTargetOptionValue(match);
                     selectFontTarget.value = val;
-                    selectedFontTarget = null;
                     updateFontTargetTriggerFromValue(val);
                 } else {
                     trigger.textContent = 'Select';
@@ -2660,7 +2694,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 fontReport('applyToMatchingTarget', { target: targetToApply.fontFamily + ' ' + targetToApply.fontSize });
                 if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
                 const matchedCount = applyFontToMatchingTarget(targetToApply, fontVal, sizeVal);
-                if (matchedCount > 0 || targetToApply.plainBody) {
+                if (matchedCount > 0 || targetToApply.plainBody || selectedFontTarget || selectFontTarget?.value) {
                     syncSelectedFontTargetAfterRibbonApply(targetToApply, fontVal, sizeVal);
                     updateFontTargetTriggerFromValue(selectFontTarget?.value);
                 }
@@ -7157,6 +7191,18 @@ function stripBreaksAroundCommasInPlainText(text) {
     return t;
 }
 
+/** Section labels like "_ Hosanna…" must stay on one line (Word/import often inserts a break after "_"). */
+function stripBreaksAfterUnderscoresInPlainText(text) {
+    if (!text) return text;
+    let t = text;
+    let prev;
+    do {
+        prev = t;
+        t = t.replace(/_\s*\n+\s*/g, '_');
+    } while (t !== prev);
+    return t;
+}
+
 function stripBreaksAroundCommasInCell(cell) {
     if (!cell) return;
     let changed = true;
@@ -7186,6 +7232,33 @@ function stripBreaksAroundCommasInCell(cell) {
             }
         }
     }
+}
+
+function stripBreaksAfterUnderscoresInCell(cell) {
+    if (!cell) return;
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const br of Array.from(cell.querySelectorAll('br'))) {
+            if (!cell.contains(br)) continue;
+            const prevTn = textNodeBeforeBr(br);
+            const nextTn = textNodeAfterBr(br);
+            if (!prevTn || !nextTn) continue;
+            const left = (prevTn.textContent || '').replace(/\s+$/, '');
+            if (!/_$/.test(left)) continue;
+            prevTn.textContent = left + (nextTn.textContent || '').replace(/^\s+/, '');
+            nextTn.remove();
+            br.remove();
+            changed = true;
+            break;
+        }
+    }
+}
+
+function normalizeCellLineBreakArtifacts(cell) {
+    if (!cell) return;
+    stripBreaksAroundCommasInCell(cell);
+    stripBreaksAfterUnderscoresInCell(cell);
 }
 
 /** Build script HTML from DOCX XML so run text/highlight colors are preserved (Mammoth omits foreground color). */
@@ -7421,7 +7494,7 @@ function insertOpenFileLineBreaksPlainTextCore(text) {
         new RegExp(`${ELLIPSIS_PLACEHOLDER_PREFIX}(\\d+)${ELLIPSIS_PLACEHOLDER_SUFFIX}`, 'g'),
         (_, idx) => ellipsisSpans[Number(idx)] ?? '...'
     );
-    return stripBreaksAroundCommasInPlainText(t);
+    return stripBreaksAfterUnderscoresInPlainText(stripBreaksAroundCommasInPlainText(t));
 }
 
 function insertOpenFileLineBreaksInPlainText(text) {
@@ -7461,7 +7534,7 @@ function applyOpenFileLineBreaksToContent(html) {
         cells.forEach((cell) => applyOpenFileLineBreaksToCellElement(cell));
         normalizeImportedColorSpans(root);
         cells.forEach((cell) => insertMissingSoftBrInCell(cell));
-        cells.forEach((cell) => stripBreaksAroundCommasInCell(cell));
+        cells.forEach((cell) => normalizeCellLineBreakArtifacts(cell));
         return root.innerHTML;
     }
     if (looksLikeHtmlSource(html)) return insertOpenFileLineBreaksInHtml(html);
@@ -7486,17 +7559,17 @@ function applyOpenFileLineBreaksToCellElement(cell) {
     if (cell.querySelector(':scope > div.script-container, :scope > div.script-row-wrapper, :scope > table, :scope > .bookmark-dot')) return;
     if (TP_PIPEV_MARKER_ONLY.test(raw.trim())) return;
     if (/<br\s*\/?>/i.test(cell.innerHTML || '')) {
-        stripBreaksAroundCommasInCell(cell);
+        normalizeCellLineBreakArtifacts(cell);
         return;
     }
     if (!cellNeedsOpenFileLineBreaks(raw)) return;
     if (cellHasPreservedInlineFormatting(cell)) {
         cell.innerHTML = insertOpenFileLineBreaksInHtml(cell.innerHTML || '');
-        stripBreaksAroundCommasInCell(cell);
+        normalizeCellLineBreakArtifacts(cell);
         return;
     }
     cell.innerHTML = plainTextWithOpenFileBreaksToCellHtml(raw);
-    stripBreaksAroundCommasInCell(cell);
+    normalizeCellLineBreakArtifacts(cell);
 }
 
 function insertOpenFileLineBreaksInHtml(html) {
@@ -7851,7 +7924,7 @@ function processTableColumns() {
     ensureSingleScriptContainer();
     ensurePlainScriptRows();
     teleprompterText.querySelectorAll('.cell-content').forEach((cell) => insertMissingSoftBrInCell(cell));
-    teleprompterText.querySelectorAll('.cell-content').forEach((cell) => stripBreaksAroundCommasInCell(cell));
+    teleprompterText.querySelectorAll('.cell-content').forEach((cell) => normalizeCellLineBreakArtifacts(cell));
     /* Split rows only on hard returns; Word soft breaks (data-soft-return) stay in one cell */
     splitMultiLineCellsIntoRows();
     splitPipeVPrefixIntoCueColumn();
