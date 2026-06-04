@@ -634,10 +634,14 @@ document.addEventListener('DOMContentLoaded', function() {
         return lastFontChangeSource === 'size' || lastFontChangeSource === 'family';
     }
 
+    /** DOCX body often has bold/italic on white runs; list may show a non-bold plain-body target. */
+    function fontTargetSkipsStyleFlagsForApply(target) {
+        return !!target?.plainBody && (lastFontChangeSource === 'size' || lastFontChangeSource === 'family');
+    }
+
     /** Font-target list/matching use stored sizes — Aa mode temporarily paints 12px without changing logical body size. */
     function getFontTargetMetricsFromTextNode(textNode) {
         const normalizeFont = (v) => (v || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
-        const inColorSpan = textNodeInColorSpanInline(textNode);
         let fontFamily = '';
         let fontSize = '';
         let el = textNode.parentElement;
@@ -657,7 +661,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!fontSize) fontSize = comp.fontSize || '';
         }
         const px = parseFloat(fontSize) || 0;
-        if (isOverviewMode && !inColorSpan && Math.abs(px - 12) < 0.5) {
+        if (isOverviewMode && Math.abs(px - 12) < 0.5) {
             const logical = typeof getOverviewRestoreFontSizePx === 'function' ? getOverviewRestoreFontSizePx() : null;
             if (logical && String(logical) !== '12') fontSize = `${logical}px`;
         }
@@ -677,14 +681,13 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!tFont || tSizeNum <= 0) return false;
         if (pFont !== tFont || Math.abs(pSizeNum - tSizeNum) >= 0.5) return false;
         const flags = getTextStyleFlagsFromNode(textNode);
-        if (!styleFlagsMatch(target, flags)) return false;
+        if (!fontTargetSkipsStyleFlagsForApply(target) && !styleFlagsMatch(target, flags)) return false;
         const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(textNode);
         if (ignoreChromatics) return true;
-        if (!colorsMatch(target, effColor, effBg)) return false;
         if (target.plainBody) {
-            return !textNodeInColorSpanInline(textNode)
-                && isPlainScriptBodyFontTarget({ color: effColor, backgroundColor: effBg });
+            return isPlainScriptBodyFontTarget({ color: effColor, backgroundColor: effBg });
         }
+        if (!colorsMatch(target, effColor, effBg)) return false;
         return true;
     }
 
@@ -781,6 +784,48 @@ document.addEventListener('DOMContentLoaded', function() {
         refreshSelectFontTarget();
     }
 
+    /** applyFontToAllContent sets explicit font-size on many nodes; plain-body target apply must update those too. */
+    function applyPlainBodyExplicitFontSizes(target, applyMetricsToEl, normalizeFont, sizeNum) {
+        const tFont = normalizeFont(target.fontFamily);
+        const tSizeNum = sizeNum(target.fontSize);
+        if (!tFont || tSizeNum <= 0) return;
+        const skipFirstCol = documentHasTableLayout() && !isOverviewMode;
+        teleprompterText.querySelectorAll('*').forEach(el => {
+            if (el === teleprompterText) return;
+            const explicit = (el.style?.fontSize || '').trim();
+            if (!explicit || parseFloat(explicit) <= 0) return;
+            if (skipFirstCol && isLockedFirstTableColumnElement(el)) return;
+            const row = el.closest?.('.script-row-wrapper');
+            if (row?.classList?.contains('row-font-12')) return;
+            if (el.classList?.contains('color-span-inline')) {
+                if (!isPlainScriptBodyFontTarget(getEffectiveColorsFromElement(el))) return;
+            } else {
+                const colorWrap = el.closest?.('.color-span-inline');
+                if (colorWrap && !isPlainScriptBodyFontTarget(getEffectiveColorsFromElement(colorWrap))) return;
+            }
+            const style = window.getComputedStyle(el);
+            if (normalizeFont(style.fontFamily) !== tFont) return;
+            let elSizeNum = sizeNum(style.fontSize);
+            if (isOverviewMode && Math.abs(elSizeNum - 12) < 0.5) {
+                const logical = typeof getOverviewRestoreFontSizePx === 'function' ? getOverviewRestoreFontSizePx() : null;
+                if (logical) elSizeNum = parseFloat(String(logical)) || elSizeNum;
+            }
+            if (Math.abs(elSizeNum - tSizeNum) >= 0.5) return;
+            let hasPlainText = false;
+            const tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+            let tn;
+            while ((tn = tw.nextNode())) {
+                if (!tn.textContent.trim()) continue;
+                if (isPlainScriptBodyFontTarget(getEffectiveColorsFromNode(tn))) {
+                    hasPlainText = true;
+                    break;
+                }
+            }
+            if (!hasPlainText) return;
+            applyMetricsToEl(el);
+        });
+    }
+
     function applyFontToMatchingTarget(target, newFontVal, newSizeVal, resetLineHeight) {
         if (!target) return 0;
         const { fontFamily: targetFont, fontSize: targetSize } = target;
@@ -856,9 +901,9 @@ document.addEventListener('DOMContentLoaded', function() {
             let el = textNode.parentElement;
             while (el && el !== teleprompterText) {
                 if (el.classList?.contains('format-span-inline')) {
-                    const style = window.getComputedStyle(el);
-                    const pFont = normalizeFont(style.fontFamily);
-                    const pSizeNum = sizeNum(style.fontSize);
+                    const metrics = getFontTargetMetricsFromTextNode(textNode);
+                    const pFont = normalizeFont(metrics.fontFamily);
+                    const pSizeNum = sizeNum(metrics.fontSize);
                     if (tFont && tSizeNum > 0 && pFont === tFont && Math.abs(pSizeNum - tSizeNum) < 0.5 && targetMatchesTextRun(target, textNode, { ignoreChromatics })) {
                         applyMetricsToEl(el);
                         if (resetLineHeight) unwrapBlockAncestors(el);
@@ -896,8 +941,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 applyMetricsToColorHighlightInclusiveChain(el, newFont || null, sizeStrForImportant, rootLineHeight || null);
             });
         }
+        if (target.plainBody && (newFont || sizeStrForImportant)) {
+            if (newFont) teleprompterText.style.fontFamily = newFont;
+            if (sizeStrForImportant) teleprompterText.style.setProperty('font-size', sizeStrForImportant, 'important');
+            if (rootLineHeight) teleprompterText.style.lineHeight = rootLineHeight;
+            applyPlainBodyExplicitFontSizes(target, applyMetricsToEl, normalizeFont, sizeNum);
+        }
         flattenRedundantSpans();
-        return toWrap.length;
+        return target.plainBody && (newFont || sizeStrForImportant)
+            ? Math.max(toWrap.length, 1)
+            : toWrap.length;
     }
 
     /** After applyFontToMatchingTarget, advance selectedFontTarget so the next ribbon edit matches the same runs (DOM no longer has the old font/size). */
@@ -914,7 +967,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const updated = { ...oldTarget, fontFamily: newFont, fontSize: newSize };
         selectedFontTarget = updated;
         if (selectFontTarget) {
-            selectFontTarget.value = fontTargetOptionValue(updated);
+            const val = fontTargetOptionValue(updated);
+            selectFontTarget.value = val;
+            updateFontTargetTriggerFromValue(val);
         }
     }
 
@@ -1085,7 +1140,7 @@ document.addEventListener('DOMContentLoaded', function() {
             bold: !!bold,
             italic: !!italic,
             underline: !!underline,
-            plainBody,
+            plainBody: !!plainBody,
         });
     }
 
@@ -1263,6 +1318,27 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
 
+    function updateFontTargetTriggerFromValue(valJson) {
+        const trigger = document.getElementById('font-target-trigger');
+        if (!trigger || !valJson) return;
+        try {
+            const t = JSON.parse(valJson);
+            const label = fontTargetMenuLabel(t.fontFamily || '', t.fontSize || '');
+            const plainBody = !!t.plainBody || isPlainScriptBodyFontTarget({ color: t.color, backgroundColor: t.backgroundColor });
+            const rootScriptColor = (window.getComputedStyle(teleprompterText).color || '').trim();
+            const swatchColor = plainBody ? rootScriptColor : t.color;
+            const hasFontColor = plainBody || isOpaqueColor(t.color);
+            const hasBgColor = isOpaqueColor(t.backgroundColor);
+            trigger.innerHTML = '';
+            const tLabel = document.createElement('span');
+            tLabel.textContent = label;
+            trigger.appendChild(tLabel);
+            appendFontTargetDecorations(trigger, hasFontColor, hasBgColor, swatchColor, t.backgroundColor, !!t.bold, !!t.italic, !!t.underline);
+        } catch (_) {
+            trigger.textContent = 'Select';
+        }
+    }
+
     function refreshSelectFontTarget() {
         if (!selectFontTarget) return;
         const trigger = document.getElementById('font-target-trigger');
@@ -1319,11 +1395,12 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             item.addEventListener('click', () => {
                 selectFontTarget.value = val;
-                trigger.innerHTML = '';
-                const tLabel = document.createElement('span');
-                tLabel.textContent = label;
-                trigger.appendChild(tLabel);
-                appendFontTargetDecorations(trigger, hasFontColor, hasBgColor, swatchColor, backgroundColor, !!bold, !!italic, !!underline);
+                try {
+                    selectedFontTarget = JSON.parse(val);
+                } catch (_) {
+                    selectedFontTarget = null;
+                }
+                updateFontTargetTriggerFromValue(val);
                 listEl.classList.remove('open');
                 selectFontTarget.dispatchEvent(new Event('change'));
             });
@@ -1387,33 +1464,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                 }
                 if (match) {
-                    const { fontFamily, fontSize, color, backgroundColor, bold, italic, underline } = match;
-                    const label = fontTargetMenuLabel(fontFamily, fontSize);
                     const val = fontTargetOptionValue(match);
-                    const plainBody = isPlainScriptBodyFontTarget({ color, backgroundColor });
-                    const swatchColor = plainBody ? rootScriptColor : color;
                     selectFontTarget.value = val;
-                    trigger.innerHTML = '';
-                    const tLabel = document.createElement('span');
-                    tLabel.textContent = label;
-                    trigger.appendChild(tLabel);
-                    if (plainBody || isOpaqueColor(color) || isOpaqueColor(backgroundColor)) {
-                        const sw = document.createElement('span');
-                        sw.className = 'font-target-swatches';
-                        if (isOpaqueColor(backgroundColor)) {
-                            const s = document.createElement('span');
-                            s.className = 'font-target-swatch font-target-swatch-bg';
-                            s.style.backgroundColor = backgroundColor;
-                            sw.appendChild(s);
-                        }
-                        if (plainBody || isOpaqueColor(color)) {
-                            const s = document.createElement('span');
-                            s.className = 'font-target-swatch font-target-swatch-text';
-                            s.style.backgroundColor = swatchColor;
-                            sw.appendChild(s);
-                        }
-                        trigger.appendChild(sw);
-                    }
+                    selectedFontTarget = null;
+                    updateFontTargetTriggerFromValue(val);
                 } else {
                     trigger.textContent = 'Select';
                 }
@@ -2542,13 +2596,17 @@ document.addEventListener('DOMContentLoaded', function() {
         updateMultiSelectState();
         const fontVal = fontFamilySelect?.value;
         const sizeVal = fontSizeSelect?.value;
-        let targetToApply = selectedFontTarget ? { ...selectedFontTarget } : null;
-        if (!targetToApply && selectFontTarget?.value) {
+        /* Use dropdown value first — trigger/caret sync can disagree with stale selectedFontTarget (e.g. plainBody vs DOCX color). */
+        let targetToApply = null;
+        if (selectFontTarget?.value) {
             try {
                 targetToApply = JSON.parse(selectFontTarget.value);
             } catch (_) {
                 targetToApply = null;
             }
+        }
+        if (!targetToApply && selectedFontTarget) {
+            targetToApply = { ...selectedFontTarget };
         }
 
         const view = teleprompterView;
@@ -2602,7 +2660,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 fontReport('applyToMatchingTarget', { target: targetToApply.fontFamily + ' ' + targetToApply.fontSize });
                 if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
                 const matchedCount = applyFontToMatchingTarget(targetToApply, fontVal, sizeVal);
-                if (matchedCount > 0) syncSelectedFontTargetAfterRibbonApply(targetToApply, fontVal, sizeVal);
+                if (matchedCount > 0 || targetToApply.plainBody) {
+                    syncSelectedFontTargetAfterRibbonApply(targetToApply, fontVal, sizeVal);
+                    updateFontTargetTriggerFromValue(selectFontTarget?.value);
+                }
                 requestAnimationFrame(() => refreshSelectFontTarget());
             } else if (!targetToApply && (fontFamilySelect || fontSizeSelect)) {
                 fontReport('applyToAllContent', { reason: 'no target, no ranges' });
