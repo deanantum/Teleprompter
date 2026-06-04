@@ -587,14 +587,60 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function getDefaultScriptTextColorNorm() {
+        return normalizeColorForKey(window.getComputedStyle(teleprompterText).color || '');
+    }
+
+    /** True for DOCX/ribbon color wrappers — must not be flattened or matched as “plain” body text. */
+    function isProtectedColorSpan(el) {
+        if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+        if (el.classList?.contains('color-span-inline')) return true;
+        if (el.tagName === 'SPAN' && ((el.style?.color || '').trim() || (el.style?.backgroundColor || '').trim())) return true;
+        return false;
+    }
+
     function colorsMatch(target, computedColor, computedBg) {
         const tColor = normalizeColorForKey(target.color);
         const tBg = normalizeColorForKey(target.backgroundColor);
         const c = normalizeColorForKey(computedColor);
         const b = normalizeColorForKey(computedBg);
-        if (tColor && c !== tColor) return false;
-        if (tBg && b !== tBg) return false;
+        const rootColor = getDefaultScriptTextColorNorm();
+        if (isOpaqueColor(target.color)) {
+            if (c !== tColor) return false;
+        } else if (c && c !== rootColor) {
+            return false;
+        }
+        if (isOpaqueColor(target.backgroundColor)) {
+            if (b !== tBg) return false;
+        } else if (isOpaqueColor(computedBg)) {
+            return false;
+        }
         return true;
+    }
+
+    /** Plain font-target ribbon edits match by font+size (+ B/I/U), not text/highlight color (DOCX gray still matches Verdana 36). */
+    function fontTargetIgnoresChromaticsForApply(target) {
+        if (isOpaqueColor(target?.color) || isOpaqueColor(target?.backgroundColor)) return false;
+        return lastFontChangeSource === 'size' || lastFontChangeSource === 'family';
+    }
+
+    function targetMatchesTextRun(target, textNode, { ignoreChromatics = false } = {}) {
+        const parent = textNode.parentElement;
+        if (!parent) return false;
+        const normalizeFont = (v) => (v || '').split(',')[0].trim().replace(/^["']|["']$/g, '').toLowerCase();
+        const sizeNum = (v) => parseFloat(String(v || '').trim()) || 0;
+        const style = window.getComputedStyle(parent);
+        const pFont = normalizeFont(style.fontFamily);
+        const pSizeNum = sizeNum(style.fontSize);
+        const tFont = normalizeFont(target.fontFamily);
+        const tSizeNum = sizeNum(target.fontSize);
+        if (!tFont || tSizeNum <= 0) return false;
+        if (pFont !== tFont || Math.abs(pSizeNum - tSizeNum) >= 0.5) return false;
+        const flags = getTextStyleFlagsFromNode(textNode);
+        if (!styleFlagsMatch(target, flags)) return false;
+        if (ignoreChromatics) return true;
+        const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(textNode);
+        return colorsMatch(target, effColor, effBg);
     }
 
     /** Match text runs by Select-item identity: same font family, size, text color, and highlight color. */
@@ -714,20 +760,14 @@ document.addEventListener('DOMContentLoaded', function() {
         let node;
         const tFont = normalizeFont(targetFont);
         const tSizeNum = sizeNum(targetSize);
+        const ignoreChromatics = fontTargetIgnoresChromaticsForApply(target);
         while ((node = walker.nextNode())) {
             if (!node.textContent.trim()) continue;
-            const parent = node.parentElement;
-            if (!parent) continue;
-            const style = window.getComputedStyle(parent);
-            const pFont = normalizeFont(style.fontFamily);
-            const pSizeNum = sizeNum(style.fontSize);
-            const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(node);
-            const flags = getTextStyleFlagsFromNode(node);
-            if (tFont && tSizeNum > 0 && pFont === tFont && Math.abs(pSizeNum - tSizeNum) < 0.5 && colorsMatch(target, effColor, effBg) && styleFlagsMatch(target, flags)) {
+            if (targetMatchesTextRun(target, node, { ignoreChromatics })) {
                 toWrap.push(node);
             }
         }
-        fontReport('applyFontToMatchingTarget matched', { matchedNodes: toWrap.length });
+        fontReport('applyFontToMatchingTarget matched', { matchedNodes: toWrap.length, ignoreChromatics });
         const isStructuralNode = (el) => el === teleprompterText || el?.classList?.contains('script-row-wrapper') || el?.classList?.contains('script-column') || el?.classList?.contains('cell-locker') || el?.classList?.contains('cell-content');
         const BLOCK_TAGS = ['DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'];
         const unwrapBlockAncestors = (child) => {
@@ -750,29 +790,46 @@ document.addEventListener('DOMContentLoaded', function() {
             if (sizeStrForImportant) el.style.setProperty('font-size', sizeStrForImportant, 'important');
             if (rootLineHeight) el.style.lineHeight = rootLineHeight;
         };
-        /**
-         * Font color / background lives on .color-span-inline. Nesting .format-span-inline inside it leaves the
-         * highlight box sized with the outer span’s inherited font — apply metrics on the highlight wrapper instead.
-         * Nested color spans (bg + fg) need the same metrics on every wrapper in the chain.
-         */
-        const tryApplyFontOnHighlightWrapper = (textNode) => {
-            const par = textNode.parentElement;
-            if (!par) return false;
-            if (par.classList?.contains('color-span-inline') && par.childNodes.length === 1 && par.firstChild === textNode && textNode.nodeType === Node.TEXT_NODE) {
-                applyMetricsToColorHighlightInclusiveChain(par, newFont || null, sizeStrForImportant, rootLineHeight || null);
-                if (resetLineHeight) unwrapBlockAncestors(par);
-                return true;
+        /** DOCX/import color wrappers: sync metrics on the highlight chain and any nested format spans (not only single-child spans). */
+        const tryApplyFontOnColorHighlightChain = (textNode) => {
+            let colorSpan = null;
+            let el = textNode.parentElement;
+            while (el && el !== teleprompterText) {
+                if (el.classList?.contains('color-span-inline')) colorSpan = el;
+                el = el.parentElement;
             }
-            if (par.classList?.contains('format-span-inline') && par.parentElement?.classList?.contains('color-span-inline')) {
-                applyMetricsToEl(par);
-                applyMetricsToColorHighlightInclusiveChain(par.parentElement, newFont || null, sizeStrForImportant, rootLineHeight || null);
-                if (resetLineHeight) unwrapBlockAncestors(par);
-                return true;
+            if (!colorSpan) return false;
+            let walk = textNode.parentElement;
+            while (walk && walk !== teleprompterText) {
+                if (walk.classList?.contains('format-span-inline')) applyMetricsToEl(walk);
+                if (walk === colorSpan) break;
+                walk = walk.parentElement;
+            }
+            applyMetricsToColorHighlightInclusiveChain(colorSpan, newFont || null, sizeStrForImportant, rootLineHeight || null);
+            if (resetLineHeight) unwrapBlockAncestors(textNode.parentElement);
+            return true;
+        };
+        const tryApplyOnMatchingFormatSpanAncestor = (textNode) => {
+            let el = textNode.parentElement;
+            while (el && el !== teleprompterText) {
+                if (el.classList?.contains('format-span-inline')) {
+                    const style = window.getComputedStyle(el);
+                    const pFont = normalizeFont(style.fontFamily);
+                    const pSizeNum = sizeNum(style.fontSize);
+                    if (tFont && tSizeNum > 0 && pFont === tFont && Math.abs(pSizeNum - tSizeNum) < 0.5 && targetMatchesTextRun(target, textNode, { ignoreChromatics })) {
+                        applyMetricsToEl(el);
+                        if (resetLineHeight) unwrapBlockAncestors(el);
+                        return true;
+                    }
+                    return false;
+                }
+                el = el.parentElement;
             }
             return false;
         };
         toWrap.forEach(textNode => {
-            if (tryApplyFontOnHighlightWrapper(textNode)) return;
+            if (tryApplyFontOnColorHighlightChain(textNode)) return;
+            if (tryApplyOnMatchingFormatSpanAncestor(textNode)) return;
             const span = document.createElement('span');
             span.className = 'format-span-inline';
             span.style.display = 'inline';
@@ -783,6 +840,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 unwrapBlockAncestors(span);
             }
         });
+        if (ignoreChromatics && sizeStrForImportant) {
+            teleprompterText.querySelectorAll('.color-span-inline').forEach(el => {
+                const style = window.getComputedStyle(el);
+                const pFont = normalizeFont(style.fontFamily);
+                const pSizeNum = sizeNum(style.fontSize);
+                if (!tFont || tSizeNum <= 0 || pFont !== tFont || Math.abs(pSizeNum - tSizeNum) >= 0.5) return;
+                const tn = el.firstChild?.nodeType === Node.TEXT_NODE
+                    ? el.firstChild
+                    : Array.from(el.childNodes).find(n => n.nodeType === Node.TEXT_NODE);
+                if (!tn || !targetMatchesTextRun(target, tn, { ignoreChromatics: true })) return;
+                applyMetricsToColorHighlightInclusiveChain(el, newFont || null, sizeStrForImportant, rootLineHeight || null);
+            });
+        }
         flattenRedundantSpans();
         return toWrap.length;
     }
@@ -848,17 +918,19 @@ document.addEventListener('DOMContentLoaded', function() {
             const all = Array.from(teleprompterText.querySelectorAll('span, div, p'));
             all.forEach(el => {
                 if (el?.classList?.contains('bookmark-cursor-dot') || el?.classList?.contains('bookmark-cursor-dot-wrap') || el?.classList?.contains('color-span-inline') || el?.classList?.contains('format-span-inline') || isStructural(el.parentElement)) return;
+                if (isProtectedColorSpan(el)) return;
                 if (el.childNodes.length === 1) {
                     const child = el.firstChild;
                     if (child.nodeType === Node.TEXT_NODE) {
                         const parent = el.parentElement;
-                        if (parent?.tagName === 'SPAN' && !isStructural(parent) && parent.childNodes.length === 1) {
+                        if (parent?.tagName === 'SPAN' && !isStructural(parent) && !isProtectedColorSpan(parent) && parent.childNodes.length === 1) {
                             if (el.tagName === 'SPAN') Object.assign(parent.style, el.style);
                             parent.insertBefore(child, el);
                             el.remove();
                             changed = true;
                         }
                     } else if (child.nodeType === Node.ELEMENT_NODE && (child.tagName === 'SPAN' || BLOCK_TAGS.includes(child.tagName))) {
+                        if (isProtectedColorSpan(child)) return;
                         if (el.tagName === 'SPAN' && child.tagName === 'SPAN') Object.assign(el.style, child.style);
                         while (child.firstChild) el.insertBefore(child.firstChild, child);
                         child.remove();
@@ -2403,7 +2475,14 @@ document.addEventListener('DOMContentLoaded', function() {
         updateMultiSelectState();
         const fontVal = fontFamilySelect?.value;
         const sizeVal = fontSizeSelect?.value;
-        const targetToApply = selectedFontTarget ? { ...selectedFontTarget } : null;
+        let targetToApply = selectedFontTarget ? { ...selectedFontTarget } : null;
+        if (!targetToApply && selectFontTarget?.value) {
+            try {
+                targetToApply = JSON.parse(selectFontTarget.value);
+            } catch (_) {
+                targetToApply = null;
+            }
+        }
 
         const view = teleprompterView;
         const maxScrollBefore = view ? Math.max(0, view.scrollHeight - view.clientHeight) : 0;
@@ -6789,6 +6868,130 @@ function resetPillTriggerState() {
     if (view) lastScrollTopForPillTrigger = view.scrollTop;
 }
 
+const DOCX_WML_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+
+const DOCX_HIGHLIGHT_TO_CSS = {
+    yellow: '#ffff00', green: '#00ff00', cyan: '#00ffff', turquoise: '#00ffff',
+    magenta: '#ff00ff', blue: '#0000ff', red: '#ff0000',
+    darkBlue: '#000080', darkCyan: '#008080', darkGreen: '#008000',
+    darkMagenta: '#800080', darkRed: '#800000', darkYellow: '#808000',
+    darkGray: '#808080', lightGray: '#c0c0c0', black: '#000000', white: '#ffffff'
+};
+
+function docxWAttr(el, localName) {
+    if (!el) return null;
+    return el.getAttributeNS(DOCX_WML_NS, localName)
+        || el.getAttribute(`w:${localName}`)
+        || el.getAttribute(localName);
+}
+
+function docxColorValToCss(val) {
+    if (!val || val === 'auto' || val === 'none') return null;
+    const hex = val.replace(/^#/, '').trim();
+    if (/^[0-9A-Fa-f]{6}$/.test(hex)) return `#${hex}`;
+    return null;
+}
+
+function docxHighlightValToCss(val) {
+    if (!val || val === 'none') return null;
+    return DOCX_HIGHLIGHT_TO_CSS[val] || null;
+}
+
+function escapeHtmlForDocxText(text) {
+    return (text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function docxRunPropertiesToInlineStyle(rPr) {
+    if (!rPr) return '';
+    const parts = [];
+    const colorVal = docxWAttr(rPr.getElementsByTagNameNS(DOCX_WML_NS, 'color')[0], 'val');
+    const fg = docxColorValToCss(colorVal);
+    if (fg) parts.push(`color:${fg}`);
+    const hiVal = docxWAttr(rPr.getElementsByTagNameNS(DOCX_WML_NS, 'highlight')[0], 'val');
+    const bg = docxHighlightValToCss(hiVal);
+    if (bg) parts.push(`background-color:${bg}`);
+    return parts.join(';');
+}
+
+function docxRunToHtml(run) {
+    const rPr = run.getElementsByTagNameNS(DOCX_WML_NS, 'rPr')[0];
+    let text = '';
+    const ts = run.getElementsByTagNameNS(DOCX_WML_NS, 't');
+    for (let i = 0; i < ts.length; i++) text += ts[i].textContent || '';
+    if (!text) return '';
+    const style = docxRunPropertiesToInlineStyle(rPr);
+    let inner = escapeHtmlForDocxText(text);
+    if (rPr) {
+        if (rPr.getElementsByTagNameNS(DOCX_WML_NS, 'b').length) inner = `<strong>${inner}</strong>`;
+        if (rPr.getElementsByTagNameNS(DOCX_WML_NS, 'i').length) inner = `<em>${inner}</em>`;
+        if (rPr.getElementsByTagNameNS(DOCX_WML_NS, 'u').length) inner = `<u>${inner}</u>`;
+    }
+    if (!style) return inner;
+    return `<span class="color-span-inline" style="${style}">${inner}</span>`;
+}
+
+function docxParagraphToHtml(p) {
+    const runs = p.getElementsByTagNameNS(DOCX_WML_NS, 'r');
+    let html = '';
+    for (let i = 0; i < runs.length; i++) html += docxRunToHtml(runs[i]);
+    return html.trim();
+}
+
+/** Build script HTML from DOCX XML so run text/highlight colors are preserved (Mammoth omits foreground color). */
+async function buildDocxHtmlWithColors(arrayBuffer) {
+    if (typeof JSZip === 'undefined') return null;
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    const xml = await zip.file('word/document.xml')?.async('string');
+    if (!xml) return null;
+    const doc = new DOMParser().parseFromString(xml, 'application/xml');
+    if (doc.querySelector('parsererror')) return null;
+    if (doc.getElementsByTagNameNS(DOCX_WML_NS, 'tbl').length > 0) return null;
+    const paragraphs = doc.getElementsByTagNameNS(DOCX_WML_NS, 'p');
+    const blocks = [];
+    for (let i = 0; i < paragraphs.length; i++) {
+        const inner = docxParagraphToHtml(paragraphs[i]);
+        if (inner) blocks.push(`<p>${inner}</p>`);
+    }
+    if (!blocks.length) return null;
+    return convertDocxHtmlToXlsxStructure(blocks.join(''));
+}
+
+const MAMMOTH_DOCX_STYLE_MAP = [
+    'highlight => span.color-span-inline',
+    "highlight[color='yellow'] => span.color-span-inline",
+    "highlight[color='green'] => span.color-span-inline",
+    "highlight[color='cyan'] => span.color-span-inline",
+    "highlight[color='magenta'] => span.color-span-inline",
+    "highlight[color='blue'] => span.color-span-inline",
+    "highlight[color='red'] => span.color-span-inline"
+].join('\n');
+
+async function convertDocxFileToScriptHtml(arrayBuffer) {
+    try {
+        const withColors = await buildDocxHtmlWithColors(arrayBuffer);
+        if (withColors) return withColors;
+    } catch (err) {
+        console.warn('DOCX color-aware import failed, using Mammoth:', err);
+    }
+    const result = await mammoth.convertToHtml({
+        arrayBuffer,
+        styleMap: MAMMOTH_DOCX_STYLE_MAP
+    });
+    return convertDocxHtmlToXlsxStructure(result.value || '');
+}
+
+function normalizeImportedColorSpans(root) {
+    if (!root) return;
+    root.querySelectorAll('span[style]').forEach((span) => {
+        const style = span.getAttribute('style') || '';
+        if (!/color\s*:|background/i.test(style)) return;
+        if (!span.classList.contains('color-span-inline')) span.classList.add('color-span-inline');
+    });
+}
+
 /** Convert DOCX/Mammoth HTML to the same structure as XLSX: script-container > script-row-wrapper > script-column > cell-content.
  *  Ensures consistent behavior (formatting, layout) regardless of file type. */
 function convertDocxHtmlToXlsxStructure(html) {
@@ -7008,6 +7211,7 @@ function applyOpenFileLineBreaksToContent(html) {
     const cells = root.querySelectorAll('.cell-content');
     if (cells.length) {
         cells.forEach((cell) => applyOpenFileLineBreaksToCellElement(cell));
+        normalizeImportedColorSpans(root);
         return root.innerHTML;
     }
     if (looksLikeHtmlSource(html)) return insertOpenFileLineBreaksInHtml(html);
@@ -7020,6 +7224,11 @@ function cellNeedsOpenFileLineBreaks(raw) {
         || /["""'\u2018-\u201D]/.test(raw) || /(?:\.{3}|\u2026)[\s\u00A0]/.test(raw);
 }
 
+function cellHasPreservedInlineFormatting(cell) {
+    const html = cell.innerHTML || '';
+    return /<span[\s>]/i.test(html) || /<strong>|<em>|<u[\s>]/i.test(html);
+}
+
 function applyOpenFileLineBreaksToCellElement(cell) {
     if (!cell) return;
     const raw = cell.textContent || '';
@@ -7028,7 +7237,10 @@ function applyOpenFileLineBreaksToCellElement(cell) {
     if (TP_PIPEV_MARKER_ONLY.test(raw.trim())) return;
     if (/<br\s*\/?>/i.test(cell.innerHTML || '')) return;
     if (!cellNeedsOpenFileLineBreaks(raw)) return;
-    /* Full cell text so "reads, “If”" and "celebration. For" are not split across DOM text nodes */
+    if (cellHasPreservedInlineFormatting(cell)) {
+        cell.innerHTML = insertOpenFileLineBreaksInHtml(cell.innerHTML || '');
+        return;
+    }
     cell.innerHTML = plainTextWithOpenFileBreaksToCellHtml(raw);
 }
 
@@ -7153,11 +7365,10 @@ async function processFileContent(file, index) {
             console.log("Word document detected. Converting with Mammoth...");
             const reader = new FileReader();
             reader.onload = (e) => {
-                    mammoth.convertToHtml({ arrayBuffer: e.target.result })
-                    .then(result => {
+                    convertDocxFileToScriptHtml(e.target.result)
+                    .then((xlsxStructure) => {
                         const currentIdx = fileStore.findIndex(f => f === file);
                         const slot = currentIdx >= 0 ? currentIdx : index;
-                        const xlsxStructure = convertDocxHtmlToXlsxStructure(result.value || '');
                         let { html, wasTrimmed } = normalizeContentToMax3Columns(xlsxStructure);
                         html = stripNumericAngleMarkers(html);
                         html = applyOpenFileLineBreaksToContent(html);
@@ -7495,9 +7706,8 @@ function loadFileContent(file, index) {
 
     reader.onload = function(e) {
         if (ext === 'docx' || ext === 'doc') {
-            mammoth.convertToHtml({arrayBuffer: e.target.result})
-                .then(result => {
-                    const xlsxStructure = convertDocxHtmlToXlsxStructure(result.value || '');
+            convertDocxFileToScriptHtml(e.target.result)
+                .then((xlsxStructure) => {
                     let { html } = normalizeContentToMax3Columns(xlsxStructure);
                     html = stripNumericAngleMarkers(html);
                     html = applyOpenFileLineBreaksToContent(html);
