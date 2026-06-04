@@ -618,10 +618,50 @@ document.addEventListener('DOMContentLoaded', function() {
         return true;
     }
 
-    /** Plain font-target ribbon edits match by font+size (+ B/I/U), not text/highlight color (DOCX gray still matches Verdana 36). */
+    function textNodeInColorSpanInline(textNode) {
+        let el = textNode?.parentElement;
+        while (el && el !== teleprompterText) {
+            if (el.classList?.contains('color-span-inline')) return true;
+            el = el.parentElement;
+        }
+        return false;
+    }
+
+    /** Plain font-target ribbon edits match by font+size (+ B/I/U), not text/highlight color — except plainBody (white cues). */
     function fontTargetIgnoresChromaticsForApply(target) {
+        if (target?.plainBody) return false;
         if (isOpaqueColor(target?.color) || isOpaqueColor(target?.backgroundColor)) return false;
         return lastFontChangeSource === 'size' || lastFontChangeSource === 'family';
+    }
+
+    /** Font-target list/matching use stored sizes — Aa mode temporarily paints 12px without changing logical body size. */
+    function getFontTargetMetricsFromTextNode(textNode) {
+        const normalizeFont = (v) => (v || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
+        const inColorSpan = textNodeInColorSpanInline(textNode);
+        let fontFamily = '';
+        let fontSize = '';
+        let el = textNode.parentElement;
+        while (el && el !== teleprompterText) {
+            if (el.style?.fontFamily && !fontFamily) fontFamily = normalizeFont(el.style.fontFamily);
+            const explicit = (el.style?.fontSize || '').trim();
+            if (explicit && parseFloat(explicit) > 0 && !fontSize) fontSize = explicit;
+            el = el.parentElement;
+        }
+        if (teleprompterText.style.fontFamily && !fontFamily) {
+            fontFamily = normalizeFont(teleprompterText.style.fontFamily);
+        }
+        if (teleprompterText.style.fontSize && !fontSize) fontSize = teleprompterText.style.fontSize;
+        if (!fontFamily || !fontSize) {
+            const comp = window.getComputedStyle(textNode.parentElement);
+            if (!fontFamily) fontFamily = normalizeFont(comp.fontFamily);
+            if (!fontSize) fontSize = comp.fontSize || '';
+        }
+        const px = parseFloat(fontSize) || 0;
+        if (isOverviewMode && !inColorSpan && Math.abs(px - 12) < 0.5) {
+            const logical = typeof getOverviewRestoreFontSizePx === 'function' ? getOverviewRestoreFontSizePx() : null;
+            if (logical && String(logical) !== '12') fontSize = `${logical}px`;
+        }
+        return { fontFamily, fontSize };
     }
 
     function targetMatchesTextRun(target, textNode, { ignoreChromatics = false } = {}) {
@@ -629,18 +669,23 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!parent) return false;
         const normalizeFont = (v) => (v || '').split(',')[0].trim().replace(/^["']|["']$/g, '').toLowerCase();
         const sizeNum = (v) => parseFloat(String(v || '').trim()) || 0;
-        const style = window.getComputedStyle(parent);
-        const pFont = normalizeFont(style.fontFamily);
-        const pSizeNum = sizeNum(style.fontSize);
+        const metrics = getFontTargetMetricsFromTextNode(textNode);
+        const pFont = normalizeFont(metrics.fontFamily);
+        const pSizeNum = sizeNum(metrics.fontSize);
         const tFont = normalizeFont(target.fontFamily);
         const tSizeNum = sizeNum(target.fontSize);
         if (!tFont || tSizeNum <= 0) return false;
         if (pFont !== tFont || Math.abs(pSizeNum - tSizeNum) >= 0.5) return false;
         const flags = getTextStyleFlagsFromNode(textNode);
         if (!styleFlagsMatch(target, flags)) return false;
-        if (ignoreChromatics) return true;
         const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(textNode);
-        return colorsMatch(target, effColor, effBg);
+        if (ignoreChromatics) return true;
+        if (!colorsMatch(target, effColor, effBg)) return false;
+        if (target.plainBody) {
+            return !textNodeInColorSpanInline(textNode)
+                && isPlainScriptBodyFontTarget({ color: effColor, backgroundColor: effBg });
+        }
+        return true;
     }
 
     /** Match text runs by Select-item identity: same font family, size, text color, and highlight color. */
@@ -677,9 +722,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const pSizeNum = sizeNum(style.fontSize);
             const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(node);
             const flags = getTextStyleFlagsFromNode(node);
-            if (pFont !== tFont || Math.abs(pSizeNum - tSizeNum) >= 0.5) continue;
-            if (!colorsMatch(target, effColor, effBg)) continue;
-            if (!styleFlagsMatch(target, flags)) continue;
+            if (!targetMatchesTextRun(target, node, { ignoreChromatics: fontTargetIgnoresChromaticsForApply(target) })) continue;
             const r = document.createRange();
             r.setStart(node, 0);
             r.setEnd(node, node.length);
@@ -709,7 +752,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const pSizeNum = sizeNum(style.fontSize);
             const { color: effColor, backgroundColor: effBg } = getEffectiveColorsFromNode(node);
             const flags = getTextStyleFlagsFromNode(node);
-            if (tFont && tSizeNum && pFont === tFont && Math.abs(pSizeNum - tSizeNum) < 0.5 && colorsMatch(target, effColor, effBg) && styleFlagsMatch(target, flags)) {
+            if (targetMatchesTextRun(target, node, { ignoreChromatics: fontTargetIgnoresChromaticsForApply(target) })) {
                 matchingTextNodes.push(node);
             }
         }
@@ -849,7 +892,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const tn = el.firstChild?.nodeType === Node.TEXT_NODE
                     ? el.firstChild
                     : Array.from(el.childNodes).find(n => n.nodeType === Node.TEXT_NODE);
-                if (!tn || !targetMatchesTextRun(target, tn, { ignoreChromatics: true })) return;
+                if (!tn || !targetMatchesTextRun(target, tn, { ignoreChromatics: fontTargetIgnoresChromaticsForApply(target) })) return;
                 applyMetricsToColorHighlightInclusiveChain(el, newFont || null, sizeStrForImportant, rootLineHeight || null);
             });
         }
@@ -871,17 +914,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const updated = { ...oldTarget, fontFamily: newFont, fontSize: newSize };
         selectedFontTarget = updated;
         if (selectFontTarget) {
-            const hasFontColor = isOpaqueColor(updated.color);
-            const hasBgColor = isOpaqueColor(updated.backgroundColor);
-            selectFontTarget.value = JSON.stringify({
-                fontFamily: updated.fontFamily,
-                fontSize: updated.fontSize,
-                color: hasFontColor ? updated.color : null,
-                backgroundColor: hasBgColor ? updated.backgroundColor : null,
-                bold: !!updated.bold,
-                italic: !!updated.italic,
-                underline: !!updated.underline,
-            });
+            selectFontTarget.value = fontTargetOptionValue(updated);
         }
     }
 
@@ -1036,7 +1069,27 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
 
-    /** Select menu lists only ribbon-applied runs (color/highlight/font-size/family), not row defaults (Aa 12px, body size). */
+    function isPlainScriptBodyFontTarget({ color, backgroundColor }) {
+        const rootColorNorm = normalizeColorForKey(getDefaultScriptTextColorNorm());
+        const cNorm = normalizeColorForKey(color);
+        return !isOpaqueColor(backgroundColor) && (cNorm === rootColorNorm || !isOpaqueColor(color));
+    }
+
+    function fontTargetOptionValue({ fontFamily, fontSize, color, backgroundColor, bold, italic, underline, plainBody: plainBodyIn }) {
+        const plainBody = plainBodyIn != null ? !!plainBodyIn : isPlainScriptBodyFontTarget({ color, backgroundColor });
+        return JSON.stringify({
+            fontFamily,
+            fontSize,
+            color: plainBody ? null : (isOpaqueColor(color) ? color : null),
+            backgroundColor: isOpaqueColor(backgroundColor) ? backgroundColor : null,
+            bold: !!bold,
+            italic: !!italic,
+            underline: !!underline,
+            plainBody,
+        });
+    }
+
+    /** Ribbon spans plus default-colored body text (e.g. white cues); excludes compact row-font-12 rows. */
     function textNodeQualifiesForFontTargetList(textNode) {
         let el = textNode.parentElement;
         while (el && el !== teleprompterText) {
@@ -1044,7 +1097,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (el.classList?.contains('color-span-inline') || el.classList?.contains('format-span-inline')) return true;
             el = el.parentElement;
         }
-        return false;
+        const row = textNode.parentElement?.closest?.('.script-row-wrapper');
+        if (row?.classList?.contains('row-font-12')) return false;
+        const { color, backgroundColor } = getEffectiveColorsFromNode(textNode);
+        return isPlainScriptBodyFontTarget({ color, backgroundColor });
     }
 
     function collectUniqueFontSizes() {
@@ -1058,9 +1114,8 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!textNodeQualifiesForFontTargetList(node)) continue;
             const parent = node.parentElement;
             if (!parent) continue;
+            const { fontFamily, fontSize } = getFontTargetMetricsFromTextNode(node);
             const style = window.getComputedStyle(parent);
-            const fontFamily = (style.fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
-            const fontSize = style.fontSize || '';
             const { color, backgroundColor } = getEffectiveColorsFromNode(node);
             const flags = getTextStyleFlagsFromNode(node);
             const colorNorm = normalizeColorForKey(color);
@@ -1133,14 +1188,18 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!sel || sel.rangeCount === 0) return null;
         const range = sel.getRangeAt(0);
         if (!teleprompterText.contains(range.startContainer)) return null;
+        const textNode = range.startContainer.nodeType === Node.TEXT_NODE
+            ? range.startContainer
+            : (range.startContainer.firstChild?.nodeType === Node.TEXT_NODE ? range.startContainer.firstChild : null);
         let node = range.startContainer;
         if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
         if (!node) return null;
+        const metrics = textNode ? getFontTargetMetricsFromTextNode(textNode) : { fontFamily: '', fontSize: '' };
         const style = window.getComputedStyle(node);
-        const fontFamily = (style.fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
-        const fontSize = style.fontSize || '';
+        const fontFamily = metrics.fontFamily || (style.fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/g, '');
+        const fontSize = metrics.fontSize || style.fontSize || '';
         const { color, backgroundColor } = getEffectiveColorsFromElement(node);
-        const flags = getTextStyleFlagsFromNode(node.nodeType === Node.TEXT_NODE ? node : (node.firstChild && node.firstChild.nodeType === Node.TEXT_NODE ? node.firstChild : { parentElement: node }));
+        const flags = getTextStyleFlagsFromNode(textNode || { parentElement: node });
         return {
             fontFamily,
             fontSize,
@@ -1209,8 +1268,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const trigger = document.getElementById('font-target-trigger');
         const listEl = document.getElementById('font-target-list');
         if (!trigger || !listEl) return;
-        const current = selectFontTarget.value;
+        const current = skipCaretFontSelectSync ? '' : selectFontTarget.value;
         const opts = collectUniqueFontSizes();
+        const rootScriptColor = (window.getComputedStyle(teleprompterText).color || '').trim();
         let matchedCurrent = false;
         selectFontTarget.innerHTML = '<option value="">Select</option>';
         listEl.innerHTML = '';
@@ -1228,9 +1288,11 @@ document.addEventListener('DOMContentLoaded', function() {
         listEl.appendChild(clearItem);
         opts.forEach(({ fontFamily, fontSize, color, backgroundColor, bold, italic, underline }) => {
             const label = fontTargetMenuLabel(fontFamily, fontSize);
-            const hasFontColor = isOpaqueColor(color);
+            const plainBody = isPlainScriptBodyFontTarget({ color, backgroundColor });
+            const swatchColor = plainBody ? rootScriptColor : color;
+            const hasFontColor = plainBody || isOpaqueColor(color);
             const hasBgColor = isOpaqueColor(backgroundColor);
-            const val = JSON.stringify({ fontFamily, fontSize, color: hasFontColor ? color : null, backgroundColor: hasBgColor ? backgroundColor : null, bold: !!bold, italic: !!italic, underline: !!underline });
+            const val = fontTargetOptionValue({ fontFamily, fontSize, color, backgroundColor, bold, italic, underline });
             const opt = document.createElement('option');
             opt.value = val;
             opt.textContent = label;
@@ -1238,12 +1300,14 @@ document.addEventListener('DOMContentLoaded', function() {
             const item = document.createElement('div');
             item.className = 'font-target-item';
             item.dataset.value = val;
-            item.title = 'All ribbon-formatted text with this font, size, colors, and B/I/U. Plain row text is not in this list.';
+            item.title = plainBody
+                ? 'Default script text (white/body color) at this font and size — includes unstyled cues and speech.'
+                : 'Text with this font, size, colors, and B/I/U.';
             const labelSpan = document.createElement('span');
             labelSpan.className = 'font-target-label';
             labelSpan.textContent = label;
             item.appendChild(labelSpan);
-            appendFontTargetDecorations(item, hasFontColor, hasBgColor, color, backgroundColor, !!bold, !!italic, !!underline);
+            appendFontTargetDecorations(item, hasFontColor, hasBgColor, swatchColor, backgroundColor, !!bold, !!italic, !!underline);
             if (current === val) {
                 matchedCurrent = true;
                 opt.selected = true;
@@ -1251,7 +1315,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const tLabel = document.createElement('span');
                 tLabel.textContent = label;
                 trigger.appendChild(tLabel);
-                appendFontTargetDecorations(trigger, hasFontColor, hasBgColor, color, backgroundColor, !!bold, !!italic, !!underline);
+                appendFontTargetDecorations(trigger, hasFontColor, hasBgColor, swatchColor, backgroundColor, !!bold, !!italic, !!underline);
             }
             item.addEventListener('click', () => {
                 selectFontTarget.value = val;
@@ -1259,13 +1323,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 const tLabel = document.createElement('span');
                 tLabel.textContent = label;
                 trigger.appendChild(tLabel);
-                appendFontTargetDecorations(trigger, hasFontColor, hasBgColor, color, backgroundColor, !!bold, !!italic, !!underline);
+                appendFontTargetDecorations(trigger, hasFontColor, hasBgColor, swatchColor, backgroundColor, !!bold, !!italic, !!underline);
                 listEl.classList.remove('open');
                 selectFontTarget.dispatchEvent(new Event('change'));
             });
             listEl.appendChild(item);
         });
-        if (!matchedCurrent && selectedFontTarget) {
+        if (!matchedCurrent && selectedFontTarget && !skipCaretFontSelectSync) {
             const label = fontTargetMenuLabel(selectedFontTarget.fontFamily || '', selectedFontTarget.fontSize || '');
             const hasFontColor = isOpaqueColor(selectedFontTarget.color);
             const hasBgColor = isOpaqueColor(selectedFontTarget.backgroundColor);
@@ -1301,18 +1365,19 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        if (!selectFontTarget.value) {
+        if (!selectFontTarget.value && !skipCaretFontSelectSync) {
             const atCaret = getFormatAtCaretOrSelection();
             if (atCaret && opts.length > 0) {
-                const hasFontColor = isOpaqueColor(atCaret.color);
-                const hasBgColor = isOpaqueColor(atCaret.backgroundColor);
-                const wantVal = JSON.stringify({ fontFamily: atCaret.fontFamily, fontSize: atCaret.fontSize, color: hasFontColor ? atCaret.color : null, backgroundColor: hasBgColor ? atCaret.backgroundColor : null, bold: !!atCaret.bold, italic: !!atCaret.italic, underline: !!atCaret.underline });
-                let match = opts.find(({ fontFamily, fontSize, color, backgroundColor, bold, italic, underline }) => {
-                    const hasC = isOpaqueColor(color);
-                    const hasB = isOpaqueColor(backgroundColor);
-                    const v = JSON.stringify({ fontFamily, fontSize, color: hasC ? color : null, backgroundColor: hasB ? backgroundColor : null, bold: !!bold, italic: !!italic, underline: !!underline });
-                    return v === wantVal;
+                const wantVal = fontTargetOptionValue({
+                    fontFamily: atCaret.fontFamily,
+                    fontSize: atCaret.fontSize,
+                    color: atCaret.color,
+                    backgroundColor: atCaret.backgroundColor,
+                    bold: atCaret.bold,
+                    italic: atCaret.italic,
+                    underline: atCaret.underline,
                 });
+                let match = opts.find((opt) => fontTargetOptionValue(opt) === wantVal);
                 if (!match && normalizeColorForKey) {
                     match = opts.find(({ fontFamily, fontSize, color, backgroundColor, bold, italic, underline }) => {
                         return fontFamily === atCaret.fontFamily && fontSize === atCaret.fontSize &&
@@ -1324,13 +1389,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (match) {
                     const { fontFamily, fontSize, color, backgroundColor, bold, italic, underline } = match;
                     const label = fontTargetMenuLabel(fontFamily, fontSize);
-                    const val = JSON.stringify({ fontFamily, fontSize, color: isOpaqueColor(color) ? color : null, backgroundColor: isOpaqueColor(backgroundColor) ? backgroundColor : null, bold: !!bold, italic: !!italic, underline: !!underline });
+                    const val = fontTargetOptionValue(match);
+                    const plainBody = isPlainScriptBodyFontTarget({ color, backgroundColor });
+                    const swatchColor = plainBody ? rootScriptColor : color;
                     selectFontTarget.value = val;
                     trigger.innerHTML = '';
                     const tLabel = document.createElement('span');
                     tLabel.textContent = label;
                     trigger.appendChild(tLabel);
-                    if (isOpaqueColor(color) || isOpaqueColor(backgroundColor)) {
+                    if (plainBody || isOpaqueColor(color) || isOpaqueColor(backgroundColor)) {
                         const sw = document.createElement('span');
                         sw.className = 'font-target-swatches';
                         if (isOpaqueColor(backgroundColor)) {
@@ -1339,10 +1406,10 @@ document.addEventListener('DOMContentLoaded', function() {
                             s.style.backgroundColor = backgroundColor;
                             sw.appendChild(s);
                         }
-                        if (isOpaqueColor(color)) {
+                        if (plainBody || isOpaqueColor(color)) {
                             const s = document.createElement('span');
                             s.className = 'font-target-swatch font-target-swatch-text';
-                            s.style.backgroundColor = color;
+                            s.style.backgroundColor = swatchColor;
                             sw.appendChild(s);
                         }
                         trigger.appendChild(sw);
@@ -6916,14 +6983,21 @@ function docxRunPropertiesToInlineStyle(rPr) {
     return parts.join(';');
 }
 
+const DOCX_SOFT_BR_HTML = '<br data-soft-return="1">';
+
 function docxRunToHtml(run) {
     const rPr = run.getElementsByTagNameNS(DOCX_WML_NS, 'rPr')[0];
-    let text = '';
-    const ts = run.getElementsByTagNameNS(DOCX_WML_NS, 't');
-    for (let i = 0; i < ts.length; i++) text += ts[i].textContent || '';
-    if (!text) return '';
+    let inner = '';
+    for (let i = 0; i < run.childNodes.length; i++) {
+        const child = run.childNodes[i];
+        if (child.nodeType !== Node.ELEMENT_NODE) continue;
+        const ln = child.localName;
+        if (ln === 't') inner += escapeHtmlForDocxText(child.textContent || '');
+        else if (ln === 'br' || ln === 'cr') inner += DOCX_SOFT_BR_HTML;
+        else if (ln === 'tab') inner += '\t';
+    }
+    if (!inner) return '';
     const style = docxRunPropertiesToInlineStyle(rPr);
-    let inner = escapeHtmlForDocxText(text);
     if (rPr) {
         if (rPr.getElementsByTagNameNS(DOCX_WML_NS, 'b').length) inner = `<strong>${inner}</strong>`;
         if (rPr.getElementsByTagNameNS(DOCX_WML_NS, 'i').length) inner = `<em>${inner}</em>`;
@@ -6934,10 +7008,123 @@ function docxRunToHtml(run) {
 }
 
 function docxParagraphToHtml(p) {
-    const runs = p.getElementsByTagNameNS(DOCX_WML_NS, 'r');
     let html = '';
-    for (let i = 0; i < runs.length; i++) html += docxRunToHtml(runs[i]);
+    for (let i = 0; i < p.childNodes.length; i++) {
+        const node = p.childNodes[i];
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        const ln = node.localName;
+        if (ln === 'r') html += docxRunToHtml(node);
+        else if (ln === 'br' || ln === 'cr') html += DOCX_SOFT_BR_HTML;
+    }
     return html.trim();
+}
+
+/** Word/Mammoth line breaks inside a cell (Shift+Enter) — stay in one row; hard breaks become new rows on split. */
+function tagDocxSoftBreaksInHtml(html) {
+    if (!html || typeof html !== 'string') return html || '';
+    return html.replace(/<br\b[^>]*\/?>/gi, (full) => (
+        /data-soft-return/i.test(full) ? full : '<br data-soft-return="1">'
+    ));
+}
+
+/** Cue/plain text then colored lyric in one cell with no Word break — insert a soft <br> before the color span. */
+function insertMissingSoftBrInCell(cell) {
+    if (!cell) return;
+    const nodes = Array.from(cell.childNodes);
+    for (let i = 1; i < nodes.length; i++) {
+        const cur = nodes[i];
+        if (cur.nodeType !== Node.ELEMENT_NODE || !cur.classList?.contains('color-span-inline')) continue;
+        const prev = nodes[i - 1];
+        if (prev.nodeType === Node.ELEMENT_NODE && prev.tagName === 'BR') continue;
+        const prevText = prev.nodeType === Node.TEXT_NODE
+            ? (prev.textContent || '').trim()
+            : (prev.textContent || '').trim();
+        if (!prevText) continue;
+        const br = document.createElement('br');
+        br.setAttribute('data-soft-return', '1');
+        cell.insertBefore(br, cur);
+        nodes.splice(i, 0, br);
+        i++;
+    }
+}
+
+function lastTextNodeInSubtree(root) {
+    if (!root) return null;
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    let last = null;
+    let n;
+    while ((n = w.nextNode())) {
+        if ((n.textContent || '').length) last = n;
+    }
+    return last;
+}
+
+function firstTextNodeInSubtree(root) {
+    if (!root) return null;
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    let n;
+    while ((n = w.nextNode())) {
+        if ((n.textContent || '').length) return n;
+    }
+    return null;
+}
+
+function textNodeBeforeBr(br) {
+    const sib = br.previousSibling;
+    if (!sib) return null;
+    if (sib.nodeType === Node.TEXT_NODE) return (sib.textContent || '').length ? sib : null;
+    return lastTextNodeInSubtree(sib);
+}
+
+function textNodeAfterBr(br) {
+    const sib = br.nextSibling;
+    if (!sib) return null;
+    if (sib.nodeType === Node.TEXT_NODE) return sib;
+    return firstTextNodeInSubtree(sib);
+}
+
+/** No soft/hard breaks immediately before or after a comma (Word Shift+Enter beside “,”). */
+function stripBreaksAroundCommasInPlainText(text) {
+    if (!text) return text;
+    let t = text;
+    let prev;
+    do {
+        prev = t;
+        t = t.replace(/(\S)[ \t\u00A0]*\n[ \t\u00A0]*,/g, '$1,');
+        t = t.replace(/,[ \t\u00A0]*\n[ \t\u00A0]*(\S)/g, ', $1');
+    } while (t !== prev);
+    return t;
+}
+
+function stripBreaksAroundCommasInCell(cell) {
+    if (!cell) return;
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const br of Array.from(cell.querySelectorAll('br'))) {
+            if (!cell.contains(br)) continue;
+            const prevTn = textNodeBeforeBr(br);
+            const nextTn = textNodeAfterBr(br);
+            if (nextTn && /^\s*,/.test(nextTn.textContent || '') && prevTn) {
+                const left = (prevTn.textContent || '').replace(/\s+$/, '');
+                if (/[\w.)]$/.test(left)) {
+                    prevTn.textContent = left + (nextTn.textContent || '').replace(/^\s*,\s*/, ', ');
+                    nextTn.remove();
+                    br.remove();
+                    changed = true;
+                    break;
+                }
+            }
+            if (prevTn && /,\s*$/.test(prevTn.textContent || '') && nextTn) {
+                prevTn.textContent = (prevTn.textContent || '').replace(/\s+$/, '').replace(/,\s*$/, ', ')
+                    + (nextTn.textContent || '').replace(/^\s+/, '');
+                nextTn.remove();
+                br.remove();
+                changed = true;
+                break;
+            }
+        }
+    }
 }
 
 /** Build script HTML from DOCX XML so run text/highlight colors are preserved (Mammoth omits foreground color). */
@@ -7038,7 +7225,7 @@ function convertDocxHtmlToXlsxStructure(html) {
                     colDiv.className = 'script-column';
                     const contentDiv = document.createElement('div');
                     contentDiv.className = 'cell-content';
-                    contentDiv.innerHTML = cell.innerHTML || '';
+                    contentDiv.innerHTML = tagDocxSoftBreaksInHtml(cell.innerHTML || '');
                     colDiv.appendChild(contentDiv);
                     rowDiv.appendChild(colDiv);
                 });
@@ -7051,7 +7238,7 @@ function convertDocxHtmlToXlsxStructure(html) {
             colDiv.className = 'script-column';
             const contentDiv = document.createElement('div');
             contentDiv.className = 'cell-content';
-            contentDiv.innerHTML = el.innerHTML;
+            contentDiv.innerHTML = tagDocxSoftBreaksInHtml(el.innerHTML);
             colDiv.appendChild(contentDiv);
             rowDiv.appendChild(colDiv);
             container.appendChild(rowDiv);
@@ -7151,9 +7338,9 @@ function insertOpenFileLineBreaksPlainTextCore(text) {
         new RegExp(`([${TP_CLOSE_QUOTE_CHARS}])(?=${TP_BREAK_WS}|[,.;:!?])${TP_PIPEV_SAME_LINE_AHEAD_RX.source}`, 'g'),
         '$1\n'
     );
-    /* Comma/semicolon + spaces before opening quote ("reads, “If”) — skip generic space rule to avoid double breaks */
+    /* Semicolon/colon + spaces before opening quote — not commas (no breaks beside commas) */
     t = t.replace(
-        new RegExp(`([,;:])([\\s\u00A0]+)([${TP_OPEN_QUOTE_CHARS}])`, 'g'),
+        new RegExp(`([;:])([\\s\u00A0]+)([${TP_OPEN_QUOTE_CHARS}])`, 'g'),
         '$1$2\n$3'
     );
     t = t.replace(
@@ -7173,7 +7360,7 @@ function insertOpenFileLineBreaksPlainTextCore(text) {
         new RegExp(`${ELLIPSIS_PLACEHOLDER_PREFIX}(\\d+)${ELLIPSIS_PLACEHOLDER_SUFFIX}`, 'g'),
         (_, idx) => ellipsisSpans[Number(idx)] ?? '...'
     );
-    return t;
+    return stripBreaksAroundCommasInPlainText(t);
 }
 
 function insertOpenFileLineBreaksInPlainText(text) {
@@ -7212,6 +7399,8 @@ function applyOpenFileLineBreaksToContent(html) {
     if (cells.length) {
         cells.forEach((cell) => applyOpenFileLineBreaksToCellElement(cell));
         normalizeImportedColorSpans(root);
+        cells.forEach((cell) => insertMissingSoftBrInCell(cell));
+        cells.forEach((cell) => stripBreaksAroundCommasInCell(cell));
         return root.innerHTML;
     }
     if (looksLikeHtmlSource(html)) return insertOpenFileLineBreaksInHtml(html);
@@ -7235,13 +7424,18 @@ function applyOpenFileLineBreaksToCellElement(cell) {
     if (!raw.trim() || /script-container|script-row-wrapper|cell-content|^\s*>\s*$/i.test(raw)) return;
     if (cell.querySelector(':scope > div.script-container, :scope > div.script-row-wrapper, :scope > table, :scope > .bookmark-dot')) return;
     if (TP_PIPEV_MARKER_ONLY.test(raw.trim())) return;
-    if (/<br\s*\/?>/i.test(cell.innerHTML || '')) return;
+    if (/<br\s*\/?>/i.test(cell.innerHTML || '')) {
+        stripBreaksAroundCommasInCell(cell);
+        return;
+    }
     if (!cellNeedsOpenFileLineBreaks(raw)) return;
     if (cellHasPreservedInlineFormatting(cell)) {
         cell.innerHTML = insertOpenFileLineBreaksInHtml(cell.innerHTML || '');
+        stripBreaksAroundCommasInCell(cell);
         return;
     }
     cell.innerHTML = plainTextWithOpenFileBreaksToCellHtml(raw);
+    stripBreaksAroundCommasInCell(cell);
 }
 
 function insertOpenFileLineBreaksInHtml(html) {
@@ -7595,7 +7789,9 @@ function processTableColumns() {
     /* Merge all script-containers into one so every row shares the same table layout */
     ensureSingleScriptContainer();
     ensurePlainScriptRows();
-    /* Split any cell content that contains hard returns (<br> or newline) into separate rows */
+    teleprompterText.querySelectorAll('.cell-content').forEach((cell) => insertMissingSoftBrInCell(cell));
+    teleprompterText.querySelectorAll('.cell-content').forEach((cell) => stripBreaksAroundCommasInCell(cell));
+    /* Split rows only on hard returns; Word soft breaks (data-soft-return) stay in one cell */
     splitMultiLineCellsIntoRows();
     splitPipeVPrefixIntoCueColumn();
     splitMultiLineCellsIntoRows();
@@ -7638,12 +7834,19 @@ function ensureEmptyRowsHaveNbsp() {
     });
 }
 
-/** Split cell innerHTML by <br> and newline into an array of HTML fragments (one per line). */
+const SOFT_BR_PLACEHOLDER = '\uE000';
+
+/** Split cell innerHTML by hard <br>/newline only; soft returns (Word Shift+Enter) stay in the fragment. */
 function splitHtmlByLineBreaks(html) {
     if (!html || typeof html !== 'string') return [html || ''];
-    const SENTINEL = '\u0000';
-    const normalized = html.replace(/\r\n|\r|\n/g, '<br>').replace(/<br\s*\/?>/gi, SENTINEL);
-    return normalized.split(SENTINEL).map(s => s.trim()).filter(s => s.length > 0);
+    const HARD = '\u0001';
+    let h = html.replace(/<br\b[^>]*data-soft-return[^>]*\/?>/gi, SOFT_BR_PLACEHOLDER);
+    h = h.replace(/\r\n|\r|\n/g, '<br>');
+    h = h.replace(/<br\s*\/?>/gi, HARD);
+    return h.split(HARD)
+        .map((s) => s.split(SOFT_BR_PLACEHOLDER).join(DOCX_SOFT_BR_HTML))
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
 }
 
 /** Expand rows whose cell-content contains <br> or newlines into multiple rows, one per line. */
@@ -8977,6 +9180,7 @@ function loadScriptToEditor(index, options) {
     if (row) row.classList.add('active');
 
     currentFileIndex = index;
+    clearSelectedFontTargetSelection();
     applyCurrentFileSyncGuideVisibility();
     let content = contentStore[index];
     if (typeof content === 'string' && content.length) {
