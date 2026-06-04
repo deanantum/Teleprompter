@@ -2687,6 +2687,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     document.body.classList.add('overview-mode');
                     btnOverviewToggle.classList.add('overview-active');
                     if (typeof wrapCellContentInBlock === 'function') wrapCellContentInBlock();
+                    scheduleRowShortColumnLineSpacing(true);
                 } else {
                     isOverviewMode = false;
                     document.body.classList.remove('overview-mode');
@@ -2747,6 +2748,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (exitingOverview) restoreScriptTypographyAfterOverview();
                 syncColumnWidths();
                 if (!isOverviewMode) measureRowHeightsFromContent();
+                else scheduleRowShortColumnLineSpacing(true);
                 refreshSelectFontTarget();
                 updateFilenamePills();
                 if (mirrorWindow && !mirrorWindow.closed) syncMirrorStyles();
@@ -4112,6 +4114,7 @@ function indexToColumnLetter(colIndex) {
 
     function prepareOverviewRowLayout() {
         clearScriptRowLayoutLocks();
+        if (typeof removeEmptyRowsBeforePipeVRows === 'function') removeEmptyRowsBeforePipeVRows();
         teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
             ROW_STRETCH_MARKERS.forEach(c => row.classList.remove(c));
             row.querySelectorAll('.script-column').forEach(col => {
@@ -4216,8 +4219,6 @@ function indexToColumnLetter(colIndex) {
      * Non-collapsed selection skews height metrics (bold/underline restore selects the whole span) — clear selection during measure, then restore.
      */
     function applyRowShortColumnLineSpacing() {
-        if (document.body.classList.contains('overview-mode')) return;
-
         const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
         let savedNonCollapsedRange = null;
         if (sel && sel.rangeCount > 0 && teleprompterText) {
@@ -5429,6 +5430,19 @@ function onRunlistFileContentReady(index) {
     }
 }
 
+function compareRunlistFilenames(fileA, fileB) {
+    const na = fileA?.name || '';
+    const nb = fileB?.name || '';
+    const ma = na.match(/^(\d+)_/);
+    const mb = nb.match(/^(\d+)_/);
+    if (ma && mb) {
+        const diff = parseInt(ma[1], 10) - parseInt(mb[1], 10);
+        if (diff !== 0) return diff;
+    } else if (ma && !mb) return -1;
+    else if (!ma && mb) return 1;
+    return na.localeCompare(nb, undefined, { numeric: true });
+}
+
 function resolveOpenedRunlistIndex(regularFiles, pickMode, countBefore) {
     if (!regularFiles.length || fileStore.length <= countBefore) return -1;
     if (pickMode === 'folder') return 0;
@@ -5460,8 +5474,8 @@ async function loadFilesIntoRunlist(files, options = {}) {
     regularFiles.forEach((file, i) => {
         addFileToRunlist(file, { sourceHandle: sourceHandles[i] || null });
     });
-    if (countBefore > 0 && fileStore.length > countBefore) {
-        sortRunlistIfNumericPrefix(countBefore, { suppressEditorLoad: true });
+    if (regularFiles.length > 0) {
+        sortRunlistByNumericOrder({ suppressEditorLoad: true });
     }
     const indexToActivate = resolveOpenedRunlistIndex(regularFiles, pickMode, countBefore);
     if (indexToActivate >= 0) scheduleActiveRunlistFile(indexToActivate);
@@ -6676,11 +6690,9 @@ function removeFileFromRunlist(index) {
     updateFilenamePills();
 }
 
-/** If existing files have numeric prefix (e.g. "02_"), sort full runlist by filename. */
-function sortRunlistIfNumericPrefix(countBefore, options = {}) {
-    const firstSet = fileStore.slice(0, countBefore);
-    const allStartWithNumber = firstSet.length > 0 && firstSet.every(f => /^\d+_/.test(f.name));
-    if (!allStartWithNumber) return;
+/** Sort full runlist by filename; leading ##_ orders numerically (03 before 10). Runs on every open. */
+function sortRunlistByNumericOrder(options = {}) {
+    if (fileStore.length < 2) return;
     /* Save current file's content before reorder so we don't overwrite with wrong index */
     if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
         const html = teleprompterText.innerHTML.trim();
@@ -6688,7 +6700,7 @@ function sortRunlistIfNumericPrefix(countBefore, options = {}) {
     }
     const currentName = currentFileIndex >= 0 && fileStore[currentFileIndex] ? fileStore[currentFileIndex].name : null;
     const indices = fileStore.map((_, i) => i);
-    indices.sort((a, b) => (fileStore[a].name || '').localeCompare(fileStore[b].name || '', undefined, { numeric: true }));
+    indices.sort((a, b) => compareRunlistFilenames(fileStore[a], fileStore[b]));
     const newFileStore = indices.map(i => fileStore[i]);
     const newContentStore = indices.map(i => contentStore[i]);
     const newFileColumnCount = indices.map(i => fileColumnCount[i]);
@@ -6896,6 +6908,153 @@ function stripNumericAngleMarkers(str) {
         .replace(/<\s*\d+\s*>/g, '');
 }
 
+/** Protect single-letter initials (e.g. " B. ") so open-file line breaks skip them. */
+const MIDDLE_INITIAL_PERIOD_PLACEHOLDER = '\uE000';
+/** Protect "..." / … so period rules do not insert breaks after each dot. */
+const ELLIPSIS_PLACEHOLDER_PREFIX = '\uE001';
+const ELLIPSIS_PLACEHOLDER_SUFFIX = '\uE002';
+/** |v cue token (shared by open-file breaks and row cleanup). */
+const TP_PIPEV_TOKEN_RX = /\|v(?:\u2011|-)?[A-Za-z0-9_.]+\|?/i;
+const TP_PIPEV_LINE_START_RX = /^\s*\|v(?:\u2011|-)?[A-Za-z0-9_.]+\|?/i;
+/** Only suppress a break when |v follows on the same line (e.g. ". |v5"), not on the next row. */
+const TP_PIPEV_SAME_LINE_AHEAD_RX = /(?!\s+\|v(?:\u2011|-)?[A-Za-z0-9_.]+\|?)/i;
+
+/** True when the string looks like HTML/markup (must not run quote regex on it). */
+function looksLikeHtmlSource(text) {
+    if (!text || typeof text !== 'string') return false;
+    return /<[a-z!?\/]/i.test(text) || /&lt;[a-z!?\/]/i.test(text) || /\bclass\s*=/i.test(text)
+        || /script-container|script-row-wrapper|script-column/i.test(text);
+}
+
+const TP_OPEN_QUOTE_CHARS = '"\'\u2018\u201C«‹';
+const TP_CLOSE_QUOTE_CHARS = '"\'\u2019\u201D»›';
+const TP_BREAK_WS = '[ \\t\\u00A0]';
+
+function insertOpenFileLineBreaksPlainTextCore(text) {
+    const ellipsisSpans = [];
+    let t = text;
+    t = t.replace(/(^|\s)([A-Z])\.(?=\s)/g, `$1$2${MIDDLE_INITIAL_PERIOD_PLACEHOLDER}`);
+    t = t.replace(/\.{3,}|\u2026/g, (m) => {
+        const id = ellipsisSpans.length;
+        ellipsisSpans.push(m);
+        return `${ELLIPSIS_PLACEHOLDER_PREFIX}${id}${ELLIPSIS_PLACEHOLDER_SUFFIX}`;
+    });
+    /* Only break when more text follows (not at end of cell — avoids extra blank row on re-split) */
+    t = t.replace(
+        new RegExp(`([.?!])(?=${TP_BREAK_WS}|[,.;:!?])${TP_PIPEV_SAME_LINE_AHEAD_RX.source}`, 'g'),
+        '$1\n'
+    );
+    t = t.replace(
+        new RegExp(`([${TP_CLOSE_QUOTE_CHARS}])(?=${TP_BREAK_WS}|[,.;:!?])${TP_PIPEV_SAME_LINE_AHEAD_RX.source}`, 'g'),
+        '$1\n'
+    );
+    /* Comma/semicolon + spaces before opening quote ("reads, “If”) — skip generic space rule to avoid double breaks */
+    t = t.replace(
+        new RegExp(`([,;:])([\\s\u00A0]+)([${TP_OPEN_QUOTE_CHARS}])`, 'g'),
+        '$1$2\n$3'
+    );
+    t = t.replace(
+        new RegExp(`([.?!])([\\s\u00A0]+)([${TP_OPEN_QUOTE_CHARS}])`, 'g'),
+        '$1$2\n$3'
+    );
+    t = t.replace(
+        new RegExp(`(?<=\\S)([\\s\u00A0]+)([${TP_OPEN_QUOTE_CHARS}])`, 'g'),
+        (m, sp, q, offset, str) => {
+            const prev = str[offset - 1];
+            if (prev === '\n' || /[.,;:!?]/.test(prev)) return m;
+            return sp + '\n' + q;
+        }
+    );
+    t = t.replace(new RegExp(MIDDLE_INITIAL_PERIOD_PLACEHOLDER, 'g'), '.');
+    t = t.replace(
+        new RegExp(`${ELLIPSIS_PLACEHOLDER_PREFIX}(\\d+)${ELLIPSIS_PLACEHOLDER_SUFFIX}`, 'g'),
+        (_, idx) => ellipsisSpans[Number(idx)] ?? '...'
+    );
+    return t;
+}
+
+function insertOpenFileLineBreaksInPlainText(text) {
+    if (!text || typeof text !== 'string') return text;
+    if (looksLikeHtmlSource(text)) return text;
+    let t = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = t.split('\n');
+    t = lines.map((line) => {
+        const m = line.match(/^(\s*)(\|v(?:\u2011|-)?[A-Za-z0-9_.]+\|?)(\s+)([\s\S]*)$/i);
+        if (m) return m[1] + m[2] + m[3] + insertOpenFileLineBreaksPlainTextCore(m[4]);
+        if (TP_PIPEV_LINE_START_RX.test(line) && !/\s+\S/.test(line.replace(TP_PIPEV_TOKEN_RX, '').trim())) return line;
+        return insertOpenFileLineBreaksPlainTextCore(line);
+    }).join('\n');
+    return t.replace(/\n{2,}/g, '\n');
+}
+
+/** Plain speech only → safe cell HTML with <br> elements (never escape or break real tags). */
+function plainTextWithOpenFileBreaksToCellHtml(text) {
+    if (!text || looksLikeHtmlSource(text)) return text || '';
+    const broken = insertOpenFileLineBreaksInPlainText(text);
+    return broken
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n{2,}/g, '\n')
+        .replace(/\n/g, '<br>')
+        .replace(/(?:<br\s*\/?>[\s\u00A0]*){2,}/gi, '<br>');
+}
+
+/** Apply open-file breaks on import only — speech text in cells, never on markup strings. */
+function applyOpenFileLineBreaksToContent(html) {
+    if (!html || typeof html !== 'string') return html;
+    const root = document.createElement('div');
+    root.innerHTML = html;
+    const cells = root.querySelectorAll('.cell-content');
+    if (cells.length) {
+        cells.forEach((cell) => applyOpenFileLineBreaksToCellElement(cell));
+        return root.innerHTML;
+    }
+    if (looksLikeHtmlSource(html)) return insertOpenFileLineBreaksInHtml(html);
+    return plainTextWithOpenFileBreaksToCellHtml(html);
+}
+
+function cellNeedsOpenFileLineBreaks(raw) {
+    if (!raw || !raw.trim()) return false;
+    return /[.?!][ \t\u00A0]/.test(raw) || /[.?!]$/.test(raw.trim())
+        || /["""'\u2018-\u201D]/.test(raw) || /(?:\.{3}|\u2026)[\s\u00A0]/.test(raw);
+}
+
+function applyOpenFileLineBreaksToCellElement(cell) {
+    if (!cell) return;
+    const raw = cell.textContent || '';
+    if (!raw.trim() || /script-container|script-row-wrapper|cell-content|^\s*>\s*$/i.test(raw)) return;
+    if (cell.querySelector(':scope > div.script-container, :scope > div.script-row-wrapper, :scope > table, :scope > .bookmark-dot')) return;
+    if (TP_PIPEV_MARKER_ONLY.test(raw.trim())) return;
+    if (/<br\s*\/?>/i.test(cell.innerHTML || '')) return;
+    if (!cellNeedsOpenFileLineBreaks(raw)) return;
+    /* Full cell text so "reads, “If”" and "celebration. For" are not split across DOM text nodes */
+    cell.innerHTML = plainTextWithOpenFileBreaksToCellHtml(raw);
+}
+
+function insertOpenFileLineBreaksInHtml(html) {
+    if (!html || typeof html !== 'string') return html;
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT, null, false);
+    let node;
+    while ((node = walker.nextNode())) {
+        const broken = insertOpenFileLineBreaksInPlainText(node.textContent || '');
+        if (broken.includes('\n')) {
+            const parts = broken.split('\n');
+            const parent = node.parentNode;
+            if (!parent) continue;
+            const frag = document.createDocumentFragment();
+            parts.forEach((part, i) => {
+                if (i > 0) frag.appendChild(document.createElement('br'));
+                if (part) frag.appendChild(document.createTextNode(part));
+            });
+            parent.replaceChild(frag, node);
+        }
+    }
+    return div.innerHTML;
+}
+
 /** Replace ASCII hyphens in text nodes only (does not touch markup attributes like class names). */
 function replaceAsciiHyphensInTextNodes(root) {
     if (!root) return;
@@ -6939,6 +7098,7 @@ async function processFileContent(file, index) {
                 updateRunlistRowColumnToggles(slot);
             }
             text = stripNumericAngleMarkers(text);
+            text = applyOpenFileLineBreaksToContent(text);
             contentStore[slot] = text;
             onRunlistFileContentReady(slot);
             console.log("Text/HTML content loaded successfully");
@@ -6965,7 +7125,8 @@ async function processFileContent(file, index) {
                         cells.forEach(val => {
                             let cellText = val || '';
                             cellText = stripNumericAngleMarkers(cellText).replace(/-/g, UNICODE_NB_HYPHEN);
-                            html += `<div class="script-column"><div class="cell-content">${cellText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div></div>`;
+                            cellText = plainTextWithOpenFileBreaksToCellHtml(cellText);
+                            html += `<div class="script-column"><div class="cell-content">${cellText}</div></div>`;
                         });
                         html += '</div>';
                     });
@@ -6996,9 +7157,10 @@ async function processFileContent(file, index) {
                     .then(result => {
                         const currentIdx = fileStore.findIndex(f => f === file);
                         const slot = currentIdx >= 0 ? currentIdx : index;
-                        const xlsxStructure = convertDocxHtmlToXlsxStructure(result.value);
+                        const xlsxStructure = convertDocxHtmlToXlsxStructure(result.value || '');
                         let { html, wasTrimmed } = normalizeContentToMax3Columns(xlsxStructure);
                         html = stripNumericAngleMarkers(html);
+                        html = applyOpenFileLineBreaksToContent(html);
                         contentStore[slot] = html;
                         fileShowSyncGuide[slot] = fileShowSyncGuide[slot] !== false;
                         updateRunlistRowColumnToggles(slot);
@@ -7075,15 +7237,46 @@ function stripPipeVFromFirstColumn() {
 
 const TP_ROW_PIPEV_ATTR = 'data-tp-row-pipev';
 /** Internal-only |v… tokens (e.g. Excel export) in script/cue columns — whole cell is just this token. */
-const TP_PIPEV_MARKER_ONLY = /^\|v(?:\u2011|-)?[A-Za-z0-9_.]+\|?$/;
+const TP_PIPEV_MARKER_ONLY = new RegExp(`^${TP_PIPEV_TOKEN_RX.source}$`, 'i');
 /** Leading |v cue token plus body text in one cell (common in DOCX / plain imports). */
-const TP_PIPEV_PREFIX_WITH_BODY = /^(\|v(?:\u2011|-)?[A-Za-z0-9_.]+\|?)\s+(.+)$/s;
+const TP_PIPEV_PREFIX_WITH_BODY = new RegExp(`^(${TP_PIPEV_TOKEN_RX.source})\\s+(.+)$`, 'si');
 
 /**
  * Replace marker-only content in columns after the line# column with nbsp so they don’t show on screen.
  * Sets data-tp-row-pipev on the row so row-font-12 / white pill still apply after |v is removed from text.
  */
 /** Split a single-column |v cue + body line into cue + script columns so width sync can wrap the body. */
+function isRowEmptyOrNbspOnly(row) {
+    const cells = row.querySelectorAll('.cell-content, .cell-locker');
+    if (!cells.length) return true;
+    return Array.from(cells).every((cell) => {
+        const t = (cell.textContent || '').replace(/\u00A0/g, ' ').trim();
+        return !t;
+    });
+}
+
+function rowIsPipeVCueRow(row) {
+    if (!row) return false;
+    if (row.getAttribute(TP_ROW_PIPEV_ATTR) === '1') return true;
+    const cols = row.querySelectorAll(':scope > .script-column');
+    if (!cols.length) return false;
+    const firstCell = cols[0].querySelector('.cell-content, .cell-locker') || cols[0];
+    const t = (firstCell.textContent || '').trim();
+    return TP_PIPEV_LINE_START_RX.test(t) && (cols.length === 1 || TP_PIPEV_MARKER_ONLY.test(t));
+}
+
+/** Drop blank spacer rows inserted before a |v cue row (avoids gap above cue column). */
+function removeEmptyRowsBeforePipeVRows() {
+    if (!teleprompterText) return;
+    const container = teleprompterText.querySelector('.script-container');
+    if (!container) return;
+    const rows = Array.from(container.querySelectorAll(':scope > .script-row-wrapper'));
+    for (let i = rows.length - 1; i >= 1; i--) {
+        if (!rowIsPipeVCueRow(rows[i])) continue;
+        if (isRowEmptyOrNbspOnly(rows[i - 1])) rows[i - 1].remove();
+    }
+}
+
 function splitPipeVPrefixIntoCueColumn() {
     if (!teleprompterText || isCurrentFileXlsx()) return;
     teleprompterText.querySelectorAll('.script-row-wrapper').forEach(row => {
@@ -7101,7 +7294,7 @@ function splitPipeVPrefixIntoCueColumn() {
         bodyCol.className = 'script-column';
         const bodyCell = document.createElement('div');
         bodyCell.className = 'cell-content';
-        bodyCell.textContent = body.trim();
+        bodyCell.innerHTML = plainTextWithOpenFileBreaksToCellHtml(body.trim());
         bodyCol.appendChild(bodyCell);
         row.appendChild(bodyCol);
     });
@@ -7194,6 +7387,8 @@ function processTableColumns() {
     /* Split any cell content that contains hard returns (<br> or newline) into separate rows */
     splitMultiLineCellsIntoRows();
     splitPipeVPrefixIntoCueColumn();
+    splitMultiLineCellsIntoRows();
+    removeEmptyRowsBeforePipeVRows();
     /* Ensure blank/empty rows have nbsp so they keep height and stay separated */
     ensureEmptyRowsHaveNbsp();
     trimScriptTableToMaxColumns();
@@ -7237,7 +7432,7 @@ function splitHtmlByLineBreaks(html) {
     if (!html || typeof html !== 'string') return [html || ''];
     const SENTINEL = '\u0000';
     const normalized = html.replace(/\r\n|\r|\n/g, '<br>').replace(/<br\s*\/?>/gi, SENTINEL);
-    return normalized.split(SENTINEL).map(s => s.trim());
+    return normalized.split(SENTINEL).map(s => s.trim()).filter(s => s.length > 0);
 }
 
 /** Expand rows whose cell-content contains <br> or newlines into multiple rows, one per line. */
@@ -7252,7 +7447,7 @@ function splitMultiLineCellsIntoRows() {
             const html = cell.innerHTML || '';
             return splitHtmlByLineBreaks(html);
         });
-        const maxParts = Math.max(1, ...partsPerCol.map(p => p.length));
+        const maxParts = Math.max(0, ...partsPerCol.map(p => p.length));
         if (maxParts <= 1) continue;
         const numCols = cols.length;
         let insertBefore = row;
@@ -7302,9 +7497,10 @@ function loadFileContent(file, index) {
         if (ext === 'docx' || ext === 'doc') {
             mammoth.convertToHtml({arrayBuffer: e.target.result})
                 .then(result => {
-                    const xlsxStructure = convertDocxHtmlToXlsxStructure(result.value);
+                    const xlsxStructure = convertDocxHtmlToXlsxStructure(result.value || '');
                     let { html } = normalizeContentToMax3Columns(xlsxStructure);
                     html = stripNumericAngleMarkers(html);
+                    html = applyOpenFileLineBreaksToContent(html);
                     contentStore[index] = html;
                     if (currentFileIndex === index) {
                         teleprompterText.innerHTML = html;
@@ -7339,7 +7535,8 @@ function loadFileContent(file, index) {
                     cells.forEach(val => {
                         let cellText = val || '';
                         cellText = stripNumericAngleMarkers(cellText).replace(/-/g, UNICODE_NB_HYPHEN);
-                        html += `<div class="script-column"><div class="cell-content">${cellText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div></div>`;
+                        cellText = plainTextWithOpenFileBreaksToCellHtml(cellText);
+                        html += `<div class="script-column"><div class="cell-content">${cellText}</div></div>`;
                     });
                     html += '</div>';
                 });
@@ -7367,6 +7564,8 @@ function loadFileContent(file, index) {
         } else {
             let text = new TextDecoder().decode(e.target.result);
             text = stripNumericAngleMarkers(text);
+            const looksLikeHtml = /<\s*(p|div|br|table|span|html|body)\b/i.test(text);
+            text = applyOpenFileLineBreaksToContent(text);
             contentStore[index] = text;
             if (currentFileIndex === index) {
                 teleprompterText.innerHTML = text;
