@@ -7,7 +7,8 @@
     <meta http-equiv="Content-Security-Policy"
       content="script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self';">
       <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.7.1/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 
     
@@ -168,6 +169,7 @@
                 <div class="color-box" style="background:#D3D3D3" data-color="#D3D3D3" title="Light Gray"></div>
                 <div class="color-box" style="background:#A9A9A9" data-color="#A9A9A9" title="Dark Gray"></div>
                 <div class="color-box" style="background:#808080" data-color="#808080" title="Gray"></div>
+                <div class="color-box" style="background:#333333" data-color="#333333" title="Charcoal"></div>
                 <div class="color-box" style="background:#000000" data-color="#000000" title="Black"></div>
             </div>
         </div>
@@ -186,6 +188,7 @@
                 <div class="color-box" style="background:#D3D3D3" data-color="#D3D3D3" title="Light Gray"></div>
                 <div class="color-box" style="background:#A9A9A9" data-color="#A9A9A9" title="Dark Gray"></div>
                 <div class="color-box" style="background:#808080" data-color="#808080" title="Gray"></div>
+                <div class="color-box" style="background:#333333" data-color="#333333" title="Charcoal"></div>
                 <div class="color-box" style="background:#000000" data-color="#000000" title="Black"></div>
             </div>
         </div>
@@ -193,7 +196,7 @@
         <div id="event-plan-overlay" class="event-plan-overlay hidden">
             <div class="event-plan-panel">
                 <h3>Event Plan</h3>
-                <p class="event-plan-hint">Enter event details. Data is built from filenames in Files (format: order_interpreter_item_speaker_minutes_location_type).</p>
+                <p class="event-plan-hint">Enter event details. Data is built from filenames in Files (format: order_interpreter_item_speaker_version_minutes_location_type, e.g. 03_Dean_Speaker_Elder Haight_0_13_R_ENG).</p>
                 <div class="event-plan-fields">
                     <label for="event-plan-title">Event Title</label>
                     <input type="text" id="event-plan-title" placeholder="e.g. World Wide Devotional with Sister Johnson">
