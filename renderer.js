@@ -5972,22 +5972,71 @@ if (eventPlanOverlay) {
     if (eventPlanPanelEl) eventPlanPanelEl.onclick = (e) => e.stopPropagation();
 }
 
-function parseEventPlanFilename(name) {
+/**
+ * Teleprompter filename: underscore-delimited.
+ * 8-part: order_interpreter_item_speaker_version_minutes_location_type
+ * 7-part (legacy): order_interpreter_item_speaker_minutes_location_type
+ */
+function parseTeleprompterFilename(name) {
     if (!name || typeof name !== 'string') return null;
     const base = stripFileExtension(name);
     const parts = base.split('_');
-    if (parts.length !== 7) return null;
-    const [orderNum, interpreter, item, speaker, minutes, location, type] = parts;
-    const order = orderNum.trim();
-    const hasNumericOrder = /^\d+$/.test(order);
+    if (parts.length === 8) {
+        const [orderNum, interpreter, item, speaker, version, minutes, location, type] = parts;
+        const order = orderNum.trim();
+        return {
+            order,
+            interpreter: (interpreter || '').trim(),
+            item: (item || '').trim(),
+            speaker: (speaker || '').trim(),
+            version: (version || '').trim(),
+            minutes: (minutes || '').trim(),
+            location: (location || '').trim(),
+            type: (type || '').trim(),
+            hasNumericOrder: /^\d+$/.test(order),
+            partCount: 8
+        };
+    }
+    if (parts.length === 7) {
+        const [orderNum, interpreter, item, speaker, minutes, location, type] = parts;
+        const order = orderNum.trim();
+        return {
+            order,
+            interpreter: (interpreter || '').trim(),
+            item: (item || '').trim(),
+            speaker: (speaker || '').trim(),
+            version: '',
+            minutes: (minutes || '').trim(),
+            location: (location || '').trim(),
+            type: (type || '').trim(),
+            hasNumericOrder: /^\d+$/.test(order),
+            partCount: 7
+        };
+    }
+    return null;
+}
+
+/** Top/bottom filename pill: order, interpreter, speaker, version (fields 1, 2, 4, 5). */
+function getFilenamePillLabel(name) {
+    const p = parseTeleprompterFilename(name);
+    if (!p) return stripFileExtension(name);
+    const v = p.version || (p.partCount === 7 ? p.minutes : '');
+    return [p.order, p.interpreter, p.speaker, v].filter(Boolean).join('_');
+}
+
+function parseEventPlanFilename(name) {
+    const p = parseTeleprompterFilename(name);
+    if (!p) return null;
     return {
-        file: hasNumericOrder ? order : '-',
-        item: (item || '').trim(),
-        assignment: (speaker || '').trim(),
-        location: (location || '').trim(),
-        interpreter: interpreter.trim(),
-        tel: (type || '').trim(),
-        hasNumericOrder
+        file: p.hasNumericOrder ? p.order : '-',
+        item: p.item,
+        assignment: p.speaker,
+        location: p.location,
+        interpreter: p.interpreter,
+        tel: p.type,
+        minutes: p.minutes,
+        version: p.version,
+        hasNumericOrder: p.hasNumericOrder
     };
 }
 
@@ -6077,7 +6126,7 @@ function getPillClassForRow(raw, switchLabel, cells) {
         const T = (t || '').trim();
         if (KEYWORD_PILL_RED.includes(L)) return 'ms-pill-red';
         if (['switch', 'stay'].includes(L)) return 'ms-pill-green';
-        if (KEYWORD_PILL_YELLOW_EXACT.includes(L) || KEYWORD_PILL_YELLOW_VERSE.test(T) || KEYWORD_PILL_YELLOW_NAME.test(T) || KEYWORD_PILL_YELLOW_BRACKETS.test(T)) return 'ms-pill-yellow';
+        if (KEYWORD_PILL_YELLOW_EXACT.includes(L) || KEYWORD_PILL_YELLOW_VERSE.test(T) || matchesYellowNamePill(T) || KEYWORD_PILL_YELLOW_BRACKETS.test(T)) return 'ms-pill-yellow';
         if (KEYWORD_PILL_BLUE_NAME_TIME.test(T)) return 'ms-pill-blue';
         if (T.includes('|v')) return 'ms-pill-white';
         return '';
@@ -6161,7 +6210,7 @@ function buildMasterScriptHtml() {
     for (let fi = 0; fi < fileStore.length; fi++) {
         const file = fileStore[fi];
         const content = contentStore[fi];
-        const name = stripFileExtension(file?.name || '');
+        const name = getFilenamePillLabel(file?.name || '') || stripFileExtension(file?.name || '');
         const fileExt = (file?.name || '').split('.').pop().toLowerCase();
         const isDocx = fileExt === 'docx' || fileExt === 'doc';
         const nextFile = fi + 1 < fileStore.length ? fileStore[fi + 1] : null;
@@ -8192,9 +8241,22 @@ function updateRunlistRowColumnToggles(fileIndex) {
 const KEYWORD_PILL_RED = ['end', 'full screen', 'stop', 'out'];
 const KEYWORD_PILL_YELLOW_EXACT = ['panel', 'chorus'];
 const KEYWORD_PILL_YELLOW_VERSE = /^verse\s*\d*$/i;
-const KEYWORD_PILL_YELLOW_NAME = /^(elder|president|sister|brother)\s+.+$/i;
+const KEYWORD_PILL_YELLOW_NAME_PREFIX = /^(elder|president|sister|brother)\s+/i;
+/** Title lines only (e.g. "President Oaks"); body copy starting with a name stays normal. */
+const KEYWORD_PILL_YELLOW_NAME_MAX_WORDS = 5;
 /** Text that starts with [ and ends with ] -> yellow pill */
 const KEYWORD_PILL_YELLOW_BRACKETS = /^\[.*\]$/;
+
+function countWordsInText(text) {
+    return (text || '').trim().split(/\s+/).filter(Boolean).length;
+}
+
+/** Yellow name pill: Elder/President/Sister/Brother + name, with at most 5 words in the cell/row. */
+function matchesYellowNamePill(text) {
+    const raw = (text || '').trim();
+    if (!raw || !KEYWORD_PILL_YELLOW_NAME_PREFIX.test(raw)) return false;
+    return countWordsInText(raw) <= KEYWORD_PILL_YELLOW_NAME_MAX_WORDS;
+}
 /** Matches "Name (00:00 – 18:41)" or "Brianna (1:23 - 5:00)" - speaker/time rows -> blue pill */
 const KEYWORD_PILL_BLUE_NAME_TIME = /^[A-Za-z][A-Za-z0-9\s\-'.]*\s*\([^)]+\)\s*$/;
 
@@ -8263,9 +8325,10 @@ function ensureEndRowBeforeStaySwitchRows() {
 }
 
 function getInterpreterFromFilename(name) {
+    const p = parseTeleprompterFilename(name);
+    if (p) return p.interpreter;
     if (!name || typeof name !== 'string') return '';
-    const base = stripFileExtension(name);
-    const parts = base.split('_');
+    const parts = stripFileExtension(name).split('_');
     return parts.length >= 2 ? (parts[1] || '').trim() : '';
 }
 
@@ -8304,7 +8367,7 @@ function applyKeywordPills() {
         } else if (['switch', 'stay'].includes(lower)) {
             row.classList.add('keyword-pill-green');
             setFirstVisibleCellText(row, switchLabel);
-        } else if (!xlsxOnlyPills && (KEYWORD_PILL_YELLOW_EXACT.includes(lower) || KEYWORD_PILL_YELLOW_VERSE.test(raw) || KEYWORD_PILL_YELLOW_NAME.test(raw) || KEYWORD_PILL_YELLOW_BRACKETS.test(raw))) {
+        } else if (!xlsxOnlyPills && (KEYWORD_PILL_YELLOW_EXACT.includes(lower) || KEYWORD_PILL_YELLOW_VERSE.test(raw) || matchesYellowNamePill(raw) || KEYWORD_PILL_YELLOW_BRACKETS.test(raw))) {
             row.classList.add('keyword-pill-yellow');
         } else if (!xlsxOnlyPills && KEYWORD_PILL_BLUE_NAME_TIME.test(raw)) {
             row.classList.add('keyword-pill-blue');
@@ -8350,7 +8413,7 @@ function updateFilenamePills() {
     const hasNext = hasCurrent && currentFileIndex + 1 < fileStore.length;
     if (view) view.classList.toggle('has-file', !!hasCurrent);
     if (hasCurrent) {
-        topPill.textContent = stripFileExtension(fileStore[currentFileIndex].name);
+        topPill.textContent = getFilenamePillLabel(fileStore[currentFileIndex].name);
         topPill.classList.remove('hidden');
         topPill.setAttribute('aria-hidden', 'false');
     } else {
@@ -8359,7 +8422,7 @@ function updateFilenamePills() {
         topPill.setAttribute('aria-hidden', 'true');
     }
     if (hasNext) {
-        bottomPill.textContent = stripFileExtension(fileStore[currentFileIndex + 1].name);
+        bottomPill.textContent = getFilenamePillLabel(fileStore[currentFileIndex + 1].name);
         bottomPill.classList.remove('hidden');
         bottomPill.setAttribute('aria-hidden', 'false');
     } else {
