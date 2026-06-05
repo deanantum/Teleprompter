@@ -129,6 +129,17 @@ document.addEventListener('DOMContentLoaded', function() {
     teleprompterText.style.fontSize = (fontSizeSelect?.value || "80") + "px";
     teleprompterView.focus();
 
+    /** Main window leads scroll/keyboard; mirror is display-only unless user explicitly clicks it. */
+    function focusMainForControl() {
+        try { window.focus(); } catch (_) {}
+        if (!teleprompterView) return;
+        try {
+            teleprompterView.focus({ preventScroll: true });
+        } catch (_) {
+            teleprompterView.focus();
+        }
+    }
+
     function clearPlaceholderIfActive() {
         if (teleprompterText.dataset.placeholder !== 'true') return;
         teleprompterText.innerHTML = '<br>';
@@ -1962,7 +1973,9 @@ document.addEventListener('DOMContentLoaded', function() {
         hideRunlistForPlayback();
         if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(1200);
         if (typeof resetPillTriggerState === 'function') resetPillTriggerState();
+        focusMainForControl();
         isTeleprompting = true;
+        syncMirrorByPixels();
         const move = () => {
             if (!isTeleprompting) return;
             scrollAccum += scrollSpeed;
@@ -1999,7 +2012,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         updatePlayPauseButton();
         startButton.blur();
-        if (speedSlider) speedSlider.focus();
+        focusMainForControl();
     };
     const btnKeyboardShortcuts = document.getElementById('btn-keyboard-shortcuts');
     const shortcutsOverlay = document.getElementById('shortcuts-overlay');
@@ -3878,6 +3891,8 @@ document.addEventListener('DOMContentLoaded', function() {
         syncMirrorStyles();
         [0, 60, 200, 450].forEach((ms) => setTimeout(() => pushMirrorLeaderLayout(), ms));
         [120, 400, 900].forEach((ms) => setTimeout(() => relayoutBroadcastAfterMirrorWidthChange(), ms));
+        focusMainForControl();
+        [0, 50, 150, 400].forEach((ms) => setTimeout(focusMainForControl, ms));
     }
 
     let overflowReportCount = 0;
@@ -3919,6 +3934,7 @@ document.addEventListener('DOMContentLoaded', function() {
             try {
                 const data = e.data || {};
                 if (data.type === 'mirrorReady') handleMirrorReady();
+                if (data.type === 'mirrorFocusReclaim') focusMainForControl();
                 if (data.type === 'mirrorViewportWidth') handleMirrorViewportWidth(data);
                 if (data.type === 'mirrorScroll') handleMirrorScroll(data);
                 if (data.type === 'rowOverflowReport') handleRowOverflowReport(data);
@@ -3931,6 +3947,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const data = e.data || {};
             if (data.type === 'mirrorReady') handleMirrorReady();
+            if (data.type === 'mirrorFocusReclaim') focusMainForControl();
             if (data.type === 'mirrorViewportWidth') handleMirrorViewportWidth(data);
             if (data.type === 'mirrorScroll') handleMirrorScroll(data);
             if (data.type === 'rowOverflowReport') handleRowOverflowReport(data);
@@ -9772,9 +9789,6 @@ function requestMirrorFullscreen() {
     const tryOnce = () => {
         if (!mirrorWindow || mirrorWindow.closed || getMirrorDebugMode()) return;
         try {
-            mirrorWindow.focus();
-        } catch (_) {}
-        try {
             mirrorWindow.postMessage({ type: 'requestMirrorFullscreen' }, '*');
         } catch (_) {}
         try {
@@ -9786,6 +9800,7 @@ function requestMirrorFullscreen() {
                 if (result && typeof result.catch === 'function') result.catch(() => {});
             }
         } catch (_) {}
+        if (typeof focusMainForControl === 'function') focusMainForControl();
     };
     [0, 60, 180, 400, 900, 1800, 3200, 5200].forEach((ms) => setTimeout(tryOnce, ms));
 }
@@ -10209,6 +10224,8 @@ extendMonitorButton.onclick = async () => {
                 requestAnimationFrame(() => requestAnimationFrame(attemptRestore));
                 setTimeout(attemptRestore, 100);
                 if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(2000);
+                focusMainForControl();
+                [0, 50, 150, 400, 800].forEach((ms) => setTimeout(focusMainForControl, ms));
                 [0, 40, 120, 350, 700].forEach((ms) => setTimeout(() => pushMirrorLeaderLayout(), ms));
             };
             mirrorWindow.addEventListener('load', sendWhenReady);
@@ -10227,19 +10244,33 @@ extendMonitorButton.onclick = async () => {
 function getMirrorPillPayload() {
     const topEl = document.getElementById('filename-pill-top');
     const bottomEl = document.getElementById('filename-pill-bottom');
+    const endEl = document.getElementById('pre-stay-end-pill');
+    const staySwitchEl = document.getElementById('stay-switch-pill');
     const topVisible = topEl && !topEl.classList.contains('hidden');
     const bottomVisible = bottomEl && !bottomEl.classList.contains('hidden');
+    const endVisible = endEl && !endEl.classList.contains('hidden');
+    const staySwitchVisible = staySwitchEl && !staySwitchEl.classList.contains('hidden');
     const topPill = topVisible ? (topEl.textContent || '').trim() : '';
     const bottomPill = bottomVisible ? (bottomEl.textContent || '').trim() : '';
+    const endPill = endVisible ? (endEl.textContent || '').trim() : '';
+    const staySwitchPill = staySwitchVisible ? (staySwitchEl.textContent || '').trim() : '';
     const topCs = topEl ? window.getComputedStyle(topEl) : null;
     const bottomCs = bottomEl ? window.getComputedStyle(bottomEl) : null;
+    const endCs = endEl ? window.getComputedStyle(endEl) : null;
+    const staySwitchCs = staySwitchEl ? window.getComputedStyle(staySwitchEl) : null;
     return {
         topPill,
         bottomPill,
+        endPill,
+        staySwitchPill,
         topPillFontSize: topCs && topVisible ? topCs.fontSize : null,
         bottomPillFontSize: bottomCs && bottomVisible ? bottomCs.fontSize : null,
+        endPillFontSize: endCs && endVisible ? endCs.fontSize : null,
+        staySwitchPillFontSize: staySwitchCs && staySwitchVisible ? staySwitchCs.fontSize : null,
         topPillFontFamily: topCs && topVisible ? topCs.fontFamily : null,
-        bottomPillFontFamily: bottomCs && bottomVisible ? bottomCs.fontFamily : null
+        bottomPillFontFamily: bottomCs && bottomVisible ? bottomCs.fontFamily : null,
+        endPillFontFamily: endCs && endVisible ? endCs.fontFamily : null,
+        staySwitchPillFontFamily: staySwitchCs && staySwitchVisible ? staySwitchCs.fontFamily : null
     };
 }
 
