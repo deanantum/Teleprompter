@@ -7,7 +7,7 @@
     <style>
         * { box-sizing: border-box; }
         body { background: #000; margin: 0; padding: 0; overflow: hidden; color: #fff; font-family: sans-serif; }
-        /* Block flow like main #teleprompter-view so bottom runway counts in scrollHeight. */
+        /* Flex column so top spacers keep min-height (same stack as main #teleprompter-view children). */
         #scroll-container {
             height: 100vh;
             width: 100vw;
@@ -16,7 +16,9 @@
             scrollbar-color: rgba(255, 255, 255, 0.42) transparent;
             padding-left: 32px;
             box-sizing: border-box;
-            display: block;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
         }
         #scroll-container::-webkit-scrollbar {
             display: block;
@@ -41,23 +43,15 @@
             margin: 0;
             display: block;
         }
-        /* One tallest script row between text and red END pill (height set from main layout sync) */
-        .mirror-text-runway {
+        /* Blank space at end so last line can scroll up to top (matches main bottom spacer) */
+        .mirror-runway {
             display: block;
-            min-height: 0;
-            height: 0;
+            min-height: 50vh;
+            height: 50vh;
             width: 100%;
             pointer-events: none;
             background-color: #000;
-        }
-        /* Scroll room below bottom blue pill — fixed 100vh (known-good scroll sync) */
-        .mirror-bottom-spacer {
-            display: block;
-            min-height: 100vh;
-            height: 100vh;
-            width: 100%;
-            pointer-events: none;
-            background-color: #000;
+            flex-shrink: 0;
         }
         /* Same structure as main; visible column uses same width as main so wrapping and row height match */
         .mirror-table .script-row-wrapper {
@@ -214,7 +208,7 @@
             border-radius: 9999px;
             line-height: 1.4;
             font-weight: 500;
-            margin-bottom: 0;
+            margin-bottom: 12px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -230,32 +224,6 @@
             margin-top: 0;
         }
         .mirror-filename-pill.hidden { display: none !important; }
-        /* Red END + green STAY/SWITCH (match main #pre-stay-end-pill / #stay-switch-pill) */
-        .mirror-stay-switch-pill {
-            display: block;
-            width: 100%;
-            padding: 0 0 0 16px;
-            margin-top: 0;
-            margin-bottom: 1.4em;
-            background-color: #22c55e;
-            color: #000000;
-            border-radius: 9999px;
-            line-height: 1.4;
-            font-weight: 500;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            box-sizing: border-box;
-            flex-shrink: 0;
-            position: relative;
-            z-index: 1;
-            -webkit-text-fill-color: currentColor;
-        }
-        .mirror-stay-switch-pill.mirror-end-pill {
-            background-color: #dc2626;
-            margin-bottom: 0.55em;
-        }
-        .mirror-stay-switch-pill.hidden { display: none !important; }
         /* Same stack as main #teleprompter-view: spacer → runway → pill; heights set inline from main offsetHeight (like row heights). */
         .mirror-top-spacer,
         .mirror-top-runway {
@@ -273,17 +241,13 @@
         <div id="mirror-top-runway" class="mirror-top-runway" aria-hidden="true"></div>
         <div id="mirror-pill-top" class="mirror-filename-pill hidden" aria-hidden="true"></div>
         <div id="mirror-content" class="mirror-table"></div>
-        <div id="mirror-text-runway" class="mirror-text-runway" aria-hidden="true"></div>
-        <div id="mirror-pre-stay-end-pill" class="mirror-stay-switch-pill mirror-end-pill hidden" aria-hidden="true"></div>
-        <div id="mirror-stay-switch-pill" class="mirror-stay-switch-pill hidden" aria-hidden="true"></div>
+        <div id="mirror-runway" class="mirror-runway" aria-hidden="true"></div>
         <div id="mirror-pill-bottom" class="mirror-filename-pill mirror-filename-pill-bottom hidden" aria-hidden="true"></div>
-        <div id="mirror-bottom-spacer" class="mirror-bottom-spacer" aria-hidden="true"></div>
     </div>
     <div id="mirror-sync-guide"></div>
     <script>
         (function() {
             var debugMode = /(?:^|[?&])debug=1(?:&|$)/.test(window.location.search);
-            var lastMirrorLayout = null;
 
             function isMirrorFullscreen() {
                 return !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
@@ -513,8 +477,7 @@
                     topSpacerPx: ts,
                     topRunwayPx: tr,
                     pillGapPx: gap,
-                    leaderPx: ts + tr + gap,
-                    textRunwayPx: Math.round(1.4 * rootFs)
+                    leaderPx: ts + tr + gap
                 };
             }
 
@@ -563,12 +526,9 @@
                 var target = mainScroll;
                 if (display && data.rowOriginYs && data.rowOriginYs.length > 0) {
                     var mirrorRows = display.querySelectorAll('.script-row-wrapper');
-                    var originIndex = typeof data.rowOriginIndex === 'number' && !isNaN(data.rowOriginIndex)
-                        ? Math.max(0, Math.round(data.rowOriginIndex))
-                        : 0;
-                    if (mirrorRows.length > originIndex && data.rowOriginYs.length > originIndex) {
-                        var mirrorOrigin = Math.round((display.offsetTop || 0) + (mirrorRows[originIndex].offsetTop || 0));
-                        target = mainScroll + (mirrorOrigin - Math.round(data.rowOriginYs[originIndex]));
+                    if (mirrorRows.length > 0) {
+                        var mirrorRow0Origin = Math.round((display.offsetTop || 0) + (mirrorRows[0].offsetTop || 0));
+                        target = mainScroll + (mirrorRow0Origin - Math.round(data.rowOriginYs[0]));
                     }
                 } else if (display && typeof data.scriptOffsetTop === 'number' && !isNaN(data.scriptOffsetTop)) {
                     target = mainScroll + (Math.round(display.offsetTop || 0) - Math.round(data.scriptOffsetTop));
@@ -609,68 +569,14 @@
                     data.bottomPillFontSize,
                     data.bottomPillFontFamily
                 );
-                var endPillEl = document.getElementById('mirror-pre-stay-end-pill');
-                if (endPillEl) {
-                    var endLabel = data.endPill !== undefined && data.endPill !== null ? String(data.endPill).trim() : '';
-                    endPillEl.textContent = endLabel;
-                    endPillEl.classList.toggle('hidden', !endLabel);
-                    endPillEl.setAttribute('aria-hidden', endLabel ? 'false' : 'true');
-                    if (endLabel) {
-                        endPillEl.style.setProperty('color', '#000000', 'important');
-                        endPillEl.style.setProperty('-webkit-text-fill-color', 'currentColor', 'important');
-                    }
-                    if (data.endPillFontSize) endPillEl.style.setProperty('font-size', data.endPillFontSize, 'important');
-                    if (data.endPillFontFamily) endPillEl.style.setProperty('font-family', data.endPillFontFamily, 'important');
-                }
-                var staySwitchEl = document.getElementById('mirror-stay-switch-pill');
-                if (staySwitchEl) {
-                    var stayLabel = data.staySwitchPill !== undefined && data.staySwitchPill !== null ? String(data.staySwitchPill).trim() : '';
-                    staySwitchEl.textContent = stayLabel;
-                    staySwitchEl.classList.toggle('hidden', !stayLabel);
-                    staySwitchEl.setAttribute('aria-hidden', stayLabel ? 'false' : 'true');
-                    if (stayLabel) {
-                        staySwitchEl.style.setProperty('color', '#000000', 'important');
-                        staySwitchEl.style.setProperty('-webkit-text-fill-color', 'currentColor', 'important');
-                    }
-                    if (data.staySwitchPillFontSize) staySwitchEl.style.setProperty('font-size', data.staySwitchPillFontSize, 'important');
-                    if (data.staySwitchPillFontFamily) staySwitchEl.style.setProperty('font-family', data.staySwitchPillFontFamily, 'important');
-                }
-                if (lastMirrorLayout) {
-                    requestAnimationFrame(function() {
-                        applyMirrorLayout(lastMirrorLayout);
-                    });
-                }
                 requestAnimationFrame(function() {
                     shrinkMirrorPillToFit(topPillEl);
                     shrinkMirrorPillToFit(bottomPillEl);
-                    shrinkMirrorPillToFit(endPillEl);
-                    shrinkMirrorPillToFit(staySwitchEl);
-                    if (lastMirrorLayout) pinMirrorContentOffset(lastMirrorLayout);
                 });
-            }
-
-            /** Match main #teleprompter-text.offsetTop so row scroll sync stays aligned. */
-            function pinMirrorContentOffset(layout) {
-                if (!layout) return;
-                var beforeScript = layout.beforeScriptPx;
-                if (typeof beforeScript !== 'number' || isNaN(beforeScript)) return;
-                var content = document.getElementById('mirror-content');
-                var pillTop = document.getElementById('mirror-pill-top');
-                if (!content || (pillTop && pillTop.classList.contains('hidden'))) return;
-                void pillTop && pillTop.offsetHeight;
-                void content.offsetHeight;
-                var actual = Math.round(content.offsetTop || 0);
-                var adjust = Math.round(beforeScript) - actual;
-                if (adjust !== 0) {
-                    content.style.setProperty('margin-top', adjust + 'px', 'important');
-                } else {
-                    content.style.removeProperty('margin-top');
-                }
             }
 
             function applyMirrorLayout(layout) {
                 if (!layout) layout = defaultMirrorLayoutFromViewport();
-                lastMirrorLayout = layout;
                 var chrome = ensureMirrorTopChrome();
                 var spacer = chrome.spacer;
                 var runway = chrome.runway;
@@ -705,18 +611,6 @@
                 setBlackBand(spacer, ts);
                 setBlackBand(runway, tr);
 
-                var textRunway = document.getElementById('mirror-text-runway');
-                var bottomSpacer = document.getElementById('mirror-bottom-spacer');
-                var textRunwayPx = typeof layout.textRunwayPx === 'number' && !isNaN(layout.textRunwayPx)
-                    ? Math.max(0, Math.round(layout.textRunwayPx))
-                    : 0;
-                setBlackBand(textRunway, textRunwayPx);
-                /* Bottom gap: always 100vh on mirror — do not sync from main (different window height breaks scroll) */
-                if (bottomSpacer) {
-                    var mirrorVh = Math.round(window.innerHeight || document.documentElement.clientHeight || 800);
-                    setBlackBand(bottomSpacer, mirrorVh);
-                }
-
                 if (pillTop) {
                     pillTop.style.minHeight = '';
                     pillTop.style.boxSizing = '';
@@ -734,18 +628,11 @@
                     if (pillTop) {
                         if (gap > 0) pillTop.style.setProperty('margin-top', gap + 'px', 'important');
                         else pillTop.style.removeProperty('margin-top');
-                        var pillMb = typeof layout.pillBottomGapPx === 'number' && !isNaN(layout.pillBottomGapPx)
-                            ? Math.max(0, Math.round(layout.pillBottomGapPx))
-                            : 0;
-                        if (pillMb > 0) pillTop.style.setProperty('margin-bottom', pillMb + 'px', 'important');
-                        else pillTop.style.removeProperty('margin-bottom');
                     }
                 }
-                if (!pillHidden) pinMirrorContentOffset(layout);
                 requestAnimationFrame(function() {
                     shrinkMirrorPillToFit(pillTop);
                     shrinkMirrorPillToFit(document.getElementById('mirror-pill-bottom'));
-                    if (!pillHidden) pinMirrorContentOffset(layout);
                 });
             }
 
