@@ -7066,12 +7066,68 @@ function escapeHtmlForDocxText(text) {
         .replace(/>/g, '&gt;');
 }
 
+function cssColorStringToRgb(css) {
+    if (!css) return null;
+    const t = String(css).trim();
+    const hex = t.match(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+    if (hex) {
+        const h = hex[1];
+        if (h.length === 3) {
+            return { r: parseInt(h[0] + h[0], 16), g: parseInt(h[1] + h[1], 16), b: parseInt(h[2] + h[2], 16) };
+        }
+        return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+    }
+    const m = t.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+    if (m) return { r: +m[1], g: +m[2], b: +m[3] };
+    return null;
+}
+
+/** Excel/Word default black body text → inherit teleprompter white; chromatic emphasis (blue, etc.) is kept. */
+function isImportDefaultDarkForeground(cssColor) {
+    const rgb = cssColorStringToRgb(cssColor);
+    if (!rgb) return false;
+    const { r, g, b } = rgb;
+    if (r <= 0x10 && g <= 0x10 && b <= 0x10) return true;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    return max <= 0x4a && (max - min) <= 0x28;
+}
+
+/** Return mapped color for teleprompter, or '' to inherit default white. */
+function importForegroundColorForTeleprompter(cssColor) {
+    if (!cssColor || !String(cssColor).trim()) return '';
+    if (isImportDefaultDarkForeground(cssColor)) return '';
+    const t = cssColor.trim();
+    if (/^#[0-9a-fA-F]{3,6}$/i.test(t)) return t;
+    const rgb = cssColorStringToRgb(t);
+    if (rgb) return `rgb(${rgb.r},${rgb.g},${rgb.b})`;
+    return t;
+}
+
+function remapImportSpanStyleForTeleprompter(style) {
+    if (!style) return '';
+    const out = [];
+    style.split(';').forEach((part) => {
+        const p = part.trim();
+        if (!p) return;
+        const m = p.match(/^color\s*:\s*(.+)$/i);
+        if (m) {
+            const mapped = importForegroundColorForTeleprompter(m[1].trim());
+            if (mapped) out.push(`color:${mapped}`);
+            return;
+        }
+        out.push(p);
+    });
+    return out.join(';');
+}
+
 function docxRunPropertiesToInlineStyle(rPr) {
     if (!rPr) return '';
     const parts = [];
     const colorVal = docxWAttr(rPr.getElementsByTagNameNS(DOCX_WML_NS, 'color')[0], 'val');
     const fg = docxColorValToCss(colorVal);
-    if (fg) parts.push(`color:${fg}`);
+    const mappedFg = fg ? importForegroundColorForTeleprompter(fg) : '';
+    if (mappedFg) parts.push(`color:${mappedFg}`);
     const hiVal = docxWAttr(rPr.getElementsByTagNameNS(DOCX_WML_NS, 'highlight')[0], 'val');
     const bg = docxHighlightValToCss(hiVal);
     if (bg) parts.push(`background-color:${bg}`);
@@ -7079,6 +7135,20 @@ function docxRunPropertiesToInlineStyle(rPr) {
 }
 
 const DOCX_SOFT_BR_HTML = '<br data-soft-return="1">';
+
+function createSoftBrElement() {
+    const br = document.createElement('br');
+    br.setAttribute('data-soft-return', '1');
+    return br;
+}
+
+/** In-cell line breaks stay in one .cell-content so row/column color fill is not split across new rows. */
+function tagCellLineBreaksAsSoft(root = teleprompterText) {
+    if (!root) return;
+    root.querySelectorAll('.cell-content br').forEach((br) => {
+        if (!br.hasAttribute('data-soft-return')) br.setAttribute('data-soft-return', '1');
+    });
+}
 
 function docxRunToHtml(run) {
     const rPr = run.getElementsByTagNameNS(DOCX_WML_NS, 'rPr')[0];
@@ -7125,6 +7195,9 @@ function tagDocxSoftBreaksInHtml(html) {
 /** Cue/plain text then colored lyric in one cell with no Word break — insert a soft <br> before the color span. */
 function insertMissingSoftBrInCell(cell) {
     if (!cell) return;
+    if (cell.dataset.xlsxImport === '1') return;
+    /* Excel / inline emphasis: many color spans in one sentence — do not break before each one. */
+    if (cell.querySelectorAll('.color-span-inline').length > 1) return;
     const nodes = Array.from(cell.childNodes);
     for (let i = 1; i < nodes.length; i++) {
         const cur = nodes[i];
@@ -7135,8 +7208,7 @@ function insertMissingSoftBrInCell(cell) {
             ? (prev.textContent || '').trim()
             : (prev.textContent || '').trim();
         if (!prevText) continue;
-        const br = document.createElement('br');
-        br.setAttribute('data-soft-return', '1');
+        const br = createSoftBrElement();
         cell.insertBefore(br, cur);
         nodes.splice(i, 0, br);
         i++;
@@ -7309,7 +7381,21 @@ function normalizeImportedColorSpans(root) {
     root.querySelectorAll('span[style]').forEach((span) => {
         const style = span.getAttribute('style') || '';
         if (!/color\s*:|background/i.test(style)) return;
-        if (!span.classList.contains('color-span-inline')) span.classList.add('color-span-inline');
+        const remapped = remapImportSpanStyleForTeleprompter(style);
+        if (remapped !== style) {
+            if (remapped) span.setAttribute('style', remapped);
+            else span.removeAttribute('style');
+        }
+        const nextStyle = span.getAttribute('style') || '';
+        if (!nextStyle && !span.classList.contains('format-span-inline') && span.parentNode) {
+            const parent = span.parentNode;
+            while (span.firstChild) parent.insertBefore(span.firstChild, span);
+            span.remove();
+            return;
+        }
+        if (/color\s*:|background/i.test(nextStyle) && !span.classList.contains('color-span-inline')) {
+            span.classList.add('color-span-inline');
+        }
     });
 }
 
@@ -7520,8 +7606,8 @@ function plainTextWithOpenFileBreaksToCellHtml(text) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/\n{2,}/g, '\n')
-        .replace(/\n/g, '<br>')
-        .replace(/(?:<br\s*\/?>[\s\u00A0]*){2,}/gi, '<br>');
+        .replace(/\n/g, DOCX_SOFT_BR_HTML)
+        .replace(/(?:<br\b[^>]*>[\s\u00A0]*){2,}/gi, DOCX_SOFT_BR_HTML);
 }
 
 /** Apply open-file breaks on import only — speech text in cells, never on markup strings. */
@@ -7586,7 +7672,7 @@ function insertOpenFileLineBreaksInHtml(html) {
             if (!parent) continue;
             const frag = document.createDocumentFragment();
             parts.forEach((part, i) => {
-                if (i > 0) frag.appendChild(document.createElement('br'));
+                if (i > 0) frag.appendChild(createSoftBrElement());
                 if (part) frag.appendChild(document.createTextNode(part));
             });
             parent.replaceChild(frag, node);
@@ -7646,43 +7732,25 @@ async function processFileContent(file, index) {
         else if (extension === 'xlsx' || extension === 'xls') {
             console.log("Excel detected. Initializing FileReader...");
             const reader = new FileReader();
-            reader.onload = (e) => {
+            reader.onload = async (e) => {
                 try {
                     console.log("FileReader load complete. Parsing with XLSX...");
-                    const data = new Uint8Array(e.target.result);
-                    const workbook = XLSX.read(data, { type: 'array' });
+                    const arrayBuffer = e.target.result;
+                    const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
                     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-                    const range = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : { s: { c: 0, r: 0 }, e: { c: 0, r: 0 } };
-                    const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-                    const allCols = [];
-                    for (let c = range.s.c; c <= range.e.c; c++) allCols.push(c);
-                    const maxCols = MAX_COLUMNS;
-                    const selectedCols = allCols.slice(0, maxCols);
-                    let html = '<div class="script-container">';
-                    json.forEach((row) => {
-                        const cells = selectedCols.map(colIdx => row[colIdx] != null ? String(row[colIdx]).trim() : '');
-                        html += '<div class="script-row-wrapper">';
-                        cells.forEach(val => {
-                            let cellText = val || '';
-                            cellText = stripNumericAngleMarkers(cellText).replace(/-/g, UNICODE_NB_HYPHEN);
-                            cellText = plainTextWithOpenFileBreaksToCellHtml(cellText);
-                            html += `<div class="script-column"><div class="cell-content">${cellText}</div></div>`;
-                        });
-                        html += '</div>';
-                    });
-                    html += '</div>';
+                    const { html, selectedColCount, totalColCount } = await buildXlsxScriptContainerHtmlFromWorkbook(arrayBuffer, workbook);
                     const currentIdx = fileStore.findIndex(f => f === file);
                     const slot = currentIdx >= 0 ? currentIdx : index;
                     contentStore[slot] = html;
-                    fileColumnCount[slot] = Math.min(allCols.length, maxCols);
-                    fileColumnVisibility[slot] = selectedCols.map(() => true);
-                    fileFirstColIsId[slot] = selectedCols.length > 0 && isFirstColumnNumeric(sheet);
+                    fileColumnCount[slot] = selectedColCount;
+                    fileColumnVisibility[slot] = Array.from({ length: selectedColCount }, () => true);
+                    fileFirstColIsId[slot] = selectedColCount > 0 && isFirstColumnNumeric(sheet);
                     updateRunlistRowColumnToggles(slot);
                     onRunlistFileContentReady(slot);
-                    if (allCols.length > maxCols) {
-                        alert(`"${file.name}" has ${allCols.length} columns. Teleprompter uses a maximum of ${MAX_COLUMNS} columns. Columns after column ${MAX_COLUMNS} were ignored.`);
+                    if (totalColCount > MAX_COLUMNS) {
+                        alert(`"${file.name}" has ${totalColCount} columns. Teleprompter uses a maximum of ${MAX_COLUMNS} columns. Columns after column ${MAX_COLUMNS} were ignored.`);
                     }
-                    console.log("Excel imported with " + selectedCols.length + " column(s). Use file checkboxes to show/hide columns.");
+                    console.log("Excel imported with " + selectedColCount + " column(s). Use file checkboxes to show/hide columns.");
                 } catch (innerErr) {
                     console.error("❌ XLSX Parsing Error:", innerErr);
                 }
@@ -7923,11 +7991,14 @@ function processTableColumns() {
     /* Merge all script-containers into one so every row shares the same table layout */
     ensureSingleScriptContainer();
     ensurePlainScriptRows();
+    teleprompterText.querySelectorAll('.cell-content').forEach((cell) => normalizeImportedColorSpans(cell));
     teleprompterText.querySelectorAll('.cell-content').forEach((cell) => insertMissingSoftBrInCell(cell));
     teleprompterText.querySelectorAll('.cell-content').forEach((cell) => normalizeCellLineBreakArtifacts(cell));
-    /* Split rows only on hard returns; Word soft breaks (data-soft-return) stay in one cell */
+    tagCellLineBreaksAsSoft();
+    /* Split rows only on hard returns; soft breaks (data-soft-return) stay in one cell for color fill */
     splitMultiLineCellsIntoRows();
     splitPipeVPrefixIntoCueColumn();
+    tagCellLineBreaksAsSoft();
     splitMultiLineCellsIntoRows();
     removeEmptyRowsBeforePipeVRows();
     /* Ensure blank/empty rows have nbsp so they keep height and stay separated */
@@ -8023,6 +8094,213 @@ function splitMultiLineCellsIntoRows() {
     }
 }
 
+const XLSX_MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+const XLSX_DRAWING_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+const XLSX_THEME_COLOR_KEYS = ['lt1', 'dk1', 'lt2', 'dk2', 'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6'];
+
+function xlsxEscapeAttr(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+function xlsxArgbToCss(rgb) {
+    if (!rgb || typeof rgb !== 'string') return '';
+    const h = rgb.replace(/^#/, '').toUpperCase();
+    if (h.length === 8) {
+        if (h.slice(0, 2) === '00') return '';
+        return `#${h.slice(2)}`;
+    }
+    if (h.length === 6) return `#${h}`;
+    return '';
+}
+
+function xlsxColorElToCss(colorEl, themeColors) {
+    if (!colorEl) return '';
+    const theme = colorEl.getAttribute('theme');
+    if (theme != null && themeColors?.length) {
+        const idx = parseInt(theme, 10);
+        if (!isNaN(idx)) {
+            if (idx === 1) return ''; /* Excel dk1 = sheet black → teleprompter white */
+            if (themeColors[idx]) return importForegroundColorForTeleprompter(themeColors[idx]);
+        }
+    }
+    const rgb = colorEl.getAttribute('rgb');
+    if (rgb) return importForegroundColorForTeleprompter(xlsxArgbToCss(rgb));
+    return '';
+}
+
+/** Excel run styles: color only — size/family inherit from .cell-content so emphasis words stay one line/size. */
+function xlsxRPrToStyle(rPr, themeColors) {
+    if (!rPr) return '';
+    const color = xlsxColorElToCss(rPr.getElementsByTagNameNS(XLSX_MAIN_NS, 'color')[0], themeColors);
+    return color ? `color:${color}` : '';
+}
+
+function xlsxRunsToInnerHtml(runEls, themeColors) {
+    const chunks = [];
+    let pendingStyle = null;
+    let pendingText = '';
+    const flush = () => {
+        if (!pendingText) return;
+        const escaped = escapeHtmlForDocxText(pendingText);
+        if (pendingStyle) {
+            chunks.push(`<span class="color-span-inline" style="${xlsxEscapeAttr(pendingStyle)}">${escaped}</span>`);
+        } else {
+            chunks.push(escaped);
+        }
+        pendingText = '';
+        pendingStyle = null;
+    };
+    runEls.forEach((r) => {
+        const rPr = r.getElementsByTagNameNS(XLSX_MAIN_NS, 'rPr')[0];
+        const t = r.getElementsByTagNameNS(XLSX_MAIN_NS, 't')[0];
+        const text = t?.textContent ?? '';
+        if (!text) return;
+        const style = xlsxRPrToStyle(rPr, themeColors);
+        if (style === pendingStyle) {
+            pendingText += text;
+        } else {
+            flush();
+            pendingStyle = style;
+            pendingText = text;
+        }
+    });
+    flush();
+    return chunks.join('');
+}
+
+function xlsxParseSiElement(si, themeColors) {
+    const runs = si.getElementsByTagNameNS(XLSX_MAIN_NS, 'r');
+    if (runs.length) return xlsxRunsToInnerHtml(Array.from(runs), themeColors);
+    const t = si.getElementsByTagNameNS(XLSX_MAIN_NS, 't')[0];
+    return escapeHtmlForDocxText(t?.textContent || '');
+}
+
+function xlsxParseSharedStringsXml(xml, themeColors) {
+    const doc = new DOMParser().parseFromString(xml, 'application/xml');
+    const sis = doc.getElementsByTagNameNS(XLSX_MAIN_NS, 'si');
+    return Array.from(sis).map((si) => xlsxParseSiElement(si, themeColors));
+}
+
+function xlsxParseInlineStrElement(isEl, themeColors) {
+    const runs = isEl.getElementsByTagNameNS(XLSX_MAIN_NS, 'r');
+    if (runs.length) return xlsxRunsToInnerHtml(Array.from(runs), themeColors);
+    const t = isEl.getElementsByTagNameNS(XLSX_MAIN_NS, 't')[0];
+    return escapeHtmlForDocxText(t?.textContent || '');
+}
+
+function xlsxParseCellInnerHtml(cEl, sharedStrings, themeColors) {
+    const t = cEl.getAttribute('t');
+    if (t === 'inlineStr') {
+        const is = cEl.getElementsByTagNameNS(XLSX_MAIN_NS, 'is')[0];
+        if (is) return xlsxParseInlineStrElement(is, themeColors);
+    }
+    if (t === 's') {
+        const v = parseInt(cEl.getElementsByTagNameNS(XLSX_MAIN_NS, 'v')[0]?.textContent, 10);
+        if (!isNaN(v) && sharedStrings[v] != null) return sharedStrings[v];
+    }
+    const v = cEl.getElementsByTagNameNS(XLSX_MAIN_NS, 'v')[0]?.textContent;
+    if (v != null && v !== '') return escapeHtmlForDocxText(v);
+    return '';
+}
+
+async function xlsxLoadThemeColors(zip) {
+    const fallback = ['#FFFFFF', '#000000', '#E7E6E6', '#44546A', '#4472C4', '#ED7D31', '#A5A5A5', '#FFC000', '#5B9BD5', '#70AD47'];
+    try {
+        const xml = await zip.file('xl/theme/theme1.xml')?.async('string');
+        if (!xml) return fallback;
+        const doc = new DOMParser().parseFromString(xml, 'application/xml');
+        const scheme = doc.getElementsByTagNameNS(XLSX_DRAWING_NS, 'clrScheme')[0];
+        if (!scheme) return fallback;
+        return XLSX_THEME_COLOR_KEYS.map((name) => {
+            const el = scheme.getElementsByTagNameNS(XLSX_DRAWING_NS, name)[0];
+            const srgb = el?.getElementsByTagNameNS(XLSX_DRAWING_NS, 'srgbClr')[0]?.getAttribute('val');
+            return srgb ? `#${srgb}` : '#000000';
+        });
+    } catch (_) {
+        return fallback;
+    }
+}
+
+async function xlsxBuildRichCellHtmlMap(arrayBuffer, sheetIndex = 0) {
+    const map = new Map();
+    if (typeof JSZip === 'undefined' || !arrayBuffer) return map;
+    try {
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        const themeColors = await xlsxLoadThemeColors(zip);
+        const sharedXml = await zip.file('xl/sharedStrings.xml')?.async('string');
+        const sharedStrings = sharedXml ? xlsxParseSharedStringsXml(sharedXml, themeColors) : [];
+        const sheetPath = `xl/worksheets/sheet${sheetIndex + 1}.xml`;
+        const sheetXml = await zip.file(sheetPath)?.async('string');
+        if (!sheetXml) return map;
+        const doc = new DOMParser().parseFromString(sheetXml, 'application/xml');
+        Array.from(doc.getElementsByTagNameNS(XLSX_MAIN_NS, 'c')).forEach((c) => {
+            const ref = c.getAttribute('r');
+            if (!ref) return;
+            const html = xlsxParseCellInnerHtml(c, sharedStrings, themeColors);
+            if (html) map.set(ref, html);
+        });
+    } catch (err) {
+        console.warn('XLSX rich-text parse failed, using plain cells:', err);
+    }
+    return map;
+}
+
+function xlsxNormalizeImportedCellHtml(html) {
+    if (!html || typeof html !== 'string') return '';
+    const root = document.createElement('div');
+    root.innerHTML = stripNumericAngleMarkers(html);
+    root.querySelectorAll('div, p').forEach((block) => {
+        const span = document.createElement('span');
+        span.style.display = 'inline';
+        const style = block.getAttribute('style');
+        if (style) span.setAttribute('style', style);
+        while (block.firstChild) span.appendChild(block.firstChild);
+        block.replaceWith(span);
+    });
+    normalizeImportedColorSpans(root);
+    return root.innerHTML;
+}
+
+function xlsxPlainCellToInnerHtml(plain) {
+    let cellText = plain || '';
+    cellText = stripNumericAngleMarkers(cellText).replace(/-/g, UNICODE_NB_HYPHEN);
+    return escapeHtmlForDocxText(cellText);
+}
+
+function xlsxCellContentToInnerHtml(plain, richHtml) {
+    if (richHtml && /<span[\s>]|<\/span>|style\s*=\s*["'][^"']*color/i.test(richHtml)) {
+        return xlsxNormalizeImportedCellHtml(richHtml);
+    }
+    const text = plain != null ? String(plain).trim() : '';
+    if (!text && !richHtml) return '';
+    if (richHtml && richHtml.trim()) return xlsxNormalizeImportedCellHtml(richHtml);
+    if (/<\s*(div|span|p|br|b|i|u)\b/i.test(text)) return xlsxNormalizeImportedCellHtml(text);
+    return xlsxPlainCellToInnerHtml(text);
+}
+
+async function buildXlsxScriptContainerHtmlFromWorkbook(arrayBuffer, workbook) {
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const range = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : { s: { c: 0, r: 0 }, e: { c: 0, r: 0 } };
+    const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    const richMap = await xlsxBuildRichCellHtmlMap(arrayBuffer);
+    const allCols = [];
+    for (let c = range.s.c; c <= range.e.c; c++) allCols.push(c);
+    const selectedCols = allCols.slice(0, MAX_COLUMNS);
+    let html = '<div class="script-container">';
+    json.forEach((row, rIdx) => {
+        html += '<div class="script-row-wrapper">';
+        selectedCols.forEach((colIdx) => {
+            const addr = XLSX.utils.encode_cell({ r: range.s.r + rIdx, c: colIdx });
+            const plain = row[colIdx] != null ? String(row[colIdx]).trim() : '';
+            const inner = xlsxCellContentToInnerHtml(plain, richMap.get(addr));
+            html += `<div class="script-column"><div class="cell-content" data-xlsx-import="1">${inner || '\u00A0'}</div></div>`;
+        });
+        html += '</div>';
+    });
+    html += '</div>';
+    return { html, selectedColCount: selectedCols.length, totalColCount: allCols.length };
+}
+
 /** Merge all direct-child script-containers into a single one. Prevents pill/row layout differences when docx/xlsx produce multiple containers. */
 function ensureSingleScriptContainer() {
     const containers = Array.from(teleprompterText.children).filter(el =>
@@ -8065,49 +8343,32 @@ function loadFileContent(file, index) {
                     }
                 });
         } else if (ext === 'xlsx' || ext === 'xls') {
-            try {
-                const data = new Uint8Array(e.target.result);
-                const workbook = XLSX.read(data, { type: 'array' });
-                const sheet = workbook.Sheets[workbook.SheetNames[0]];
-                const range = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : { s: { c: 0, r: 0 }, e: { c: 0, r: 0 } };
-                const json = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-                const allCols = [];
-                for (let c = range.s.c; c <= range.e.c; c++) allCols.push(c);
-                const maxCols = MAX_COLUMNS;
-                const selectedCols = allCols.slice(0, maxCols);
-                let html = '<div class="script-container">';
-                json.forEach((row) => {
-                    const cells = selectedCols.map(colIdx => row[colIdx] != null ? String(row[colIdx]).trim() : '');
-                    html += '<div class="script-row-wrapper">';
-                    cells.forEach(val => {
-                        let cellText = val || '';
-                        cellText = stripNumericAngleMarkers(cellText).replace(/-/g, UNICODE_NB_HYPHEN);
-                        cellText = plainTextWithOpenFileBreaksToCellHtml(cellText);
-                        html += `<div class="script-column"><div class="cell-content">${cellText}</div></div>`;
-                    });
-                    html += '</div>';
-                });
-                html += '</div>';
-                let { html: normalized } = normalizeContentToMax3Columns(html);
-                normalized = stripNumericAngleMarkers(normalized);
-                contentStore[index] = normalized;
-                if (currentFileIndex === index) {
-                    teleprompterText.innerHTML = normalized;
-                    delete teleprompterText.dataset.placeholder;
-                    processTableColumns();
-                    wrapCellContentInBlock();
-                    replaceAsciiHyphensInTextNodes(teleprompterText);
-                    requestAnimationFrame(() => {
-                        convertBkmkPlaceholdersToBookmarks();
-                        updateBookmarkSidebar();
+            (async () => {
+                try {
+                    const arrayBuffer = e.target.result;
+                    const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+                    const { html } = await buildXlsxScriptContainerHtmlFromWorkbook(arrayBuffer, workbook);
+                    let { html: normalized } = normalizeContentToMax3Columns(html);
+                    normalized = stripNumericAngleMarkers(normalized);
+                    contentStore[index] = normalized;
+                    if (currentFileIndex === index) {
+                        teleprompterText.innerHTML = normalized;
+                        delete teleprompterText.dataset.placeholder;
+                        processTableColumns();
+                        wrapCellContentInBlock();
                         replaceAsciiHyphensInTextNodes(teleprompterText);
-                        if (currentFileIndex === index && index < contentStore.length)
-                            contentStore[index] = teleprompterText.innerHTML.trim();
-                    });
+                        requestAnimationFrame(() => {
+                            convertBkmkPlaceholdersToBookmarks();
+                            updateBookmarkSidebar();
+                            replaceAsciiHyphensInTextNodes(teleprompterText);
+                            if (currentFileIndex === index && index < contentStore.length)
+                                contentStore[index] = teleprompterText.innerHTML.trim();
+                        });
+                    }
+                } catch (err) {
+                    console.error('❌ XLSX load error:', err);
                 }
-            } catch (err) {
-                console.error('❌ XLSX load error:', err);
-            }
+            })();
         } else {
             let text = new TextDecoder().decode(e.target.result);
             text = stripNumericAngleMarkers(text);
