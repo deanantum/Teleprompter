@@ -10372,7 +10372,9 @@ function getMirrorLayoutMetrics() {
 
     const bottomSpacerEl = view.querySelector('.teleprompter-bottom-spacer');
     let bottomSpacerPx = bottomSpacerEl ? Math.round(bottomSpacerEl.offsetHeight || 0) : 0;
-    if (bottomSpacerPx < 1) bottomSpacerPx = Math.round(ih * 0.5);
+    const cssBottomSpacerPx = Math.round(ih * 0.5);
+    if (bottomSpacerPx < 1) bottomSpacerPx = cssBottomSpacerPx;
+    bottomSpacerPx = Math.max(bottomSpacerPx, cssBottomSpacerPx);
 
     return {
         leaderPx,
