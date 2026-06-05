@@ -8372,16 +8372,45 @@ async function buildXlsxScriptContainerHtmlFromWorkbook(arrayBuffer, workbook) {
     for (let c = range.s.c; c <= range.e.c; c++) allCols.push(c);
     const selectedCols = allCols.slice(0, MAX_COLUMNS);
     let html = '<div class="script-container">';
+    // XLSX often includes fully-empty leading rows; we skip them so there isn't a visible "gap"
+    // under the top filename pill (empty rows get nbsp later to preserve row height).
+    const stripHtmlToText = (s) => String(s || '')
+        .replace(/<[^>]*>/g, '')
+        .replace(/\u00A0/g, ' ')
+        .trim();
+    let appendedAnyRow = false;
     json.forEach((row, rIdx) => {
-        html += '<div class="script-row-wrapper">';
+        const cellInners = [];
+        let rowHasAnyText = false;
+
         selectedCols.forEach((colIdx) => {
             const addr = XLSX.utils.encode_cell({ r: range.s.r + rIdx, c: colIdx });
             const plain = row[colIdx] != null ? String(row[colIdx]).trim() : '';
             const inner = xlsxCellContentToInnerHtml(plain, richMap.get(addr));
+            cellInners.push(inner);
+            if (!rowHasAnyText && stripHtmlToText(inner)) rowHasAnyText = true;
+        });
+
+        // Trim only leading empty rows.
+        if (!appendedAnyRow && !rowHasAnyText) return;
+
+        html += '<div class="script-row-wrapper">';
+        selectedCols.forEach((_, i) => {
+            const inner = cellInners[i];
             html += `<div class="script-column"><div class="cell-content" data-xlsx-import="1">${inner || '\u00A0'}</div></div>`;
         });
         html += '</div>';
+        appendedAnyRow = true;
     });
+
+    // If the sheet is totally empty, keep one blank row so later row measurement doesn't break.
+    if (!appendedAnyRow && selectedCols.length) {
+        html += '<div class="script-row-wrapper">';
+        selectedCols.forEach(() => {
+            html += `<div class="script-column"><div class="cell-content" data-xlsx-import="1">\u00A0</div></div>`;
+        });
+        html += '</div>';
+    }
     html += '</div>';
     return { html, selectedColCount: selectedCols.length, totalColCount: allCols.length };
 }
