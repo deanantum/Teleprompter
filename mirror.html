@@ -110,39 +110,17 @@
             display: inline !important;
         }
         .mirror-table .script-row-wrapper.row-lines-same { background-color: #000000 !important; }
-        .mirror-table .script-row-wrapper.row-col2-one-more { background: #000000 !important; }
+        /* Row color guide: fill on row wrapper only (no column/cell backgrounds — text stays readable) */
+        .mirror-table .script-row-wrapper.row-col2-one-more,
         .mirror-table .script-row-wrapper.row-col3-one-more { background: #000000 !important; }
         .mirror-table .script-row-wrapper.row-col2-more { background-color: #002D04 !important; color: #ffffff !important; }
-        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible,
-        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible .cell-content {
-            background-color: #002D04 !important;
-            color: #ffffff !important;
-        }
         .mirror-table .script-row-wrapper.row-col3-more,
         .mirror-table .script-row-wrapper.row-col3-much-more { background-color: #531516 !important; color: #ffffff !important; }
-        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible,
-        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible,
-        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible .cell-content,
-        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible .cell-content {
-            background-color: #531516 !important;
-            color: #ffffff !important;
-        }
-        .mirror-table .script-row-wrapper.row-col2-one-more .script-column.mirror-visible {
-            background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
-                        linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
-                        transparent !important;
-        }
-        .mirror-table .script-row-wrapper.row-col3-one-more .script-column.mirror-visible {
-            background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
-                        linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
-                        transparent !important;
-        }
-        /* Match main: line spacing on shorter column fills row when red/green (stretch classes from main) */
-        .mirror-table .script-row-wrapper.row-stretch-col2 .script-column.mirror-visible .cell-content,
-        .mirror-table .script-row-wrapper.row-stretch-col2 .script-column.mirror-visible .cell-content *,
-        .mirror-table .script-row-wrapper.row-stretch-col3 .script-column.mirror-visible .cell-content,
-        .mirror-table .script-row-wrapper.row-stretch-col3 .script-column.mirror-visible .cell-content * {
-            line-height: inherit !important;
+        .mirror-table .script-row-wrapper.row-col2-more .cell-content,
+        .mirror-table .script-row-wrapper.row-col3-more .cell-content,
+        .mirror-table .script-row-wrapper.row-col3-much-more .cell-content {
+            background: transparent !important;
+            color: inherit !important;
         }
         .mirror-table .script-row-wrapper.mirror-row-font-12 .script-column .cell-content {
             font-size: 12px !important;
@@ -779,8 +757,9 @@
                 if (data.rowHeights && Array.isArray(data.rowHeights) && mirrorRows.length === data.rowHeights.length) {
                     data.rowHeights.forEach(function(h, i) {
                         if (mirrorRows[i] && typeof h === 'number' && h > 0) {
-                            mirrorRows[i].style.minHeight = h + 'px';
-                            mirrorRows[i].style.height = h + 'px';
+                            mirrorRows[i].style.setProperty('min-height', h + 'px', 'important');
+                            mirrorRows[i].style.setProperty('height', h + 'px', 'important');
+                            mirrorRows[i].style.setProperty('box-sizing', 'border-box', 'important');
                         }
                     });
                 }
@@ -792,44 +771,14 @@
                 applyMirrorRowStretchFromMain(mirrorRows, table, visIdx, rowStretch);
             }
 
-            function applyMirrorShortColumnLineBalance(displayRoot, visibleColumnIndex) {
-                if (!displayRoot) return;
-                var rows = displayRoot.querySelectorAll('.script-row-wrapper');
-                for (var ri = 0; ri < rows.length; ri++) {
-                    var row = rows[ri];
-                    var wantCol = 0;
-                    if (row.classList.contains('row-stretch-col2')) wantCol = 2;
-                    else if (row.classList.contains('row-stretch-col3')) wantCol = 3;
-                    else continue;
-                    if (visibleColumnIndex !== wantCol - 1) continue;
-                    var cell = row.querySelector('.script-column.mirror-visible .cell-content');
-                    if (!cell) continue;
-                    if (cell.hasAttribute('data-tp-line-balance')) continue;
-                    var text = (cell.textContent || '').trim();
-                    if (!text) continue;
-                    var avail = Math.max(1, Math.floor(row.clientHeight) - 1);
-                    cell.style.removeProperty('line-height');
-                    void cell.offsetHeight;
-                    var natural = measureMirrorCellNaturalHeight(cell, col);
-                    void cell.offsetHeight;
-                    if (natural >= avail - 2) continue;
-                    var cs = window.getComputedStyle(cell);
-                    var fontPx = parseFloat(cs.fontSize) || 16;
-                    var lo = parseFloat(cs.lineHeight);
-                    if (isNaN(lo) || lo < fontPx * 1.02) lo = fontPx * 1.15;
-                    var hi = Math.max(lo + 1, avail * 2.5);
-                    for (var iter = 0; iter < 30; iter++) {
-                        var mid = (lo + hi) / 2;
-                        var h = measureMirrorHeightAtLh(cell, col, mid);
-                        clearMirrorBalanceProbe(cell);
-                        cell.style.removeProperty('line-height');
-                        if (h > avail) hi = mid;
-                        else lo = mid;
-                    }
-                    cell.style.removeProperty('line-height');
-                    void cell.offsetHeight;
-                    cell.style.setProperty('line-height', lo + 'px', 'important');
-                }
+            function getMirrorRowSyncPayload() {
+                if (!lastLoadContentData) return null;
+                return {
+                    rowHeights: lastLoadContentData.rowHeights,
+                    table: lastLoadContentData.table,
+                    visibleColumnIndex: lastLoadContentData.visibleColumnIndex,
+                    rowStretch: lastLoadContentData.rowStretch
+                };
             }
 
             function handleMessage(e) {
@@ -852,7 +801,14 @@
                         lastLoadContentData = {
                             table: data.table,
                             visibleColumnIndex: data.visibleColumnIndex,
-                            rowColors: data.rowColors
+                            rowColors: data.rowColors,
+                            rowHeights: data.rowHeights,
+                            rowStretch: Array.isArray(data.table) ? data.table.map(function(row) {
+                                return {
+                                    stretchCol: row.stretchCol || 0,
+                                    stretchLineHeight: row.stretchLineHeight || ''
+                                };
+                            }) : null
                         };
                         var html = '';
                         data.table.forEach(function(row, rowIndex) {
@@ -871,8 +827,6 @@
                         applyMirrorRowClasses(mirrorRows, data.table, data.rowColors);
                         applyMirrorRowHeightsAndStretch(data);
                         applyMirrorLayout(data.layout);
-                        var visIdx = typeof data.visibleColumnIndex === 'number' ? data.visibleColumnIndex : 0;
-                        var hasRowHeights = data.rowHeights && Array.isArray(data.rowHeights) && data.rowHeights.length > 0;
                         var layoutSnap = data.layout || defaultMirrorLayoutFromViewport();
                         requestAnimationFrame(function() {
                             requestAnimationFrame(function() {
@@ -880,7 +834,6 @@
                                 var rowsSnap = display.querySelectorAll('.script-row-wrapper');
                                 applyMirrorRowClasses(rowsSnap, data.table, data.rowColors);
                                 applyMirrorRowHeightsAndStretch(data);
-                                if (!hasRowHeights) applyMirrorShortColumnLineBalance(display, visIdx);
                             });
                         });
                     }
@@ -905,6 +858,11 @@
                         applyMirrorPills(data);
                         if (data.layout) applyMirrorLayout(data.layout);
                         void container.offsetHeight;
+                        var rowPayload = getMirrorRowSyncPayload() || {};
+                        if (data.rowHeights && data.rowHeights.length) rowPayload.rowHeights = data.rowHeights;
+                        if (data.rowStretch && data.rowStretch.length) rowPayload.rowStretch = data.rowStretch;
+                        if (typeof data.visibleColumnIndex === 'number') rowPayload.visibleColumnIndex = data.visibleColumnIndex;
+                        if (rowPayload.rowHeights && rowPayload.rowHeights.length) applyMirrorRowHeightsAndStretch(rowPayload);
                     }
                     applyMirrorScrollSync(data);
                     applyMirrorIndicatorGuide(data);
