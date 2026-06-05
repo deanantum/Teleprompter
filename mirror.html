@@ -40,8 +40,6 @@
             padding: 0;
             margin: 0;
             display: block;
-            position: relative;
-            z-index: 1;
         }
         /* One tallest script row between text and red END pill (height set from main layout sync) */
         .mirror-text-runway {
@@ -52,7 +50,7 @@
             pointer-events: none;
             background-color: #000;
         }
-        /* Scroll room below bottom blue pill — at least one mirror viewport (synced from main when larger) */
+        /* Scroll room below bottom blue pill — fixed 100vh (known-good scroll sync) */
         .mirror-bottom-spacer {
             display: block;
             min-height: 100vh;
@@ -70,8 +68,6 @@
             padding: 0 !important;
             margin: 0 !important;
             line-height: 1.1 !important;
-            position: relative;
-            overflow: visible;
         }
         .mirror-table .script-column {
             flex: 0 0 auto;
@@ -87,16 +83,10 @@
             width: var(--mirror-content-width, 100%);
             max-width: var(--mirror-content-width, 100%);
             min-width: 0;
-            position: relative;
-            z-index: 0;
-            overflow: visible;
-            background: transparent !important;
         }
         .mirror-table .cell-content {
             flex: 1;
             display: block;
-            position: relative;
-            z-index: 2;
             line-height: 1.1 !important;
             font-size: inherit;
             word-wrap: break-word;
@@ -109,10 +99,6 @@
             margin: 0;
             min-width: 0;
         }
-        .mirror-table .cell-content * {
-            position: relative;
-            z-index: 1;
-        }
         .mirror-table .cell-content b,
         .mirror-table .cell-content i,
         .mirror-table .cell-content u,
@@ -124,50 +110,32 @@
             display: inline !important;
         }
         .mirror-table .script-row-wrapper.row-lines-same { background-color: #000000 !important; }
-        /* Row color guide: paint glow/fill behind text via ::before (z-index 0), text in .cell-content stays on top */
-        .mirror-table .script-row-wrapper.row-col2-one-more,
-        .mirror-table .script-row-wrapper.row-col3-one-more {
-            position: relative;
-            background: #000000 !important;
+        .mirror-table .script-row-wrapper.row-col2-one-more { background: #000000 !important; }
+        .mirror-table .script-row-wrapper.row-col3-one-more { background: #000000 !important; }
+        .mirror-table .script-row-wrapper.row-col2-more { background-color: #002D04 !important; color: #ffffff !important; }
+        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible .cell-content {
+            background-color: #002D04 !important;
+            color: #ffffff !important;
         }
-        .mirror-table .script-row-wrapper.row-col2-more,
         .mirror-table .script-row-wrapper.row-col3-more,
-        .mirror-table .script-row-wrapper.row-col3-much-more {
-            position: relative;
-            background: transparent !important;
+        .mirror-table .script-row-wrapper.row-col3-much-more { background-color: #531516 !important; color: #ffffff !important; }
+        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible .cell-content,
+        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible .cell-content {
+            background-color: #531516 !important;
+            color: #ffffff !important;
         }
-        .mirror-table .script-row-wrapper.row-col2-more::before,
-        .mirror-table .script-row-wrapper.row-col3-more::before,
-        .mirror-table .script-row-wrapper.row-col3-much-more::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            z-index: -1;
-            pointer-events: none;
-        }
-        .mirror-table .script-row-wrapper.row-col2-more::before { background-color: #002D04; }
-        .mirror-table .script-row-wrapper.row-col3-more::before,
-        .mirror-table .script-row-wrapper.row-col3-much-more::before { background-color: #531516; }
-        .mirror-table .script-row-wrapper.row-col2-more,
-        .mirror-table .script-row-wrapper.row-col3-more,
-        .mirror-table .script-row-wrapper.row-col3-much-more { color: #ffffff !important; }
-        .mirror-table .script-row-wrapper.row-col2-one-more .script-column.mirror-visible::before,
-        .mirror-table .script-row-wrapper.row-col3-one-more .script-column.mirror-visible::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            z-index: -1;
-            pointer-events: none;
-        }
-        .mirror-table .script-row-wrapper.row-col2-one-more .script-column.mirror-visible::before {
+        .mirror-table .script-row-wrapper.row-col2-one-more .script-column.mirror-visible {
             background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
                         linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
-                        transparent;
+                        transparent !important;
         }
-        .mirror-table .script-row-wrapper.row-col3-one-more .script-column.mirror-visible::before {
+        .mirror-table .script-row-wrapper.row-col3-one-more .script-column.mirror-visible {
             background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
                         linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
-                        transparent;
+                        transparent !important;
         }
         /* Match main: line spacing on shorter column fills row when red/green (stretch classes from main) */
         .mirror-table .script-row-wrapper.row-stretch-col2 .script-column.mirror-visible .cell-content,
@@ -567,8 +535,7 @@
                     topRunwayPx: tr,
                     pillGapPx: gap,
                     leaderPx: ts + tr + gap,
-                    textRunwayPx: Math.round(1.4 * rootFs),
-                    bottomSpacerPx: Math.round(ih)
+                    textRunwayPx: Math.round(1.4 * rootFs)
                 };
             }
 
@@ -735,14 +702,12 @@
                 var textRunwayPx = typeof layout.textRunwayPx === 'number' && !isNaN(layout.textRunwayPx)
                     ? Math.max(0, Math.round(layout.textRunwayPx))
                     : 0;
-                var mirrorVh = Math.round(window.innerHeight || document.documentElement.clientHeight || 800);
-                var bottomSpacerPx = typeof layout.bottomSpacerPx === 'number' && !isNaN(layout.bottomSpacerPx)
-                    ? Math.max(0, Math.round(layout.bottomSpacerPx))
-                    : 0;
-                /* Mirror is fullscreen — keep at least one viewport below blue pill so scroll matches main */
-                bottomSpacerPx = Math.max(bottomSpacerPx, mirrorVh);
                 setBlackBand(textRunway, textRunwayPx);
-                setBlackBand(bottomSpacer, bottomSpacerPx);
+                /* Bottom gap: always 100vh on mirror — do not sync from main (different window height breaks scroll) */
+                if (bottomSpacer) {
+                    var mirrorVh = Math.round(window.innerHeight || document.documentElement.clientHeight || 800);
+                    setBlackBand(bottomSpacer, mirrorVh);
+                }
 
                 if (pillTop) {
                     pillTop.style.minHeight = '';
