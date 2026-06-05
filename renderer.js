@@ -4118,12 +4118,6 @@ function indexToColumnLetter(colIndex) {
             }
         }
 
-        window.refreshTeleprompterScrollChrome = function(opts) {
-            const o = opts || { preserveScroll: true };
-            updateTopScrollChrome(o);
-            updateBottomScrollChrome(o);
-        };
-
 		function syncMirrorByPixels() {
         if (isUpdatingFromMirrorScroll || !mirrorWindow || mirrorWindow.closed) return;
         const scrollOnly = isTeleprompting;
@@ -4131,7 +4125,6 @@ function indexToColumnLetter(colIndex) {
             type: 'pixelSync',
             scrollOnly,
             ...getMirrorScrollSyncPayload(),
-            bottomRunwayPx: getMirrorBottomRunwayPx(),
             indicatorPosition: getIndicatorPositionPercent(),
             indicatorViewportPx: getIndicatorViewportOffsetPx()
         };
@@ -9749,61 +9742,12 @@ function getMirrorScrollSyncPayload() {
     const scriptOffsetTop = Math.round(teleprompterText.offsetTop || 0);
     const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
     const rowOriginYs = rows.map((row) => Math.round(scriptOffsetTop + (row.offsetTop || 0)));
-    const mainMaxScroll = Math.max(0, Math.round(view.scrollHeight - view.clientHeight));
     return {
         contentScrollY,
         scriptOffsetTop,
         rowOriginYs,
-        scrollTop: contentScrollY,
-        mainMaxScroll
+        scrollTop: contentScrollY
     };
-}
-
-/** Bottom scroll room below script on main (runway + bottom spacer) — mirror-runway must match for short scripts. */
-function getMirrorBottomRunwayPx() {
-    const view = document.getElementById('teleprompter-view');
-    const ih = window.innerHeight || document.documentElement.clientHeight || 800;
-    const rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-    if (!view) return Math.round(ih * 0.5) + Math.round(1.4 * rootFs);
-    void view.offsetHeight;
-    const scriptRunway = view.querySelector('.teleprompter-runway');
-    const bottomSpacer = view.querySelector('.teleprompter-bottom-spacer');
-    let runwayPx = scriptRunway ? Math.round(scriptRunway.offsetHeight) : Math.round(1.4 * rootFs);
-    let spacerPx = bottomSpacer ? Math.round(bottomSpacer.offsetHeight) : 0;
-
-    if (view.classList.contains('has-file')) {
-        const viewH = Math.max(0, view.clientHeight || 0);
-        const indicatorEl = document.getElementById('indicator-wrapper');
-        let indicatorPx = Math.round(viewH * 0.5);
-        if (indicatorEl) {
-            const viewRect = view.getBoundingClientRect();
-            const ir = indicatorEl.getBoundingClientRect();
-            indicatorPx = Math.round(ir.top - viewRect.top + ir.height / 2);
-            indicatorPx = Math.max(0, Math.min(viewH, indicatorPx));
-        }
-        const minChrome = Math.round(4 * rootFs);
-        const runwayAfterPill = Math.max(minChrome, Math.round(viewH - indicatorPx));
-        const overviewMode = document.body.classList.contains('overview-mode');
-        let neededSpacerPx = overviewMode ? runwayAfterPill : Math.max(Math.round(viewH * 0.5), runwayAfterPill);
-        const bottomPill = document.getElementById('filename-pill-bottom');
-        if (bottomPill && !bottomPill.classList.contains('hidden')) {
-            const viewRect = view.getBoundingClientRect();
-            const pillRect = bottomPill.getBoundingClientRect();
-            const pillHeight = Math.max(1, pillRect.height || bottomPill.offsetHeight || 0);
-            const scrollTop = view.scrollTop || 0;
-            const pillBottomInContent = scrollTop + pillRect.bottom - viewRect.top;
-            const contentBelowPillBottom = Math.max(0, view.scrollHeight - pillBottomInContent);
-            if (contentBelowPillBottom < runwayAfterPill) {
-                neededSpacerPx = Math.max(
-                    neededSpacerPx,
-                    runwayAfterPill - contentBelowPillBottom + Math.round(0.35 * pillHeight)
-                );
-            }
-        }
-        if (spacerPx < neededSpacerPx) spacerPx = neededSpacerPx;
-    }
-    if (spacerPx < 1) spacerPx = Math.round(ih * 0.5);
-    return runwayPx + spacerPx;
 }
 
 function getSecondMonitorPosition() {
@@ -10194,9 +10138,6 @@ extendMonitorButton.onclick = async () => {
                     /* Let row heights be re-measured from 12px content so we don't keep tall rows (no huge gaps) */
                 }
                 syncColumnWidths();
-                if (typeof window.refreshTeleprompterScrollChrome === 'function') {
-                    window.refreshTeleprompterScrollChrome({ preserveScroll: true });
-                }
                 syncMirrorStyles(); /* Font etc. before content so mirror measures with correct styles */
                 refreshMirrorData();
                 const attemptRestore = () => {
@@ -10315,8 +10256,7 @@ function getMirrorLayoutMetrics() {
         topSpacerPx: ts,
         topRunwayPx: tr,
         pillGapPx,
-        pillTopPx: 0,
-        bottomRunwayPx: getMirrorBottomRunwayPx()
+        pillTopPx: 0
     };
 }
 
