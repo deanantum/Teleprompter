@@ -214,7 +214,7 @@
             border-radius: 9999px;
             line-height: 1.4;
             font-weight: 500;
-            margin-bottom: 12px;
+            margin-bottom: 0;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -283,6 +283,7 @@
     <script>
         (function() {
             var debugMode = /(?:^|[?&])debug=1(?:&|$)/.test(window.location.search);
+            var lastMirrorLayout = null;
 
             function isMirrorFullscreen() {
                 return !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
@@ -631,16 +632,42 @@
                     if (data.staySwitchPillFontSize) staySwitchEl.style.setProperty('font-size', data.staySwitchPillFontSize, 'important');
                     if (data.staySwitchPillFontFamily) staySwitchEl.style.setProperty('font-family', data.staySwitchPillFontFamily, 'important');
                 }
+                if (lastMirrorLayout) {
+                    requestAnimationFrame(function() {
+                        applyMirrorLayout(lastMirrorLayout);
+                    });
+                }
                 requestAnimationFrame(function() {
                     shrinkMirrorPillToFit(topPillEl);
                     shrinkMirrorPillToFit(bottomPillEl);
                     shrinkMirrorPillToFit(endPillEl);
                     shrinkMirrorPillToFit(staySwitchEl);
+                    if (lastMirrorLayout) pinMirrorContentOffset(lastMirrorLayout);
                 });
+            }
+
+            /** Match main #teleprompter-text.offsetTop so row scroll sync stays aligned. */
+            function pinMirrorContentOffset(layout) {
+                if (!layout) return;
+                var beforeScript = layout.beforeScriptPx;
+                if (typeof beforeScript !== 'number' || isNaN(beforeScript)) return;
+                var content = document.getElementById('mirror-content');
+                var pillTop = document.getElementById('mirror-pill-top');
+                if (!content || (pillTop && pillTop.classList.contains('hidden'))) return;
+                void pillTop && pillTop.offsetHeight;
+                void content.offsetHeight;
+                var actual = Math.round(content.offsetTop || 0);
+                var adjust = Math.round(beforeScript) - actual;
+                if (adjust !== 0) {
+                    content.style.setProperty('margin-top', adjust + 'px', 'important');
+                } else {
+                    content.style.removeProperty('margin-top');
+                }
             }
 
             function applyMirrorLayout(layout) {
                 if (!layout) layout = defaultMirrorLayoutFromViewport();
+                lastMirrorLayout = layout;
                 var chrome = ensureMirrorTopChrome();
                 var spacer = chrome.spacer;
                 var runway = chrome.runway;
@@ -704,11 +731,18 @@
                     if (pillTop) {
                         if (gap > 0) pillTop.style.setProperty('margin-top', gap + 'px', 'important');
                         else pillTop.style.removeProperty('margin-top');
+                        var pillMb = typeof layout.pillBottomGapPx === 'number' && !isNaN(layout.pillBottomGapPx)
+                            ? Math.max(0, Math.round(layout.pillBottomGapPx))
+                            : 0;
+                        if (pillMb > 0) pillTop.style.setProperty('margin-bottom', pillMb + 'px', 'important');
+                        else pillTop.style.removeProperty('margin-bottom');
                     }
                 }
+                if (!pillHidden) pinMirrorContentOffset(layout);
                 requestAnimationFrame(function() {
                     shrinkMirrorPillToFit(pillTop);
                     shrinkMirrorPillToFit(document.getElementById('mirror-pill-bottom'));
+                    if (!pillHidden) pinMirrorContentOffset(layout);
                 });
             }
 
