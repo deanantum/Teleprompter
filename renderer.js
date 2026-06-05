@@ -9825,28 +9825,10 @@ function getMirrorScrollSyncPayload() {
     const scriptOffsetTop = Math.round(teleprompterText.offsetTop || 0);
     const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
     const rowOriginYs = rows.map((row) => Math.round(scriptOffsetTop + (row.offsetTop || 0)));
-
-    // Align scroll using the first row that actually has visible content in the mirror's visible column.
-    // XLSX imports sometimes start with blank rows for the chosen visible column, which shifts the sync.
-    let rowOriginIndex = 0;
-    if (rows.length > 0) {
-        const maxCols = Math.max(...rows.map((r) => (r.querySelectorAll('.script-column') || []).length));
-        const visibleColumnIndex = Math.max(0, Math.min(maxCols - 1, getLastVisibleColumnIndex(maxCols)));
-        for (let i = 0; i < rows.length; i++) {
-            const cols = rows[i].querySelectorAll('.script-column');
-            const cell = cols && cols.length > visibleColumnIndex ? cols[visibleColumnIndex] : null;
-            const t = (cell?.textContent || '').replace(/\u00A0/g, ' ').trim();
-            if (t) {
-                rowOriginIndex = i;
-                break;
-            }
-        }
-    }
     return {
         contentScrollY,
         scriptOffsetTop,
         rowOriginYs,
-        rowOriginIndex,
         scrollTop: contentScrollY
     };
 }
@@ -10307,24 +10289,6 @@ function pushMirrorPillLabels() {
     } catch (_) {}
 }
 
-/** Tallest script row on main — mirror text runway (gap above red END pill) matches one row. */
-function getMaxScriptRowHeightPx() {
-    let maxH = 0;
-    if (Array.isArray(measuredRowHeights) && measuredRowHeights.length > 0) {
-        measuredRowHeights.forEach((h) => {
-            if (typeof h === 'number' && h > maxH) maxH = h;
-        });
-    }
-    if (teleprompterText) {
-        teleprompterText.querySelectorAll('.script-row-wrapper').forEach((row) => {
-            const h = Math.round(row.getBoundingClientRect().height || row.offsetHeight || 0);
-            if (h > maxH) maxH = h;
-        });
-    }
-    const rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-    return Math.max(maxH, Math.round(1.4 * rootFs));
-}
-
 /** Black band above blue pill on main — mirror must match this px height (second window cannot use vh). */
 function getMirrorLayoutMetrics() {
     const view = document.getElementById('teleprompter-view');
@@ -10383,16 +10347,6 @@ function getMirrorLayoutMetrics() {
     if (leaderPx < ts + tr + pillGapPx) leaderPx = ts + tr + pillGapPx;
 
     const beforeScriptPx = Math.max(0, Math.round(text.offsetTop));
-    const pillBottomGapPx = pillDisplayed && pillCs
-        ? Math.max(0, Math.round(parseFloat(pillCs.marginBottom) || 0))
-        : 0;
-
-    const textRunwayEl = view.querySelector('.teleprompter-runway');
-    let textRunwayPx = getMaxScriptRowHeightPx();
-    if (textRunwayEl) {
-        const measuredRunway = Math.round(textRunwayEl.offsetHeight || 0);
-        if (measuredRunway > 0) textRunwayPx = Math.max(textRunwayPx, measuredRunway);
-    }
 
     return {
         leaderPx,
@@ -10401,9 +10355,7 @@ function getMirrorLayoutMetrics() {
         topSpacerPx: ts,
         topRunwayPx: tr,
         pillGapPx,
-        pillBottomGapPx,
-        pillTopPx: 0,
-        textRunwayPx
+        pillTopPx: 0
     };
 }
 
