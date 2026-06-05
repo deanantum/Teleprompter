@@ -193,7 +193,7 @@ body.format-pickup-mode #teleprompter-text,
 }
 .filename-pill-top {
     margin-top: 1.4em;
-    margin-bottom: 12px;
+    margin-bottom: 0;
 }
 .filename-pill-bottom {
     margin-top: 0; /* Gap from stay-switch-pill margin-bottom */
