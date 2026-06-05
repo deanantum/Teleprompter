@@ -3919,9 +3919,11 @@ document.addEventListener('DOMContentLoaded', function() {
             rowHeights: measuredRowHeights,
             ...buildMirrorRowStretchPayload()
         }, '*');
+        pushMirrorLeaderLayout();
         requestAnimationFrame(() => {
             syncMirrorByPixels();
             syncMirrorStyles();
+            pushMirrorLeaderLayout();
         });
     }
 
@@ -4250,6 +4252,7 @@ function indexToColumnLetter(colIndex) {
                 rowHeights: measuredRowHeights,
                 ...buildMirrorRowStretchPayload()
             }, '*');
+            pushMirrorLeaderLayout();
         }
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
     }
@@ -4316,6 +4319,7 @@ function indexToColumnLetter(colIndex) {
                 rowHeights: measuredRowHeights,
                 ...buildMirrorRowStretchPayload()
             }, '*');
+            pushMirrorLeaderLayout();
         }
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
     }
@@ -4965,6 +4969,7 @@ function indexToColumnLetter(colIndex) {
             ...stretchPayload,
             rowHeights: measuredRowHeights.length === rows.length ? measuredRowHeights : null
         }, '*');
+        pushMirrorLeaderLayout();
     }
 
     function refreshMirrorData() {
@@ -10281,6 +10286,24 @@ function pushMirrorPillLabels() {
     } catch (_) {}
 }
 
+/** Tallest script row on main — mirror text runway (gap above red END pill) matches one row. */
+function getMaxScriptRowHeightPx() {
+    let maxH = 0;
+    if (Array.isArray(measuredRowHeights) && measuredRowHeights.length > 0) {
+        measuredRowHeights.forEach((h) => {
+            if (typeof h === 'number' && h > maxH) maxH = h;
+        });
+    }
+    if (teleprompterText) {
+        teleprompterText.querySelectorAll('.script-row-wrapper').forEach((row) => {
+            const h = Math.round(row.getBoundingClientRect().height || row.offsetHeight || 0);
+            if (h > maxH) maxH = h;
+        });
+    }
+    const rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    return Math.max(maxH, Math.round(1.4 * rootFs));
+}
+
 /** Black band above blue pill on main — mirror must match this px height (second window cannot use vh). */
 function getMirrorLayoutMetrics() {
     const view = document.getElementById('teleprompter-view');
@@ -10340,6 +10363,17 @@ function getMirrorLayoutMetrics() {
 
     const beforeScriptPx = Math.max(0, Math.round(text.offsetTop));
 
+    const textRunwayEl = view.querySelector('.teleprompter-runway');
+    let textRunwayPx = getMaxScriptRowHeightPx();
+    if (textRunwayEl) {
+        const measuredRunway = Math.round(textRunwayEl.offsetHeight || 0);
+        if (measuredRunway > 0) textRunwayPx = Math.max(textRunwayPx, measuredRunway);
+    }
+
+    const bottomSpacerEl = view.querySelector('.teleprompter-bottom-spacer');
+    let bottomSpacerPx = bottomSpacerEl ? Math.round(bottomSpacerEl.offsetHeight || 0) : 0;
+    if (bottomSpacerPx < 1) bottomSpacerPx = Math.round(ih * 0.5);
+
     return {
         leaderPx,
         abovePillPx: leaderPx,
@@ -10347,7 +10381,9 @@ function getMirrorLayoutMetrics() {
         topSpacerPx: ts,
         topRunwayPx: tr,
         pillGapPx,
-        pillTopPx: 0
+        pillTopPx: 0,
+        textRunwayPx,
+        bottomSpacerPx
     };
 }
 
