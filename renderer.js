@@ -8374,10 +8374,15 @@ async function buildXlsxScriptContainerHtmlFromWorkbook(arrayBuffer, workbook) {
     let html = '<div class="script-container">';
     // XLSX often includes fully-empty leading rows; we skip them so there isn't a visible "gap"
     // under the top filename pill (empty rows get nbsp later to preserve row height).
+    //
+    // Additionally, Excel exports can include "internal-only" cue markers like "|v12|"
+    // which later get stripped/converted into nbsp in content columns. Those should be
+    // treated like empty rows for initial layout.
     const stripHtmlToText = (s) => String(s || '')
         .replace(/<[^>]*>/g, '')
         .replace(/\u00A0/g, ' ')
         .trim();
+    const pipeVMarkerOnlyRx = /^\|v(?:\u2011|-)?[A-Za-z0-9_.]+\|?$/i;
     let appendedAnyRow = false;
     json.forEach((row, rIdx) => {
         const cellInners = [];
@@ -8388,7 +8393,11 @@ async function buildXlsxScriptContainerHtmlFromWorkbook(arrayBuffer, workbook) {
             const plain = row[colIdx] != null ? String(row[colIdx]).trim() : '';
             const inner = xlsxCellContentToInnerHtml(plain, richMap.get(addr));
             cellInners.push(inner);
-            if (!rowHasAnyText && stripHtmlToText(inner)) rowHasAnyText = true;
+            if (rowHasAnyText) return;
+            const t = stripHtmlToText(inner);
+            if (!t) return;
+            if (pipeVMarkerOnlyRx.test(t)) return; // marker-only rows later become nbsp → visually empty
+            rowHasAnyText = true;
         });
 
         // Trim only leading empty rows.
