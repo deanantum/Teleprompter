@@ -3899,7 +3899,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 row.style.height = h + 'px';
             }
         });
-        mirrorWindow.postMessage({ type: 'updateRowHeights', rowHeights: measuredRowHeights }, '*');
+        mirrorWindow.postMessage({
+            type: 'updateRowHeights',
+            rowHeights: measuredRowHeights,
+            ...buildMirrorRowStretchPayload()
+        }, '*');
         requestAnimationFrame(() => {
             syncMirrorByPixels();
             syncMirrorStyles();
@@ -4224,7 +4228,11 @@ function indexToColumnLetter(colIndex) {
             }
         });
         if (mirrorWindow && !mirrorWindow.closed) {
-            mirrorWindow.postMessage({ type: 'updateRowHeights', rowHeights: measuredRowHeights }, '*');
+            mirrorWindow.postMessage({
+                type: 'updateRowHeights',
+                rowHeights: measuredRowHeights,
+                ...buildMirrorRowStretchPayload()
+            }, '*');
         }
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
     }
@@ -4286,7 +4294,11 @@ function indexToColumnLetter(colIndex) {
         applyBroadcastingVisibility();
         syncColumnWidths();
         if (mirrorWindow && !mirrorWindow.closed) {
-            mirrorWindow.postMessage({ type: 'updateRowHeights', rowHeights: measuredRowHeights }, '*');
+            mirrorWindow.postMessage({
+                type: 'updateRowHeights',
+                rowHeights: measuredRowHeights,
+                ...buildMirrorRowStretchPayload()
+            }, '*');
         }
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
     }
@@ -4574,6 +4586,9 @@ function indexToColumnLetter(colIndex) {
                         sel.addRange(savedNonCollapsedRange.cloneRange());
                     }
                 } catch (_) {}
+            }
+            if (mirrorWindow && !mirrorWindow.closed && document.body.classList.contains('broadcasting')) {
+                pushMirrorRowStretchUpdate();
             }
         }
     }
@@ -4880,6 +4895,61 @@ function indexToColumnLetter(colIndex) {
         return raw || '';
     }
 
+    function buildMirrorRowMeta(row, rowIndex) {
+        const cachedColor = rowColorsCache.length > rowIndex ? rowColorsCache[rowIndex] : '';
+        const colorClass = (cachedColor && ROW_COLOR_CLASSES.includes(cachedColor))
+            ? cachedColor
+            : (ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '');
+        const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
+        const stretchParts = ROW_STRETCH_MARKERS.filter(c => row.classList.contains(c));
+        const rowClass = [colorClass, keywordPill, ...stretchParts].filter(Boolean).join(' ');
+        let stretchCol = 0;
+        if (row.classList.contains('row-stretch-col2')) stretchCol = 2;
+        else if (row.classList.contains('row-stretch-col3')) stretchCol = 3;
+        let stretchLineHeight = '';
+        if (stretchCol) {
+            const stretchCell = row.querySelector(`.script-column:nth-child(${stretchCol}) .cell-content`);
+            if (stretchCell?.hasAttribute('data-tp-line-balance')) {
+                stretchLineHeight = (stretchCell.style.getPropertyValue('line-height') || '').trim();
+                if (!stretchLineHeight) {
+                    const lhPx = parseFloat(window.getComputedStyle(stretchCell).lineHeight);
+                    if (!Number.isNaN(lhPx) && lhPx > 0) stretchLineHeight = lhPx + 'px';
+                }
+            }
+        }
+        return {
+            rowClass,
+            font12: row.classList.contains('row-font-12'),
+            stretchCol,
+            stretchLineHeight
+        };
+    }
+
+    function buildMirrorRowStretchPayload() {
+        const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
+        if (rows.length === 0) return { rowStretch: [], visibleColumnIndex: 0 };
+        const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
+        return {
+            rowStretch: rows.map((row, i) => {
+                const m = buildMirrorRowMeta(row, i);
+                return { stretchCol: m.stretchCol, stretchLineHeight: m.stretchLineHeight };
+            }),
+            visibleColumnIndex: getLastVisibleColumnIndex(maxCols)
+        };
+    }
+
+    function pushMirrorRowStretchUpdate() {
+        if (!mirrorWindow || mirrorWindow.closed) return;
+        const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
+        if (rows.length === 0) return;
+        const stretchPayload = buildMirrorRowStretchPayload();
+        mirrorWindow.postMessage({
+            type: 'updateRowStretch',
+            ...stretchPayload,
+            rowHeights: measuredRowHeights.length === rows.length ? measuredRowHeights : null
+        }, '*');
+    }
+
     function refreshMirrorData() {
         if (!mirrorWindow || mirrorWindow.closed) return;
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
@@ -4899,30 +4969,25 @@ function indexToColumnLetter(colIndex) {
                 /* e.g. font ribbon cleared heights async — mirror would get no rowHeights and collapse rows */
                 measureRowHeightsWithProbeForBroadcasting();
             }
-            if (broadcastEditMode && rows.length > 0) {
-                buildCharCountsPerRow();
-                applyRowColors();
-            }
+            buildCharCountsPerRow();
+            applyRowColors();
+            if (typeof applyKeywordPills === 'function') applyKeywordPills();
+            if (!document.body.classList.contains('overview-mode')) applyRowShortColumnLineSpacing();
         }
         /* Copy full table to mirror (all columns); mirror shows the last visible column (per file checkboxes). */
         const pillPayload = getMirrorPillPayload();
         if (rows.length > 0 && isBroadcasting) {
             const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
             const visibleColumnIndex = getLastVisibleColumnIndex(maxCols);
-            const rowData = rows.map(row => {
+            const rowData = rows.map((row, rowIndex) => {
                 const cols = row.querySelectorAll('.script-column');
                 const cells = Array.from(cols).map(col => {
                     const c = col.querySelector('.cell-content') || col;
                     return getMirrorCellHtml(c);
                 });
-                const colorClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
-                const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
-                const stretchParts = ROW_STRETCH_MARKERS.filter(c => row.classList.contains(c));
-                const rowClass = [colorClass, keywordPill, ...stretchParts].filter(Boolean).join(' ');
-                const font12 = row.classList.contains('row-font-12');
-                return { cells, rowClass, font12 };
+                return { cells, ...buildMirrorRowMeta(row, rowIndex) };
             });
-            const rowColors = (rowColorsCache.length === rows.length) ? rowColorsCache : rows.map(row => ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '');
+            const rowColors = (rowColorsCache.length === rows.length) ? rowColorsCache : rows.map((row, i) => buildMirrorRowMeta(row, i).rowClass.split(' ').find(c => ROW_COLOR_CLASSES.includes(c)) || '');
             const rowFont12 = (rowFont12Cache.length === rows.length) ? rowFont12Cache : rows.map(row => row.classList.contains('row-font-12'));
             const rowHeights = (measuredRowHeights.length === rows.length) ? measuredRowHeights : null;
             mirrorWindow.postMessage({
@@ -4937,22 +5002,17 @@ function indexToColumnLetter(colIndex) {
                 layout: getMirrorLayoutMetrics()
             }, '*');
         } else if (rows.length > 0) {
-            const rowData = rows.map(row => {
+            const rowData = rows.map((row, rowIndex) => {
                 const cols = row.querySelectorAll('.script-column');
                 const cells = Array.from(cols).map(col => {
                     const c = col.querySelector('.cell-content') || col;
                     return getMirrorCellHtml(c);
                 });
-                const colorClass = ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '';
-                const keywordPill = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'].find(c => row.classList.contains(c)) || '';
-                const stretchParts = ROW_STRETCH_MARKERS.filter(c => row.classList.contains(c));
-                const rowClass = [colorClass, keywordPill, ...stretchParts].filter(Boolean).join(' ');
-                const font12 = row.classList.contains('row-font-12');
-                return { cells, rowClass, font12 };
+                return { cells, ...buildMirrorRowMeta(row, rowIndex) };
             });
             const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
             const visibleColumnIndex = getLastVisibleColumnIndex(maxCols);
-            const rowColors = rows.map(row => ROW_COLOR_CLASSES.find(c => row.classList.contains(c)) || '');
+            const rowColors = rows.map((row, i) => buildMirrorRowMeta(row, i).rowClass.split(' ').find(c => ROW_COLOR_CLASSES.includes(c)) || '');
             const rowFont12 = rows.map(row => row.classList.contains('row-font-12'));
             mirrorWindow.postMessage({
                 type: 'loadContent',
