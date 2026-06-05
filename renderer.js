@@ -10361,6 +10361,9 @@ function getMirrorLayoutMetrics() {
     if (leaderPx < ts + tr + pillGapPx) leaderPx = ts + tr + pillGapPx;
 
     const beforeScriptPx = Math.max(0, Math.round(text.offsetTop));
+    const pillBottomGapPx = pillDisplayed && pillCs
+        ? Math.max(0, Math.round(parseFloat(pillCs.marginBottom) || 0))
+        : 0;
 
     const textRunwayEl = view.querySelector('.teleprompter-runway');
     let textRunwayPx = getMaxScriptRowHeightPx();
@@ -10376,6 +10379,7 @@ function getMirrorLayoutMetrics() {
         topSpacerPx: ts,
         topRunwayPx: tr,
         pillGapPx,
+        pillBottomGapPx,
         pillTopPx: 0,
         textRunwayPx
     };
