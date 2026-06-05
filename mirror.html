@@ -257,6 +257,32 @@
             margin-top: 0;
         }
         .mirror-filename-pill.hidden { display: none !important; }
+        /* Red END + green STAY/SWITCH (match main #pre-stay-end-pill / #stay-switch-pill) */
+        .mirror-stay-switch-pill {
+            display: block;
+            width: 100%;
+            padding: 0 0 0 16px;
+            margin-top: 0;
+            margin-bottom: 1.4em;
+            background-color: #22c55e;
+            color: #000000;
+            border-radius: 9999px;
+            line-height: 1.4;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            box-sizing: border-box;
+            flex-shrink: 0;
+            position: relative;
+            z-index: 1;
+            -webkit-text-fill-color: currentColor;
+        }
+        .mirror-stay-switch-pill.mirror-end-pill {
+            background-color: #dc2626;
+            margin-bottom: 0.55em;
+        }
+        .mirror-stay-switch-pill.hidden { display: none !important; }
         /* Same stack as main #teleprompter-view: spacer → runway → pill; heights set inline from main offsetHeight (like row heights). */
         .mirror-top-spacer,
         .mirror-top-runway {
@@ -275,6 +301,8 @@
         <div id="mirror-pill-top" class="mirror-filename-pill hidden" aria-hidden="true"></div>
         <div id="mirror-content" class="mirror-table"></div>
         <div id="mirror-text-runway" class="mirror-text-runway" aria-hidden="true"></div>
+        <div id="mirror-pre-stay-end-pill" class="mirror-stay-switch-pill mirror-end-pill hidden" aria-hidden="true"></div>
+        <div id="mirror-stay-switch-pill" class="mirror-stay-switch-pill hidden" aria-hidden="true"></div>
         <div id="mirror-pill-bottom" class="mirror-filename-pill mirror-filename-pill-bottom hidden" aria-hidden="true"></div>
         <div id="mirror-bottom-spacer" class="mirror-bottom-spacer" aria-hidden="true"></div>
     </div>
@@ -340,8 +368,15 @@
             window.addEventListener('load', function() {
                 if (!debugMode) scheduleMirrorFullscreenAttempts();
             });
+            function requestMainWindowFocus() {
+                if (window.opener && !window.opener.closed) {
+                    try { window.opener.postMessage({ type: 'mirrorFocusReclaim' }, '*'); } catch (_) {}
+                }
+            }
+
             window.addEventListener('focus', function() {
                 if (!debugMode) enterFullscreen();
+                requestMainWindowFocus();
             });
             window.addEventListener('pointerdown', function() {
                 if (!debugMode) enterFullscreen();
@@ -350,6 +385,7 @@
                 if (debugMode) return;
                 if (e.key === 'Enter' || e.key === ' ') {
                     enterFullscreen();
+                    requestMainWindowFocus();
                 }
             });
         })();
@@ -590,9 +626,37 @@
                     data.bottomPillFontSize,
                     data.bottomPillFontFamily
                 );
+                var endPillEl = document.getElementById('mirror-pre-stay-end-pill');
+                if (endPillEl) {
+                    var endLabel = data.endPill !== undefined && data.endPill !== null ? String(data.endPill).trim() : '';
+                    endPillEl.textContent = endLabel;
+                    endPillEl.classList.toggle('hidden', !endLabel);
+                    endPillEl.setAttribute('aria-hidden', endLabel ? 'false' : 'true');
+                    if (endLabel) {
+                        endPillEl.style.setProperty('color', '#000000', 'important');
+                        endPillEl.style.setProperty('-webkit-text-fill-color', 'currentColor', 'important');
+                    }
+                    if (data.endPillFontSize) endPillEl.style.setProperty('font-size', data.endPillFontSize, 'important');
+                    if (data.endPillFontFamily) endPillEl.style.setProperty('font-family', data.endPillFontFamily, 'important');
+                }
+                var staySwitchEl = document.getElementById('mirror-stay-switch-pill');
+                if (staySwitchEl) {
+                    var stayLabel = data.staySwitchPill !== undefined && data.staySwitchPill !== null ? String(data.staySwitchPill).trim() : '';
+                    staySwitchEl.textContent = stayLabel;
+                    staySwitchEl.classList.toggle('hidden', !stayLabel);
+                    staySwitchEl.setAttribute('aria-hidden', stayLabel ? 'false' : 'true');
+                    if (stayLabel) {
+                        staySwitchEl.style.setProperty('color', '#000000', 'important');
+                        staySwitchEl.style.setProperty('-webkit-text-fill-color', 'currentColor', 'important');
+                    }
+                    if (data.staySwitchPillFontSize) staySwitchEl.style.setProperty('font-size', data.staySwitchPillFontSize, 'important');
+                    if (data.staySwitchPillFontFamily) staySwitchEl.style.setProperty('font-family', data.staySwitchPillFontFamily, 'important');
+                }
                 requestAnimationFrame(function() {
                     shrinkMirrorPillToFit(topPillEl);
                     shrinkMirrorPillToFit(bottomPillEl);
+                    shrinkMirrorPillToFit(endPillEl);
+                    shrinkMirrorPillToFit(staySwitchEl);
                 });
             }
 
@@ -892,6 +956,7 @@
 
             ensureMirrorTopChrome();
             postToMain({ type: 'mirrorReady' });
+            postToMain({ type: 'mirrorFocusReclaim' });
             scheduleMirrorViewportReport();
         })();
     </script>
