@@ -2513,7 +2513,11 @@ document.addEventListener('DOMContentLoaded', function() {
             syncColumnWidths(true);
             measureRowHeightsFromContent();
             applyRowShortColumnLineSpacing();
-            if (mirrorWindow && !mirrorWindow.closed) syncMirrorStyles();
+            if (mirrorWindow && !mirrorWindow.closed) {
+                refreshMirrorData();
+                syncMirrorStyles();
+                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+            }
         }
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
         if (typeof shrinkAllPillsToFit === 'function') shrinkAllPillsToFit();
@@ -9821,10 +9825,28 @@ function getMirrorScrollSyncPayload() {
     const scriptOffsetTop = Math.round(teleprompterText.offsetTop || 0);
     const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
     const rowOriginYs = rows.map((row) => Math.round(scriptOffsetTop + (row.offsetTop || 0)));
+
+    // Align scroll using the first row that actually has visible content in the mirror's visible column.
+    // XLSX imports sometimes start with blank rows for the chosen visible column, which shifts the sync.
+    let rowOriginIndex = 0;
+    if (rows.length > 0) {
+        const maxCols = Math.max(...rows.map((r) => (r.querySelectorAll('.script-column') || []).length));
+        const visibleColumnIndex = Math.max(0, Math.min(maxCols - 1, getLastVisibleColumnIndex(maxCols)));
+        for (let i = 0; i < rows.length; i++) {
+            const cols = rows[i].querySelectorAll('.script-column');
+            const cell = cols && cols.length > visibleColumnIndex ? cols[visibleColumnIndex] : null;
+            const t = (cell?.textContent || '').replace(/\u00A0/g, ' ').trim();
+            if (t) {
+                rowOriginIndex = i;
+                break;
+            }
+        }
+    }
     return {
         contentScrollY,
         scriptOffsetTop,
         rowOriginYs,
+        rowOriginIndex,
         scrollTop: contentScrollY
     };
 }
@@ -10406,6 +10428,7 @@ function getMirrorStylePayload() {
     let fontSize = mainStyle.fontSize;
     let fontFamily = mainStyle.fontFamily;
     let lineHeight = mainStyle.lineHeight;
+    let fontColor = mainStyle.color;
     /* When broadcasting the last column is hidden; sample visible script column so mirror font matches what's on main. */
     const scriptCols = document.body.classList.contains('broadcasting')
         ? teleprompterText.querySelectorAll('.script-row-wrapper .script-column:not(.broadcast-hidden)')
@@ -10472,6 +10495,7 @@ function getMirrorStylePayload() {
         fontSize: fontSize,
         fontFamily: fontFamily,
         lineHeight: lineHeight,
+        fontColor: fontColor,
         paddingTop: cellStyle ? cellStyle.paddingTop : null,
         paddingRight: cellStyle ? cellStyle.paddingRight : null,
         paddingBottom: cellStyle ? cellStyle.paddingBottom : null,
