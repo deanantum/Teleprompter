@@ -325,9 +325,30 @@
                 return div.innerHTML;
             }
 
+            /** Decode &lt; &gt; &amp; &quot; &#39; &nbsp; numeric entities, including double-encoded (&amp;gt;). */
+            function decodeHtmlEntitiesFully(str) {
+                var prev = String(str || '');
+                var textarea = document.createElement('textarea');
+                for (var i = 0; i < 6; i++) {
+                    textarea.innerHTML = prev;
+                    var next = textarea.value;
+                    if (next === prev) break;
+                    prev = next;
+                }
+                return prev;
+            }
+
+            function mirrorCellHasHtmlMarkup(raw) {
+                return /<[a-zA-Z][^>]*>/.test(String(raw || ''));
+            }
+
+            function sanitizeMirrorCellHtml(raw) {
+                return String(raw || '').replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+            }
+
             function mirrorCellHasVisibleText(raw) {
                 var probe = document.createElement('div');
-                probe.innerHTML = raw;
+                probe.innerHTML = sanitizeMirrorCellHtml(raw);
                 return !!(probe.textContent || '').replace(/\u00a0/g, ' ').trim();
             }
 
@@ -336,10 +357,13 @@
                 var raw = String(cell).trim();
                 if (!raw) return '\u00A0';
                 if (!mirrorCellHasVisibleText(raw)) return '\u00A0';
-                if (raw.indexOf('<') === -1) {
-                    return escapeHtml(raw).replace(/\n/g, '<br>');
+                if (mirrorCellHasHtmlMarkup(raw)) {
+                    var box = document.createElement('div');
+                    box.innerHTML = sanitizeMirrorCellHtml(raw);
+                    return box.innerHTML;
                 }
-                return raw.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+                var decoded = decodeHtmlEntitiesFully(raw);
+                return escapeHtml(decoded).replace(/\n/g, '<br>');
             }
 
             function mirrorBalanceColWidthPx(col) {
