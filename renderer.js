@@ -7635,12 +7635,13 @@ function insertOpenFileLineBreaksPlainTextCore(text) {
         return `${ELLIPSIS_PLACEHOLDER_PREFIX}${id}${ELLIPSIS_PLACEHOLDER_SUFFIX}`;
     });
     /* Only break when more text follows (not at end of cell — avoids extra blank row on re-split) */
+    const TP_BREAK_HAS_TEXT_AHEAD = `(?=(?:${TP_BREAK_WS}+|[,.;:!?]+${TP_BREAK_WS}*)\\S)`;
     t = t.replace(
-        new RegExp(`([.?!])(?=${TP_BREAK_WS}|[,.;:!?])${TP_PIPEV_SAME_LINE_AHEAD_RX.source}`, 'g'),
+        new RegExp(`([.?!])${TP_BREAK_HAS_TEXT_AHEAD}${TP_PIPEV_SAME_LINE_AHEAD_RX.source}`, 'g'),
         '$1\n'
     );
     t = t.replace(
-        new RegExp(`([${TP_CLOSE_QUOTE_CHARS}])(?=${TP_BREAK_WS}|[,.;:!?])${TP_PIPEV_SAME_LINE_AHEAD_RX.source}`, 'g'),
+        new RegExp(`([${TP_CLOSE_QUOTE_CHARS}])${TP_BREAK_HAS_TEXT_AHEAD}${TP_PIPEV_SAME_LINE_AHEAD_RX.source}`, 'g'),
         '$1\n'
     );
     /* Semicolon/colon + spaces before opening quote — not commas (no breaks beside commas) */
