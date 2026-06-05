@@ -41,8 +41,15 @@
             margin: 0;
             display: block;
         }
-        /* Blank space at end so last line can scroll up to top (matches main bottom spacer) */
-        .mirror-runway {
+        /* Small gap between script and bottom pill (matches main .teleprompter-runway) */
+        .mirror-text-runway {
+            display: block;
+            min-height: 1.4em;
+            width: 100%;
+            pointer-events: none;
+        }
+        /* Scroll room below bottom blue pill (matches main .teleprompter-bottom-spacer) */
+        .mirror-bottom-spacer {
             display: block;
             min-height: 50vh;
             height: 50vh;
@@ -205,7 +212,7 @@
         }
         .mirror-filename-pill-bottom {
             margin-bottom: 0;
-            margin-top: 12px;
+            margin-top: 0;
         }
         .mirror-filename-pill.hidden { display: none !important; }
         /* Same stack as main #teleprompter-view: spacer → runway → pill; heights set inline from main offsetHeight (like row heights). */
@@ -225,8 +232,9 @@
         <div id="mirror-top-runway" class="mirror-top-runway" aria-hidden="true"></div>
         <div id="mirror-pill-top" class="mirror-filename-pill hidden" aria-hidden="true"></div>
         <div id="mirror-content" class="mirror-table"></div>
-        <div id="mirror-runway" class="mirror-runway" aria-hidden="true"></div>
+        <div id="mirror-text-runway" class="mirror-text-runway" aria-hidden="true"></div>
         <div id="mirror-pill-bottom" class="mirror-filename-pill mirror-filename-pill-bottom hidden" aria-hidden="true"></div>
+        <div id="mirror-bottom-spacer" class="mirror-bottom-spacer" aria-hidden="true"></div>
     </div>
     <div id="mirror-sync-guide"></div>
     <script>
