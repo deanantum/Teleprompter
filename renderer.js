@@ -3919,11 +3919,9 @@ document.addEventListener('DOMContentLoaded', function() {
             rowHeights: measuredRowHeights,
             ...buildMirrorRowStretchPayload()
         }, '*');
-        pushMirrorLeaderLayout();
         requestAnimationFrame(() => {
             syncMirrorByPixels();
             syncMirrorStyles();
-            pushMirrorLeaderLayout();
         });
     }
 
@@ -4252,7 +4250,6 @@ function indexToColumnLetter(colIndex) {
                 rowHeights: measuredRowHeights,
                 ...buildMirrorRowStretchPayload()
             }, '*');
-            pushMirrorLeaderLayout();
         }
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
     }
@@ -4319,7 +4316,6 @@ function indexToColumnLetter(colIndex) {
                 rowHeights: measuredRowHeights,
                 ...buildMirrorRowStretchPayload()
             }, '*');
-            pushMirrorLeaderLayout();
         }
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
     }
@@ -4969,7 +4965,6 @@ function indexToColumnLetter(colIndex) {
             ...stretchPayload,
             rowHeights: measuredRowHeights.length === rows.length ? measuredRowHeights : null
         }, '*');
-        pushMirrorLeaderLayout();
     }
 
     function refreshMirrorData() {
@@ -10370,12 +10365,6 @@ function getMirrorLayoutMetrics() {
         if (measuredRunway > 0) textRunwayPx = Math.max(textRunwayPx, measuredRunway);
     }
 
-    const bottomSpacerEl = view.querySelector('.teleprompter-bottom-spacer');
-    let bottomSpacerPx = bottomSpacerEl ? Math.round(bottomSpacerEl.offsetHeight || 0) : 0;
-    const cssBottomSpacerPx = Math.round(ih * 0.5);
-    if (bottomSpacerPx < 1) bottomSpacerPx = cssBottomSpacerPx;
-    bottomSpacerPx = Math.max(bottomSpacerPx, cssBottomSpacerPx);
-
     return {
         leaderPx,
         abovePillPx: leaderPx,
@@ -10384,8 +10373,7 @@ function getMirrorLayoutMetrics() {
         topRunwayPx: tr,
         pillGapPx,
         pillTopPx: 0,
-        textRunwayPx,
-        bottomSpacerPx
+        textRunwayPx
     };
 }
 
