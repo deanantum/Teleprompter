@@ -4152,6 +4152,10 @@ function indexToColumnLetter(colIndex) {
         if (!scrollOnly) {
             payload.layout = getMirrorLayoutMetrics();
             Object.assign(payload, getMirrorPillPayload());
+            if (measuredRowHeights.length > 0) {
+                payload.rowHeights = measuredRowHeights;
+                Object.assign(payload, buildMirrorRowStretchPayload());
+            }
         }
         mirrorWindow.postMessage(payload, '*');
     }
