@@ -117,8 +117,31 @@
         .mirror-table .script-row-wrapper.row-col3-one-more .script-column:nth-child(2) { background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), transparent !important; }
         .mirror-table .script-row-wrapper.row-col3-one-more .script-column:last-child { background: linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%), transparent !important; }
         .mirror-table .script-row-wrapper.row-col2-more { background-color: #002D04 !important; color: #ffffff !important; }
+        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible .cell-content {
+            background-color: #002D04 !important;
+            color: #ffffff !important;
+        }
         .mirror-table .script-row-wrapper.row-col3-more,
         .mirror-table .script-row-wrapper.row-col3-much-more { background-color: #531516 !important; color: #ffffff !important; }
+        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible .cell-content,
+        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible .cell-content {
+            background-color: #531516 !important;
+            color: #ffffff !important;
+        }
+        /* Extend shows one column — glow on visible column (both edges), not hidden nth-child(2) */
+        .mirror-table .script-row-wrapper.row-col2-one-more .script-column.mirror-visible {
+            background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
+                        linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
+                        transparent !important;
+        }
+        .mirror-table .script-row-wrapper.row-col3-one-more .script-column.mirror-visible {
+            background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
+                        linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
+                        transparent !important;
+        }
         /* Match main: line spacing on shorter column fills row when red/green (stretch classes from main) */
         .mirror-table .script-row-wrapper.row-stretch-col2 .script-column.mirror-visible .cell-content,
         .mirror-table .script-row-wrapper.row-stretch-col2 .script-column.mirror-visible .cell-content *,
@@ -136,7 +159,24 @@
         .mirror-table .script-row-wrapper.keyword-pill-green,
         .mirror-table .script-row-wrapper.keyword-pill-blue,
         .mirror-table .script-row-wrapper.keyword-pill-white {
-            border-radius: 9999px; padding: 0 0 0 16px !important; margin: 0 !important; border: none !important;
+            border-radius: 9999px;
+            padding: 0 0 0 16px !important;
+            margin: 0 !important;
+            border: none !important;
+            line-height: 1.2 !important;
+            align-items: center !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+        }
+        .mirror-table .script-row-wrapper.keyword-pill-red .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.keyword-pill-yellow .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.keyword-pill-green .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.keyword-pill-blue .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.keyword-pill-white .script-column.mirror-visible {
+            justify-content: flex-start !important;
+            align-items: center !important;
+            padding: 0 !important;
+            margin: 0 !important;
         }
         .mirror-table .script-row-wrapper.keyword-pill-red {
             background-color: #dc2626 !important; color: #000000 !important;
@@ -320,6 +360,10 @@
             const display = document.getElementById('mirror-content');
             let suppressMirrorScrollPosts = 0;
             let lastPixelSyncData = null;
+            let lastLoadContentData = null;
+            const MIRROR_ROW_COLOR_CLASSES = ['row-lines-same', 'row-col2-more', 'row-col3-more', 'row-col3-much-more', 'row-col2-one-more', 'row-col3-one-more'];
+            const MIRROR_ROW_STRETCH_CLASSES = ['row-stretch-col2', 'row-stretch-col3'];
+            const MIRROR_KEYWORD_PILL_CLASSES = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'];
             const mirrorChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('teleprompter-mirror-sync') : null;
 
             function postToMain(payload) {
@@ -613,6 +657,64 @@
                 });
             }
 
+            function mergeMirrorRowClass(row, rowIndex, rowColors) {
+                var base = (row && row.rowClass ? row.rowClass : '').trim();
+                var colorCls = (rowColors && rowColors[rowIndex]) ? String(rowColors[rowIndex]).trim() : '';
+                if (colorCls && base.indexOf(colorCls) < 0) base = (colorCls + ' ' + base).trim();
+                return base;
+            }
+
+            function applyMirrorRowClasses(mirrorRows, tableData, rowColors) {
+                if (!mirrorRows || !mirrorRows.length) return;
+                for (var i = 0; i < mirrorRows.length; i++) {
+                    var mirrorRow = mirrorRows[i];
+                    if (!mirrorRow) continue;
+                    var meta = tableData && tableData[i];
+                    var merged = mergeMirrorRowClass(meta || {}, i, rowColors);
+                    MIRROR_ROW_COLOR_CLASSES.forEach(function(c) { mirrorRow.classList.remove(c); });
+                    MIRROR_ROW_STRETCH_CLASSES.forEach(function(c) { mirrorRow.classList.remove(c); });
+                    MIRROR_KEYWORD_PILL_CLASSES.forEach(function(c) { mirrorRow.classList.remove(c); });
+                    merged.split(/\s+/).filter(Boolean).forEach(function(c) { mirrorRow.classList.add(c); });
+                    if (meta && meta.font12) mirrorRow.classList.add('mirror-row-font-12');
+                    else mirrorRow.classList.remove('mirror-row-font-12');
+                }
+            }
+
+            function applyMirrorRowStretchFromMain(mirrorRows, tableData, visibleColumnIndex, rowStretch) {
+                var source = (rowStretch && rowStretch.length) ? rowStretch : tableData;
+                if (!mirrorRows || !source || !Array.isArray(source)) return;
+                source.forEach(function(row, i) {
+                    var stretchCol = row.stretchCol || 0;
+                    var lh = (row.stretchLineHeight || '').trim();
+                    if (!stretchCol || !lh || visibleColumnIndex !== stretchCol - 1) return;
+                    var mirrorRow = mirrorRows[i];
+                    if (!mirrorRow) return;
+                    var cell = mirrorRow.querySelector('.script-column.mirror-visible .cell-content');
+                    if (!cell) return;
+                    cell.style.setProperty('line-height', lh, 'important');
+                    cell.setAttribute('data-tp-line-balance', '1');
+                });
+            }
+
+            function applyMirrorRowHeightsAndStretch(data) {
+                if (!data) return;
+                var mirrorRows = display.querySelectorAll('.script-row-wrapper');
+                if (data.rowHeights && Array.isArray(data.rowHeights) && mirrorRows.length === data.rowHeights.length) {
+                    data.rowHeights.forEach(function(h, i) {
+                        if (mirrorRows[i] && typeof h === 'number' && h > 0) {
+                            mirrorRows[i].style.minHeight = h + 'px';
+                            mirrorRows[i].style.height = h + 'px';
+                        }
+                    });
+                }
+                var visIdx = typeof data.visibleColumnIndex === 'number'
+                    ? data.visibleColumnIndex
+                    : (lastLoadContentData && typeof lastLoadContentData.visibleColumnIndex === 'number' ? lastLoadContentData.visibleColumnIndex : 0);
+                var table = data.table || (lastLoadContentData && lastLoadContentData.table);
+                var rowStretch = data.rowStretch || null;
+                applyMirrorRowStretchFromMain(mirrorRows, table, visIdx, rowStretch);
+            }
+
             function applyMirrorShortColumnLineBalance(displayRoot, visibleColumnIndex) {
                 if (!displayRoot) return;
                 var rows = displayRoot.querySelectorAll('.script-row-wrapper');
@@ -623,10 +725,9 @@
                     else if (row.classList.contains('row-stretch-col3')) wantCol = 3;
                     else continue;
                     if (visibleColumnIndex !== wantCol - 1) continue;
-                    var col = row.querySelector('.script-column:nth-child(' + wantCol + ')');
-                    if (!col || !col.classList.contains('mirror-visible')) continue;
-                    var cell = col.querySelector('.cell-content');
+                    var cell = row.querySelector('.script-column.mirror-visible .cell-content');
                     if (!cell) continue;
+                    if (cell.hasAttribute('data-tp-line-balance')) continue;
                     var text = (cell.textContent || '').trim();
                     if (!text) continue;
                     var avail = Math.max(1, Math.floor(row.clientHeight) - 1);
@@ -671,10 +772,15 @@
                         if (data.contentWidth) {
                             document.documentElement.style.setProperty('--mirror-content-width', data.contentWidth);
                         }
+                        lastLoadContentData = {
+                            table: data.table,
+                            visibleColumnIndex: data.visibleColumnIndex,
+                            rowColors: data.rowColors
+                        };
                         var html = '';
-                        data.table.forEach(function(row) {
+                        data.table.forEach(function(row, rowIndex) {
                             var cells = row.cells || [];
-                            var rowClass = (row.rowClass || '') + (row.font12 ? ' mirror-row-font-12' : '');
+                            var rowClass = mergeMirrorRowClass(row, rowIndex, data.rowColors) + (row.font12 ? ' mirror-row-font-12' : '');
                             html += '<div class="script-row-wrapper' + (rowClass ? ' ' + rowClass.trim() : '') + '">';
                             cells.forEach(function(cellText, ci) {
                                 var visible = (ci === visibleColumnIndex) ? ' mirror-visible' : '';
@@ -684,17 +790,9 @@
                             html += '</div>';
                         });
                         display.innerHTML = html;
-                        if (data.rowHeights && Array.isArray(data.rowHeights)) {
-                            var mirrorRows = display.querySelectorAll('.script-row-wrapper');
-                            if (mirrorRows.length === data.rowHeights.length) {
-                                data.rowHeights.forEach(function(h, i) {
-                                    if (mirrorRows[i] && typeof h === 'number' && h > 0) {
-                                        mirrorRows[i].style.minHeight = h + 'px';
-                                        mirrorRows[i].style.height = h + 'px';
-                                    }
-                                });
-                            }
-                        }
+                        var mirrorRows = display.querySelectorAll('.script-row-wrapper');
+                        applyMirrorRowClasses(mirrorRows, data.table, data.rowColors);
+                        applyMirrorRowHeightsAndStretch(data);
                         applyMirrorLayout(data.layout);
                         var visIdx = typeof data.visibleColumnIndex === 'number' ? data.visibleColumnIndex : 0;
                         var hasRowHeights = data.rowHeights && Array.isArray(data.rowHeights) && data.rowHeights.length > 0;
@@ -702,6 +800,9 @@
                         requestAnimationFrame(function() {
                             requestAnimationFrame(function() {
                                 if (layoutSnap) applyMirrorLayout(layoutSnap);
+                                var rowsSnap = display.querySelectorAll('.script-row-wrapper');
+                                applyMirrorRowClasses(rowsSnap, data.table, data.rowColors);
+                                applyMirrorRowHeightsAndStretch(data);
                                 if (!hasRowHeights) applyMirrorShortColumnLineBalance(display, visIdx);
                             });
                         });
@@ -749,16 +850,8 @@
                         }
                     } catch (err) {}
                 }
-                if (type === 'updateRowHeights' && data.rowHeights && Array.isArray(data.rowHeights)) {
-                    var mirrorRows = display.querySelectorAll('.script-row-wrapper');
-                    if (mirrorRows.length === data.rowHeights.length) {
-                        data.rowHeights.forEach(function(h, i) {
-                            if (mirrorRows[i] && typeof h === 'number' && h > 0) {
-                                mirrorRows[i].style.minHeight = h + 'px';
-                                mirrorRows[i].style.height = h + 'px';
-                            }
-                        });
-                    }
+                if (type === 'updateRowHeights' || type === 'updateRowStretch') {
+                    applyMirrorRowHeightsAndStretch(data);
                 }
             }
 
