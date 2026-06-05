@@ -444,7 +444,26 @@
                 var ts = Math.max(0, Math.round(ih * 0.5 - 8 * rootFs));
                 var tr = Math.max(Math.round(10 * rootFs), Math.round(ih * 0.22));
                 var gap = Math.round(1.4 * rootFs);
-                return { topSpacerPx: ts, topRunwayPx: tr, pillGapPx: gap, leaderPx: ts + tr + gap };
+                return {
+                    topSpacerPx: ts,
+                    topRunwayPx: tr,
+                    pillGapPx: gap,
+                    leaderPx: ts + tr + gap,
+                    bottomRunwayPx: Math.round(ih * 0.5) + Math.round(1.4 * rootFs)
+                };
+            }
+
+            function applyMirrorBottomRunway(px) {
+                var el = document.getElementById('mirror-runway');
+                if (!el) return;
+                var h = typeof px === 'number' && !isNaN(px) ? Math.max(0, Math.round(px)) : 0;
+                if (h < 1) {
+                    var ih = window.innerHeight || document.documentElement.clientHeight || 800;
+                    h = Math.round(ih * 0.5);
+                }
+                el.style.setProperty('min-height', h + 'px', 'important');
+                el.style.setProperty('height', h + 'px', 'important');
+                el.style.setProperty('flex-shrink', '0', 'important');
             }
 
             function shrinkMirrorPillToFit(el, minPx) {
@@ -501,7 +520,14 @@
                 }
                 if (target < 0) target = 0;
                 var maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
-                if (target > maxScroll) target = maxScroll;
+                var mainMax = typeof data.mainMaxScroll === 'number' && data.mainMaxScroll > 0 ? data.mainMaxScroll : null;
+                if (target > maxScroll) {
+                    if (mainMax != null && mainMax > maxScroll) {
+                        target = Math.round((mainScroll / mainMax) * maxScroll);
+                    } else {
+                        target = maxScroll;
+                    }
+                }
                 container.scrollTop = target;
             }
 
@@ -596,6 +622,11 @@
                         else pillTop.style.removeProperty('margin-top');
                     }
                 }
+                var bottomRun = typeof layout.bottomRunwayPx === 'number' && !isNaN(layout.bottomRunwayPx)
+                    ? layout.bottomRunwayPx
+                    : 0;
+                applyMirrorBottomRunway(bottomRun);
+
                 requestAnimationFrame(function() {
                     shrinkMirrorPillToFit(pillTop);
                     shrinkMirrorPillToFit(document.getElementById('mirror-pill-bottom'));
@@ -712,6 +743,11 @@
                     lastPixelSyncData = data;
                     var scrollOnly = !!data.scrollOnly;
                     suppressMirrorScrollPosts = scrollOnly ? 4 : 2;
+                    if (typeof data.bottomRunwayPx === 'number' && !isNaN(data.bottomRunwayPx)) {
+                        applyMirrorBottomRunway(data.bottomRunwayPx);
+                    } else if (data.layout && typeof data.layout.bottomRunwayPx === 'number') {
+                        applyMirrorBottomRunway(data.layout.bottomRunwayPx);
+                    }
                     if (!scrollOnly) {
                         applyMirrorPills(data);
                         if (data.layout) applyMirrorLayout(data.layout);
