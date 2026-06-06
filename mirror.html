@@ -605,24 +605,56 @@
             function applyMirrorScrollSync(data, options) {
                 options = options || {};
                 if (!data || !container) return;
-                var display = document.getElementById('mirror-content');
+                var displayEl = document.getElementById('mirror-content');
                 var mainScroll = Math.round(data.contentScrollY || data.scrollTop || 0);
                 var target = mainScroll;
-                if (display && data.rowOriginYs && data.rowOriginYs.length > 0) {
-                    var mirrorRows = display.querySelectorAll('.script-row-wrapper');
-                    if (mirrorRows.length > 0) {
-                        var mirrorRow0Origin = Math.round((display.offsetTop || 0) + (mirrorRows[0].offsetTop || 0));
-                        target = mainScroll + (mirrorRow0Origin - Math.round(data.rowOriginYs[0]));
+                var mainRow0 = typeof data.scriptRow0OriginY === 'number'
+                    ? data.scriptRow0OriginY
+                    : (data.rowOriginYs && data.rowOriginYs.length ? Math.round(data.rowOriginYs[0]) : null);
+                if (displayEl && mainRow0 != null) {
+                    var mirrorRow0 = getMirrorRow0OriginY();
+                    if (mirrorRow0 != null) {
+                        target = mainScroll + (mirrorRow0 - mainRow0);
                     }
-                } else if (display && typeof data.scriptOffsetTop === 'number' && !isNaN(data.scriptOffsetTop)) {
-                    target = mainScroll + (Math.round(display.offsetTop || 0) - Math.round(data.scriptOffsetTop));
+                } else if (displayEl && typeof data.scriptOffsetTop === 'number' && !isNaN(data.scriptOffsetTop)) {
+                    target = mainScroll + (Math.round(displayEl.offsetTop || 0) - Math.round(data.scriptOffsetTop));
                 }
                 if (target < 0) target = 0;
                 var maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
                 if (target > maxScroll) target = maxScroll;
-                if (Math.abs(container.scrollTop - target) <= 1) return;
-                suppressMirrorScrollPosts = Math.max(suppressMirrorScrollPosts, options.suppressPosts || 6);
-                container.scrollTop = target;
+                scheduleMirrorScrollTop(target, options.suppressPosts || 6);
+            }
+
+            var cachedMirrorRow0OriginY = null;
+            var pendingMirrorScrollTop = null;
+            var mirrorScrollApplyRaf = null;
+
+            function invalidateMirrorRow0OriginCache() {
+                cachedMirrorRow0OriginY = null;
+            }
+
+            function getMirrorRow0OriginY() {
+                if (cachedMirrorRow0OriginY != null) return cachedMirrorRow0OriginY;
+                var displayEl = document.getElementById('mirror-content');
+                if (!displayEl) return null;
+                var mirrorRows = displayEl.querySelectorAll('.script-row-wrapper');
+                if (!mirrorRows.length) return null;
+                cachedMirrorRow0OriginY = Math.round((displayEl.offsetTop || 0) + (mirrorRows[0].offsetTop || 0));
+                return cachedMirrorRow0OriginY;
+            }
+
+            function scheduleMirrorScrollTop(target, suppressPosts) {
+                pendingMirrorScrollTop = target;
+                if (mirrorScrollApplyRaf) return;
+                mirrorScrollApplyRaf = requestAnimationFrame(function() {
+                    mirrorScrollApplyRaf = null;
+                    var nextTarget = pendingMirrorScrollTop;
+                    pendingMirrorScrollTop = null;
+                    if (nextTarget == null || !container) return;
+                    if (Math.abs(container.scrollTop - nextTarget) <= 1) return;
+                    suppressMirrorScrollPosts = Math.max(suppressMirrorScrollPosts, suppressPosts || 6);
+                    container.scrollTop = nextTarget;
+                });
             }
 
             function applyMirrorPills(data) {
@@ -740,6 +772,7 @@
                     shrinkMirrorPillToFit(document.getElementById('mirror-stay-switch-pill'));
                     shrinkMirrorPillToFit(document.getElementById('mirror-pill-bottom'));
                 });
+                invalidateMirrorRow0OriginCache();
             }
 
             function mergeMirrorRowClass(row, rowIndex, rowColors) {
@@ -871,14 +904,21 @@
                 });
             }
 
-            function applyHeightsToMirrorRows(mirrorRows, heights) {
+            function applyHeightsToMirrorRows(mirrorRows, heights, options) {
+                options = options || {};
                 if (!mirrorRows || !heights) return;
                 mirrorRows.forEach(function(row, i) {
                     var cell = row.querySelector('.script-column.mirror-visible .cell-content');
                     var h = heights[i];
                     if (typeof h === 'number' && h > 0) {
-                        var natural = measureMirrorRowNaturalHeightAtWidth(row);
-                        var finalH = Math.max(h, natural, 1);
+                        var finalH = h;
+                        if (!options.trustHeights) {
+                            var natural = measureMirrorRowNaturalHeightAtWidth(row);
+                            finalH = Math.max(h, natural, 1);
+                        } else if (options.trustHeights) {
+                            var curH = Math.round(row.getBoundingClientRect().height);
+                            if (Math.abs(curH - h) <= 1) return;
+                        }
                         row.style.setProperty('min-height', finalH + 'px', 'important');
                         row.style.setProperty('height', finalH + 'px', 'important');
                         row.style.setProperty('box-sizing', 'border-box', 'important');
@@ -887,7 +927,10 @@
                         cell.removeAttribute('data-tp-line-balance');
                     }
                 });
-                applyMirrorRowLineBalance(mirrorRows);
+                if (!options.skipLineBalance) {
+                    applyMirrorRowLineBalance(mirrorRows);
+                }
+                invalidateMirrorRow0OriginCache();
             }
 
             function reportMirrorRowHeightsToMain(mirrorRows, heights) {
@@ -898,7 +941,7 @@
                     if (suppressMirrorHeightReport > 0) return;
                     var measured = heights || measureMirrorRowHeightsLocally(mirrorRows);
                     if (measured.length) postToMain({ type: 'rowHeightsReport', rowHeights: measured });
-                }, 150);
+                }, 400);
             }
 
             /*
@@ -913,11 +956,10 @@
 
                 if (options.heightsOnly) {
                     if (data && data.rowHeights && data.rowHeights.length === mirrorRows.length) {
-                        var localOnly = measureMirrorRowHeightsLocally(mirrorRows);
-                        var mergedOnly = data.rowHeights.map(function(h, i) {
-                            return Math.max(h || 0, localOnly[i] || 0, 1);
+                        applyHeightsToMirrorRows(mirrorRows, data.rowHeights, {
+                            trustHeights: true,
+                            skipLineBalance: true
                         });
-                        applyHeightsToMirrorRows(mirrorRows, mergedOnly);
                     }
                     return;
                 }
@@ -951,6 +993,7 @@
             function finishMirrorContentLayout(data) {
                 var layoutSnap = (data && data.layout) ? data.layout : defaultMirrorLayoutFromViewport();
                 applyMirrorLayout(layoutSnap);
+                invalidateMirrorRow0OriginCache();
                 if (data) {
                     applyMirrorScrollSync(data, { suppressPosts: 12 });
                     applyMirrorIndicatorGuide(data);
@@ -1079,8 +1122,6 @@
                     applyMirrorIndicatorGuide(data);
                     if (!scrollOnly) {
                         requestAnimationFrame(function() {
-                            suppressMirrorScrollPosts = 4;
-                            applyMirrorScrollSync(data, { suppressPosts: 6 });
                             applyMirrorIndicatorGuide(data);
                         });
                     }
