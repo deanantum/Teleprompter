@@ -62,6 +62,7 @@
             padding: 0 !important;
             margin: 0 !important;
             line-height: 1.1 !important;
+            overflow: visible;
         }
         .mirror-table .script-column {
             flex: 0 0 auto;
@@ -92,6 +93,7 @@
             padding: 0;
             margin: 0;
             min-width: 0;
+            overflow: visible;
         }
         .mirror-table .cell-content b,
         .mirror-table .cell-content i,
@@ -766,6 +768,37 @@
             }
 
             let suppressMirrorHeightReport = 0;
+            let mirrorHeightReportTimer = null;
+
+            function applyMirrorDisplayStyle(style) {
+                if (!style) return;
+                display.style.fontSize = style.fontSize || '';
+                display.style.fontFamily = style.fontFamily || '';
+                display.style.lineHeight = style.lineHeight || '';
+                display.style.color = style.fontColor || '';
+                var pad = [style.paddingTop || '10px', style.paddingRight || '40px', style.paddingBottom || '10px', style.paddingLeft || '40px'].join(' ');
+                document.documentElement.style.setProperty('--mirror-pad', pad);
+                document.documentElement.style.setProperty('--mirror-line-height', style.lineHeight || '1.4');
+                if (style.contentWidth) {
+                    document.documentElement.style.setProperty('--mirror-content-width', style.contentWidth);
+                }
+            }
+
+            function measureMirrorRowNaturalHeightAtWidth(row) {
+                row.classList.remove('row-stretch-col2', 'row-stretch-col3');
+                row.style.removeProperty('min-height');
+                row.style.removeProperty('height');
+                row.style.removeProperty('box-sizing');
+                var cell = row.querySelector('.script-column.mirror-visible .cell-content');
+                if (cell) {
+                    cell.style.removeProperty('line-height');
+                    cell.removeAttribute('data-tp-line-balance');
+                }
+                void row.offsetHeight;
+                var h = Math.max(1, row.scrollHeight || row.offsetHeight || 1);
+                if (cell) h = Math.max(h, cell.scrollHeight || cell.offsetHeight || 1);
+                return Math.ceil(h);
+            }
 
             function measureMirrorRowHeightsLocally(mirrorRows) {
                 var heights = [];
@@ -808,7 +841,14 @@
                     cell.removeAttribute('data-tp-line-balance');
                     void cell.offsetHeight;
                     var natural = measureMirrorCellNaturalHeight(cell, col);
-                    if (natural >= avail - 2) return;
+                    if (natural >= avail - 2) {
+                        if (natural > avail) {
+                            var expandH = Math.ceil(natural) + 1;
+                            row.style.setProperty('min-height', expandH + 'px', 'important');
+                            row.style.setProperty('height', expandH + 'px', 'important');
+                        }
+                        return;
+                    }
 
                     var cs = window.getComputedStyle(cell);
                     var fontPx = parseFloat(cs.fontSize) || 16;
@@ -834,17 +874,17 @@
             function applyHeightsToMirrorRows(mirrorRows, heights) {
                 if (!mirrorRows || !heights) return;
                 mirrorRows.forEach(function(row, i) {
-                    row.classList.remove('row-stretch-col2', 'row-stretch-col3');
                     var cell = row.querySelector('.script-column.mirror-visible .cell-content');
-                    if (cell) {
-                        cell.style.removeProperty('line-height');
-                        cell.removeAttribute('data-tp-line-balance');
-                    }
                     var h = heights[i];
                     if (typeof h === 'number' && h > 0) {
-                        row.style.setProperty('min-height', h + 'px', 'important');
-                        row.style.setProperty('height', h + 'px', 'important');
+                        var natural = measureMirrorRowNaturalHeightAtWidth(row);
+                        var finalH = Math.max(h, natural, 1);
+                        row.style.setProperty('min-height', finalH + 'px', 'important');
+                        row.style.setProperty('height', finalH + 'px', 'important');
                         row.style.setProperty('box-sizing', 'border-box', 'important');
+                    } else if (cell) {
+                        cell.style.removeProperty('line-height');
+                        cell.removeAttribute('data-tp-line-balance');
                     }
                 });
                 applyMirrorRowLineBalance(mirrorRows);
@@ -852,8 +892,13 @@
 
             function reportMirrorRowHeightsToMain(mirrorRows, heights) {
                 if (suppressMirrorHeightReport > 0) return;
-                var measured = heights || measureMirrorRowHeightsLocally(mirrorRows);
-                if (measured.length) postToMain({ type: 'rowHeightsReport', rowHeights: measured });
+                if (mirrorHeightReportTimer) clearTimeout(mirrorHeightReportTimer);
+                mirrorHeightReportTimer = setTimeout(function() {
+                    mirrorHeightReportTimer = null;
+                    if (suppressMirrorHeightReport > 0) return;
+                    var measured = heights || measureMirrorRowHeightsLocally(mirrorRows);
+                    if (measured.length) postToMain({ type: 'rowHeightsReport', rowHeights: measured });
+                }, 150);
             }
 
             /*
@@ -868,7 +913,11 @@
 
                 if (options.heightsOnly) {
                     if (data && data.rowHeights && data.rowHeights.length === mirrorRows.length) {
-                        applyHeightsToMirrorRows(mirrorRows, data.rowHeights);
+                        var localOnly = measureMirrorRowHeightsLocally(mirrorRows);
+                        var mergedOnly = data.rowHeights.map(function(h, i) {
+                            return Math.max(h || 0, localOnly[i] || 0, 1);
+                        });
+                        applyHeightsToMirrorRows(mirrorRows, mergedOnly);
                     }
                     return;
                 }
@@ -942,6 +991,7 @@
                         if (data.contentWidth) {
                             document.documentElement.style.setProperty('--mirror-content-width', data.contentWidth);
                         }
+                        applyMirrorDisplayStyle(data.style);
                         lastLoadContentData = {
                             table: data.table,
                             visibleColumnIndex: data.visibleColumnIndex,
@@ -969,31 +1019,37 @@
                         display.innerHTML = html;
                         var mirrorRows = display.querySelectorAll('.script-row-wrapper');
                         applyMirrorRowClasses(mirrorRows, data.table, data.rowColors);
+                        suppressMirrorHeightReport = 24;
                         applyMirrorRowHeightsAndStretch(data);
                         applyMirrorLayout(data.layout);
                         lastPixelSyncData = data;
                         finishMirrorContentLayout(data);
                         requestAnimationFrame(function() {
-                            requestAnimationFrame(function() {
-                                finishMirrorContentLayout(data);
-                            });
+                            applyMirrorRowHeightsAndStretch(data);
+                            finishMirrorContentLayout(data);
+                            suppressMirrorHeightReport = 6;
+                            reportMirrorRowHeightsToMain(display.querySelectorAll('.script-row-wrapper'));
                         });
                     }
                 }
                 if (type === 'syncStyleLite' && data.style) {
                     if (!mirrorSyncIsCurrent(data)) return;
                     noteMirrorGeneration(data);
-                    const s = data.style;
-                    display.style.fontSize = s.fontSize || '';
-                    display.style.fontFamily = s.fontFamily || '';
-                    display.style.lineHeight = s.lineHeight || '';
-                    display.style.color = s.fontColor || '';
-                    const pad = [s.paddingTop || '10px', s.paddingRight || '40px', s.paddingBottom || '10px', s.paddingLeft || '40px'].join(' ');
-                    document.documentElement.style.setProperty('--mirror-pad', pad);
-                    document.documentElement.style.setProperty('--mirror-line-height', s.lineHeight || '1.4');
-                    document.documentElement.style.setProperty('--mirror-content-width', s.contentWidth || '100%');
+                    applyMirrorDisplayStyle(data.style);
                     applyMirrorPills(data);
                     if (data.layout) applyMirrorLayout(data.layout);
+                    suppressMirrorHeightReport = 10;
+                    var styleRowPayload = getMirrorRowSyncPayload();
+                    if (styleRowPayload) {
+                        applyMirrorRowHeightsAndStretch(styleRowPayload);
+                        requestAnimationFrame(function() {
+                            applyMirrorRowHeightsAndStretch(styleRowPayload);
+                            if (lastPixelSyncData) {
+                                applyMirrorScrollSync(lastPixelSyncData, { suppressPosts: 8 });
+                                applyMirrorIndicatorGuide(lastPixelSyncData);
+                            }
+                        });
+                    }
                 }
                 if (type === 'pixelSync') {
                     if (!mirrorSyncIsCurrent(data)) return;
@@ -1041,6 +1097,8 @@
                     } catch (err) {}
                 }
                 if (type === 'updateRowHeights' || type === 'updateRowStretch') {
+                    if (!mirrorSyncIsCurrent(data)) return;
+                    noteMirrorGeneration(data);
                     suppressMirrorHeightReport = 3;
                     applyMirrorRowHeightsAndStretch(data);
                 }
