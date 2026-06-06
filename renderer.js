@@ -4198,6 +4198,8 @@ function indexToColumnLetter(colIndex) {
         if (!scrollOnly) {
             payload.layout = getMirrorLayoutMetrics();
             Object.assign(payload, getMirrorPillPayload());
+            const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
+            if (rowColorsCache.length === rows.length) payload.rowColors = rowColorsCache.slice();
             if (measuredRowHeights.length > 0) {
                 payload.rowHeights = measuredRowHeights;
                 Object.assign(payload, buildMirrorRowStretchPayload());
@@ -4668,9 +4670,14 @@ function indexToColumnLetter(colIndex) {
         return s.replace(/\+(\S)/g, '+ $1').split(/\s+/).filter(Boolean).length;
     }
 
-    function applyRowColors() {
+    function applyRowColors(options) {
+        options = options || {};
+        const forceRecompute = !!options.forceRecompute;
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
         if (rows.length === 0) return;
+
+        const isBroadcasting = document.body.classList.contains('broadcasting');
+        const useCachedColors = isBroadcasting && !forceRecompute && rowColorsCache.length === rows.length;
 
         const maxCols = Math.max(...rows.map(r => r.querySelectorAll('.script-column').length));
         if (maxCols !== 3) {
@@ -4738,27 +4745,35 @@ function indexToColumnLetter(colIndex) {
         }
 
         try {
-        rowColorsCache = [];
+        if (!useCachedColors) rowColorsCache = [];
         rows.forEach((row, rowIndex) => {
             const prevStretchCol = row.classList.contains('row-stretch-col2') ? 2 : (row.classList.contains('row-stretch-col3') ? 3 : 0);
             ROW_COLOR_CLASSES.forEach(c => row.classList.remove(c));
             ROW_STRETCH_MARKERS.forEach(c => row.classList.remove(c));
             const cols = Array.from(row.children).filter(c => c.classList?.contains('script-column'));
             const n = cols.length;
-            if (n < 2) {
-                row.classList.add('row-lines-same');
-                rowColorsCache.push('row-lines-same');
+            let cls;
+            let words2 = 0;
+            let words3 = 0;
+            let wordDiff = 0;
+            if (useCachedColors) {
+                cls = rowColorsCache[rowIndex] || 'row-lines-same';
+                row.classList.add(cls);
+                if (n < 2) return;
+            } else if (n < 2) {
+                cls = 'row-lines-same';
+                row.classList.add(cls);
+                rowColorsCache.push(cls);
                 return;
-            }
+            } else {
             const col2 = cols[Math.min(idxCol2, n - 1)];
             const col3 = cols[Math.min(idxCol3, n - 1)];
             const text2 = (col2?.textContent ?? '').toString().trim();
             const text3 = (col3?.textContent ?? '').toString().trim();
 
-            const words2 = countWordsForRowBalance(text2);
-            const words3 = countWordsForRowBalance(text3);
-            const wordDiff = Math.abs(words2 - words3);
-            let cls;
+            words2 = countWordsForRowBalance(text2);
+            words3 = countWordsForRowBalance(text3);
+            wordDiff = Math.abs(words2 - words3);
             if (!colorGuideEnabled) {
                 cls = 'row-lines-same';
             } else if (words2 === words3 || wordDiff < WORD_DIFF_GLOW) {
@@ -4770,6 +4785,9 @@ function indexToColumnLetter(colIndex) {
             }
             row.classList.add(cls);
             rowColorsCache.push(cls);
+            }
+            const col2 = cols[Math.min(idxCol2, n - 1)];
+            const col3 = cols[Math.min(idxCol3, n - 1)];
             /* Tallest column sets row height; stretch the *other* column with line-spacing (word-count class is only for red/green). */
             if (!document.body.classList.contains('overview-mode')) {
                 const locker2 = col2.querySelector('.cell-locker');
@@ -4797,7 +4815,7 @@ function indexToColumnLetter(colIndex) {
             }
 
             /* Troubleshooting: when DEBUG_ROW_COLORS is true, log one full report for row 0 and whenever we assign green. */
-            if (debugRowColors && (rowIndex === 0 || cls.startsWith('row-col2'))) {
+            if (!useCachedColors && debugRowColors && (rowIndex === 0 || cls.startsWith('row-col2'))) {
                 const byIndex = cols.map((c, i) => {
                     const t = (c?.textContent ?? '').toString().trim();
                     return { i, chars: t.length, preview: t.slice(0, 30) + (t.length > 30 ? '…' : '') };
@@ -10162,6 +10180,9 @@ extendMonitorButton.onclick = async () => {
 
     /* Exit Aa first so extend measures and layouts in control (broadcast) view, not overview. */
     exitAaMode();
+
+    /* Snapshot word-count row colors at full width before broadcast layout changes column widths. */
+    applyRowColors({ forceRecompute: true });
 
     document.body.classList.add('broadcasting');
     enableMirrorRunlistEdgeMode();
