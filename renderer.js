@@ -180,6 +180,10 @@ document.addEventListener('DOMContentLoaded', function() {
     let isRunlistVisible = false;
     let savedSelection = null;
     let mirrorWindow = null;
+    let mirrorContentGeneration = 0;
+    let suppressMirrorScrollEchoUntil = 0;
+    let pageTurnInProgress = false;
+    let resumeTelepromptAfterPageTurn = false;
     let mirrorCloseCheckInterval = null;
     /** When set, opener sends this position to mirror via postMessage so mirror can move itself (works when opener moveTo is blocked on PC). */
     let pendingMirrorPosition = null;
@@ -3840,8 +3844,38 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let isUpdatingFromMirrorScroll = false;
 
+    function bumpMirrorContentGeneration() {
+        mirrorContentGeneration += 1;
+        return mirrorContentGeneration;
+    }
+
+    function getMirrorContentSyncMeta() {
+        return { contentGeneration: mirrorContentGeneration, fileIndex: currentFileIndex };
+    }
+
+    function suppressMirrorScrollEcho(ms = 1200) {
+        suppressMirrorScrollEchoUntil = Date.now() + ms;
+    }
+
+    function syncMirrorAfterEditorSettled() {
+        if (!mirrorWindow || mirrorWindow.closed) return;
+        suppressMirrorScrollEcho(1600);
+        if (typeof refreshMirrorData === 'function') refreshMirrorData();
+        if (typeof syncMirrorStyles === 'function') syncMirrorStyles();
+        if (typeof pushMirrorLeaderLayout === 'function') pushMirrorLeaderLayout();
+        const runPixelSync = () => {
+            if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+        };
+        requestAnimationFrame(() => {
+            runPixelSync();
+            requestAnimationFrame(runPixelSync);
+        });
+        [80, 200, 450].forEach((ms) => setTimeout(runPixelSync, ms));
+    }
+
     function handleMirrorScroll(data) {
         if (!mirrorWindow || mirrorWindow.closed) return;
+        if (Date.now() < suppressMirrorScrollEchoUntil) return;
         /* Main window is the scroll leader while auto-scrolling; ratio-based echo causes oscillation. */
         if (isTeleprompting) return;
         if (!data || typeof data.scrollTop !== 'number') return;
@@ -3962,9 +3996,11 @@ document.addEventListener('DOMContentLoaded', function() {
         rowHeightSyncInProgress = true;
         try {
             syncBroadcastRowHeightsFromBothViews(data.rowHeights);
-            requestAnimationFrame(() => {
-                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
-            });
+            if (!isTeleprompting) {
+                requestAnimationFrame(() => {
+                    if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+                });
+            }
         } finally {
             rowHeightSyncInProgress = false;
         }
@@ -4189,10 +4225,12 @@ function indexToColumnLetter(colIndex) {
 
 		function syncMirrorByPixels() {
         if (isUpdatingFromMirrorScroll || !mirrorWindow || mirrorWindow.closed) return;
+        if (pageTurnInProgress) return;
         const scrollOnly = isTeleprompting;
         const payload = {
             type: 'pixelSync',
             scrollOnly,
+            ...getMirrorContentSyncMeta(),
             ...getMirrorScrollSyncPayload(),
             indicatorPosition: getIndicatorPositionPercent(),
             indicatorViewportPx: getIndicatorViewportOffsetPx()
@@ -5069,6 +5107,8 @@ function indexToColumnLetter(colIndex) {
                 rowColors,
                 rowFont12,
                 rowHeights,
+                ...getMirrorScrollSyncPayload(),
+                ...getMirrorContentSyncMeta(),
                 ...pillPayload,
                 layout: getMirrorLayoutMetrics()
             }, '*');
@@ -5092,6 +5132,8 @@ function indexToColumnLetter(colIndex) {
                 contentWidth,
                 rowColors,
                 rowFont12,
+                ...getMirrorScrollSyncPayload(),
+                ...getMirrorContentSyncMeta(),
                 ...pillPayload,
                 layout: getMirrorLayoutMetrics()
             }, '*');
@@ -5105,6 +5147,8 @@ function indexToColumnLetter(colIndex) {
                 contentWidth: null,
                 rowColors: [],
                 rowFont12: [],
+                ...getMirrorScrollSyncPayload(),
+                ...getMirrorContentSyncMeta(),
                 ...pillPayload,
                 layout: getMirrorLayoutMetrics()
             }, '*');
@@ -8670,7 +8714,24 @@ function updateBookmarkHighlightFromScroll() {
     if (idx >= 0 && idx < bars.length) setActiveBookmarkByIndex(idx);
 }
 
+const PILL_CONTACT_PAD_PX = 2;
+
+function syncLineContactsFilenamePill(indicatorY, pillRect) {
+    return indicatorY >= pillRect.top - PILL_CONTACT_PAD_PX && indicatorY <= pillRect.bottom + PILL_CONTACT_PAD_PX;
+}
+
+/** Bottom pill advancing forward: pill bottom has reached the sync line (fast-scroll fallback). */
+function syncLineCrossedBottomFilenamePill(indicatorY, pillRect) {
+    return pillRect.bottom <= indicatorY + PILL_CONTACT_PAD_PX;
+}
+
+/** Top pill going to previous file: pill top has reached the sync line (fast-scroll fallback). */
+function syncLineCrossedTopFilenamePill(indicatorY, pillRect) {
+    return pillRect.top >= indicatorY - PILL_CONTACT_PAD_PX;
+}
+
 function checkTopPillAndGoToPreviousFile() {
+    if (pageTurnInProgress) return;
     if (Date.now() < suppressPillNavigationUntil) return;
     const topPill = document.getElementById('filename-pill-top');
     const wrapper = document.getElementById('indicator-wrapper');
@@ -8685,22 +8746,21 @@ function checkTopPillAndGoToPreviousFile() {
     const currentScrollTop = view.scrollTop;
     const scrollDelta = lastScrollTopForPillTrigger != null ? currentScrollTop - lastScrollTopForPillTrigger : 0;
     const playingBackward = typeof scrollSpeed !== 'undefined' && scrollSpeed < 0;
+    const atScrollStart = currentScrollTop <= 3;
     const scrollingTowardPrev = isTeleprompting
-        ? (playingBackward && scrollDelta < 0)
-        : scrollDelta < 0;
+        ? (playingBackward && (scrollDelta < 0 || atScrollStart))
+        : (scrollDelta < 0 || atScrollStart);
     if (!scrollingTowardPrev) return;
 
     const viewRect = view.getBoundingClientRect();
     const indicatorY = wrapper.getBoundingClientRect().top + wrapper.getBoundingClientRect().height / 2;
     const rect = topPill.getBoundingClientRect();
-    const pad = 22; /* px tolerance for sync line vs pill */
-    const indicatorOverlapsPill = indicatorY >= rect.top - pad && indicatorY <= rect.bottom + pad;
-    /* Fast wheel/trackpad can skip the overlap frame; whole pill still visible but entirely below sync line */
     const pillVisibleInView = rect.bottom > viewRect.top + 6 && rect.top < viewRect.bottom - 6;
-    const pillScrolledPastSyncLine = rect.top > indicatorY + 8 && pillVisibleInView;
+    const indicatorContactsPill = syncLineContactsFilenamePill(indicatorY, rect);
+    const pillCrossedSyncLine = syncLineCrossedTopFilenamePill(indicatorY, rect) && pillVisibleInView;
 
-    if (!indicatorOverlapsPill && !pillScrolledPastSyncLine) {
-        topPillTriggerFired = false;
+    if (!indicatorContactsPill && !pillCrossedSyncLine) {
+        if (!pageTurnInProgress) topPillTriggerFired = false;
         return;
     }
     if (topPillTriggerFired) return;
@@ -8709,6 +8769,7 @@ function checkTopPillAndGoToPreviousFile() {
 }
 
 function checkBottomPillAndAdvanceToNextFile() {
+    if (pageTurnInProgress) return;
     if (Date.now() < suppressPillNavigationUntil) return;
     const bottomPill = document.getElementById('filename-pill-bottom');
     const wrapper = document.getElementById('indicator-wrapper');
@@ -8723,22 +8784,22 @@ function checkBottomPillAndAdvanceToNextFile() {
     const currentScrollTop = view.scrollTop;
     const scrollDelta = lastScrollTopForPillTrigger != null ? currentScrollTop - lastScrollTopForPillTrigger : 0;
     const playingForward = typeof scrollSpeed !== 'undefined' && scrollSpeed > 0;
+    const maxScroll = Math.max(0, view.scrollHeight - view.clientHeight);
+    const atScrollEnd = currentScrollTop >= maxScroll - 3;
     const scrollingDown = isTeleprompting
-        ? (playingForward && scrollDelta > 0)
-        : scrollDelta > 0;
+        ? (playingForward && (scrollDelta > 0 || atScrollEnd))
+        : (scrollDelta > 0 || atScrollEnd);
     if (!scrollingDown) return;
 
     const viewRect = view.getBoundingClientRect();
     const indicatorY = wrapper.getBoundingClientRect().top + wrapper.getBoundingClientRect().height / 2;
     const rect = bottomPill.getBoundingClientRect();
-    const pad = 22; /* mirror top-pill tolerance */
-    const indicatorOverlapsPill = indicatorY >= rect.top - pad && indicatorY <= rect.bottom + pad;
     const pillVisibleInView = rect.bottom > viewRect.top + 6 && rect.top < viewRect.bottom - 6;
-    /* Fast wheel/trackpad can skip the overlap frame; whole pill still visible but entirely above sync line */
-    const pillScrolledPastSyncLine = rect.bottom < indicatorY - 8 && pillVisibleInView;
+    const indicatorContactsPill = syncLineContactsFilenamePill(indicatorY, rect);
+    const pillCrossedSyncLine = syncLineCrossedBottomFilenamePill(indicatorY, rect) && pillVisibleInView;
 
-    if (!indicatorOverlapsPill && !pillScrolledPastSyncLine) {
-        bottomPillTriggerFired = false;
+    if (!indicatorContactsPill && !pillCrossedSyncLine) {
+        if (!pageTurnInProgress) bottomPillTriggerFired = false;
         return;
     }
     if (bottomPillTriggerFired) return;
@@ -9699,13 +9760,36 @@ function shrinkAllPillsToFit() {
     });
 }
 
+function pauseTelepromptingForPageTurn() {
+    resumeTelepromptAfterPageTurn = isTeleprompting && !isPaused;
+    if (isTeleprompting) {
+        isTeleprompting = false;
+        isPaused = false;
+        scrollAccum = 0;
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+        }
+        if (typeof updatePlayPauseButton === 'function') updatePlayPauseButton();
+    }
+}
+
 function playPageTurnAndAdvanceToNextFile(nextIndex) {
+    if (pageTurnInProgress) return;
+    pageTurnInProgress = true;
+    pauseTelepromptingForPageTurn();
+    if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(3000);
+    if (typeof suppressMirrorScrollEcho === 'function') suppressMirrorScrollEcho(2500);
     const overlay = document.getElementById('page-turn-overlay');
     if (overlay) overlay.classList.add('page-turn-active');
     const DURATION_MS = 500;
     const LOAD_AT_MS = 150;
+    const resume = resumeTelepromptAfterPageTurn;
     setTimeout(() => {
-        if (typeof loadScriptToEditor === 'function') loadScriptToEditor(nextIndex, { scrollToTop: true, triggerNewTalkPill: true });
+        if (typeof loadScriptToEditor === 'function') {
+            loadScriptToEditor(nextIndex, { scrollToTop: true, triggerNewTalkPill: true, resumeTeleprompt: resume });
+        }
+        pageTurnInProgress = false;
     }, LOAD_AT_MS);
     setTimeout(() => {
         if (overlay) overlay.classList.remove('page-turn-active');
@@ -9713,12 +9797,21 @@ function playPageTurnAndAdvanceToNextFile(nextIndex) {
 }
 
 function playPageTurnAndGoToPreviousFile(prevIndex) {
+    if (pageTurnInProgress) return;
+    pageTurnInProgress = true;
+    pauseTelepromptingForPageTurn();
+    if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(3000);
+    if (typeof suppressMirrorScrollEcho === 'function') suppressMirrorScrollEcho(2500);
     const overlay = document.getElementById('page-turn-overlay');
     if (overlay) overlay.classList.add('page-turn-active');
     const DURATION_MS = 500;
     const LOAD_AT_MS = 150;
+    const resume = resumeTelepromptAfterPageTurn;
     setTimeout(() => {
-        if (typeof loadScriptToEditor === 'function') loadScriptToEditor(prevIndex, { scrollToBottom: true });
+        if (typeof loadScriptToEditor === 'function') {
+            loadScriptToEditor(prevIndex, { scrollToBottom: true, resumeTeleprompt: resume });
+        }
+        pageTurnInProgress = false;
     }, LOAD_AT_MS);
     setTimeout(() => {
         if (overlay) overlay.classList.remove('page-turn-active');
@@ -9731,6 +9824,9 @@ function loadScriptToEditor(index, options) {
     topPillTriggerFired = false;
     lastScrollTopForPillTrigger = null;
     if (fileStore[index] === null) return;
+
+    const switchingFile = currentFileIndex !== index;
+    if (switchingFile) bumpMirrorContentGeneration();
 
     /* Save current file only when switching to a different file (avoid overwriting with placeholder/empty when reloading same file after sort) */
     if (currentFileIndex >= 0 && currentFileIndex < contentStore.length && currentFileIndex !== index) {
@@ -9814,28 +9910,30 @@ function loadScriptToEditor(index, options) {
         if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
             contentStore[currentFileIndex] = teleprompterText.innerHTML.trim();
         }
+        if (options && options.scrollToTop) {
+            const view = document.getElementById('teleprompter-view');
+            if (view) view.scrollTop = 0;
+        }
+        if (options && options.scrollToBottom) {
+            const view = document.getElementById('teleprompter-view');
+            if (view) view.scrollTop = Math.max(0, view.scrollHeight - view.clientHeight);
+        }
+        if (typeof updateTopScrollChrome === 'function') updateTopScrollChrome({ preserveScroll: true });
+        if (typeof updateBottomScrollChrome === 'function') updateBottomScrollChrome({ preserveScroll: true });
+        if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(2000);
+        if (typeof suppressMirrorScrollEcho === 'function') suppressMirrorScrollEcho(2500);
+        if (typeof syncMirrorAfterEditorSettled === 'function') syncMirrorAfterEditorSettled();
+        if (options && options.resumeTeleprompt && typeof startScrolling === 'function') {
+            requestAnimationFrame(() => startScrolling());
+        }
         requestAnimationFrame(() => {
             skipCaretFontSelectSync = false;
+            const view = document.getElementById('teleprompter-view');
+            if (view) lastScrollTopForPillTrigger = view.scrollTop;
         });
     });
 
     updateFilenamePills();
-    if (mirrorWindow && !mirrorWindow.closed) {
-        refreshMirrorData();
-        syncMirrorStyles();
-    }
-    if (options && options.scrollToTop) {
-        const view = document.getElementById('teleprompter-view');
-        if (view) view.scrollTop = 0;
-    }
-    if (options && options.scrollToBottom) {
-        const view = document.getElementById('teleprompter-view');
-        if (view) view.scrollTop = Math.max(0, view.scrollHeight - view.clientHeight);
-    }
-    requestAnimationFrame(() => {
-        const view = document.getElementById('teleprompter-view');
-        if (view) lastScrollTopForPillTrigger = view.scrollTop;
-    });
     if (options && options.triggerNewTalkPill) {
         const topPill = document.getElementById('filename-pill-top');
         if (topPill) {
@@ -10375,7 +10473,11 @@ function getMirrorPillPayload() {
 function pushMirrorPillLabels() {
     if (!mirrorWindow || mirrorWindow.closed) return;
     try {
-        mirrorWindow.postMessage({ type: 'mirrorPillSync', ...getMirrorPillPayload() }, '*');
+        mirrorWindow.postMessage({
+            type: 'mirrorPillSync',
+            ...getMirrorPillPayload(),
+            ...getMirrorContentSyncMeta()
+        }, '*');
     } catch (_) {}
 }
 
@@ -10471,7 +10573,11 @@ function pushMirrorLeaderLayout() {
     const layout = getMirrorLayoutMetrics();
     if (!layout) return;
     try {
-        mirrorWindow.postMessage({ type: 'mirrorForceLayout', layout }, '*');
+        mirrorWindow.postMessage({
+            type: 'mirrorForceLayout',
+            layout,
+            ...getMirrorContentSyncMeta()
+        }, '*');
     } catch (_) {}
 }
 
@@ -10572,7 +10678,8 @@ function syncMirrorStyles() {
                 type: 'syncStyleLite',
                 style: getMirrorStylePayload(),
                 layout: getMirrorLayoutMetrics(),
-                ...getMirrorPillPayload()
+                ...getMirrorPillPayload(),
+                ...getMirrorContentSyncMeta()
             }, '*');
             pushMirrorLeaderLayout();
             setTimeout(pushMirrorLeaderLayout, 40);
