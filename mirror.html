@@ -365,17 +365,24 @@
                 if (!debugMode) scheduleMirrorFullscreenAttempts();
             });
             function requestMainWindowFocus() {
-                if (window.opener && !window.opener.closed) {
-                    try { window.opener.postMessage({ type: 'mirrorFocusReclaim' }, '*'); } catch (_) {}
-                }
+                if (!window.opener || window.opener.closed) return;
+                try {
+                    var doc = window.opener.document;
+                    var active = doc.activeElement;
+                    var ribbon = doc.querySelector('.top-ribbon');
+                    if (ribbon && active && ribbon.contains(active)) return;
+                    var runlist = doc.getElementById('runlist-panel');
+                    if (runlist && active && runlist.contains(active)) return;
+                    window.opener.postMessage({ type: 'mirrorFocusReclaim' }, '*');
+                } catch (_) {}
             }
 
             window.addEventListener('focus', function() {
                 if (!debugMode) enterFullscreen();
-                requestMainWindowFocus();
             });
             window.addEventListener('pointerdown', function() {
                 if (!debugMode) enterFullscreen();
+                requestMainWindowFocus();
             }, true);
             window.addEventListener('keydown', function(e) {
                 if (debugMode) return;
