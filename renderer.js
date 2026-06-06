@@ -4171,6 +4171,7 @@ function indexToColumnLetter(colIndex) {
         /** Size bottom black chrome so the bottom pill can scroll through the indicator before advancing. */
         function updateBottomScrollChrome(options) {
             const preserveScroll = !options || options.preserveScroll !== false;
+            const lockToBottom = !!(options && options.lockToBottom);
             const view = teleprompterView;
             if (!view) return;
             const bottomSpacer = view.querySelector('.teleprompter-bottom-spacer');
@@ -4178,6 +4179,7 @@ function indexToColumnLetter(colIndex) {
 
             const maxBefore = Math.max(0, view.scrollHeight - view.clientHeight);
             const scrollRatio = maxBefore > 0 ? view.scrollTop / maxBefore : 0;
+            const wasAtBottom = view.scrollTop >= maxBefore - 4;
 
             if (!view.classList.contains('has-file')) {
                 bottomSpacer.style.removeProperty('min-height');
@@ -4194,6 +4196,7 @@ function indexToColumnLetter(colIndex) {
             let spacerPx = overviewMode ? runwayAfterPill : Math.max(Math.round(viewH * 0.5), runwayAfterPill);
 
             const bottomPill = document.getElementById('filename-pill-bottom');
+            const wrapper = document.getElementById('indicator-wrapper');
             if (bottomPill && !bottomPill.classList.contains('hidden')) {
                 void view.offsetHeight;
                 const viewRect = view.getBoundingClientRect();
@@ -4205,6 +4208,14 @@ function indexToColumnLetter(colIndex) {
                 if (contentBelowPillBottom < runwayAfterPill) {
                     spacerPx = Math.max(spacerPx, runwayAfterPill - contentBelowPillBottom + Math.round(0.35 * pillHeight));
                 }
+                /* Stuck at scroll end but blue pill still below sync line — add runway until it can reach the indicator. */
+                if (wrapper && (wasAtBottom || lockToBottom)) {
+                    const indicatorY = wrapper.getBoundingClientRect().top + wrapper.getBoundingClientRect().height / 2;
+                    if (pillRect.top > indicatorY - 2) {
+                        const needPx = Math.ceil(pillRect.top - indicatorY + Math.round(0.45 * pillHeight) + rootFs);
+                        if (needPx > 0) spacerPx += needPx;
+                    }
+                }
             }
 
             spacerPx += Math.round(2 * rootFs);
@@ -4212,7 +4223,9 @@ function indexToColumnLetter(colIndex) {
             bottomSpacer.style.setProperty('min-height', spacerPx + 'px', 'important');
             void view.offsetHeight;
 
-            if (preserveScroll) {
+            if (lockToBottom) {
+                view.scrollTop = Math.max(0, view.scrollHeight - view.clientHeight);
+            } else if (preserveScroll) {
                 const newMax = Math.max(0, view.scrollHeight - view.clientHeight);
                 view.scrollTop = Math.round(scrollRatio * newMax);
             }
@@ -8790,6 +8803,11 @@ function checkBottomPillAndAdvanceToNextFile() {
         ? (playingForward && (scrollDelta > 0 || atScrollEnd))
         : (scrollDelta > 0 || atScrollEnd);
     if (!scrollingDown) return;
+
+    if (atScrollEnd && typeof updateBottomScrollChrome === 'function') {
+        updateBottomScrollChrome({ preserveScroll: false, lockToBottom: true });
+        void view.offsetHeight;
+    }
 
     const viewRect = view.getBoundingClientRect();
     const indicatorY = wrapper.getBoundingClientRect().top + wrapper.getBoundingClientRect().height / 2;
