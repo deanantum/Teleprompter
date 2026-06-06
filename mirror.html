@@ -104,12 +104,25 @@
             display: inline !important;
         }
         .mirror-table .script-row-wrapper.row-lines-same { background-color: #000000 !important; }
-        /* Row color guide: fill on row wrapper only (no column/cell backgrounds — text stays readable) */
+        /* Row color guide: glow (one-more) — dual edge fade on the single visible column (matches main broadcast glow) */
         .mirror-table .script-row-wrapper.row-col2-one-more,
         .mirror-table .script-row-wrapper.row-col3-one-more { background: #000000 !important; }
+        .mirror-table .script-row-wrapper.row-col2-one-more .script-column.mirror-visible {
+            background: linear-gradient(to right, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
+                        linear-gradient(to left, rgba(0, 45, 4, 1) 0%, rgba(0, 45, 4, 0.9) 8%, rgba(0, 45, 4, 0.5) 18%, rgba(0, 45, 4, 0.15) 28%, transparent 35%),
+                        transparent !important;
+        }
+        .mirror-table .script-row-wrapper.row-col3-one-more .script-column.mirror-visible {
+            background: linear-gradient(to right, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
+                        linear-gradient(to left, rgba(83, 21, 22, 1) 0%, rgba(83, 21, 22, 0.9) 8%, rgba(83, 21, 22, 0.5) 18%, rgba(83, 21, 22, 0.15) 28%, transparent 35%),
+                        transparent !important;
+        }
         .mirror-table .script-row-wrapper.row-col2-more { background-color: #002D04 !important; color: #ffffff !important; }
+        .mirror-table .script-row-wrapper.row-col2-more .script-column.mirror-visible { background-color: #002D04 !important; }
         .mirror-table .script-row-wrapper.row-col3-more,
         .mirror-table .script-row-wrapper.row-col3-much-more { background-color: #531516 !important; color: #ffffff !important; }
+        .mirror-table .script-row-wrapper.row-col3-more .script-column.mirror-visible,
+        .mirror-table .script-row-wrapper.row-col3-much-more .script-column.mirror-visible { background-color: #531516 !important; }
         .mirror-table .script-row-wrapper.row-col2-more .cell-content,
         .mirror-table .script-row-wrapper.row-col3-more .cell-content,
         .mirror-table .script-row-wrapper.row-col3-much-more .cell-content {
@@ -881,6 +894,12 @@
                         applyMirrorPills(data);
                         if (data.layout) applyMirrorLayout(data.layout);
                         void container.offsetHeight;
+                        if (data.rowColors && data.rowColors.length) {
+                            var mirrorRowsForColors = display.querySelectorAll('.script-row-wrapper');
+                            var tableForColors = lastLoadContentData && lastLoadContentData.table ? lastLoadContentData.table : null;
+                            applyMirrorRowClasses(mirrorRowsForColors, tableForColors, data.rowColors);
+                            if (lastLoadContentData) lastLoadContentData.rowColors = data.rowColors;
+                        }
                         var rowPayload = getMirrorRowSyncPayload() || {};
                         if (data.rowHeights && data.rowHeights.length) rowPayload.rowHeights = data.rowHeights;
                         if (data.rowStretch && data.rowStretch.length) rowPayload.rowStretch = data.rowStretch;
