@@ -1979,6 +1979,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (typeof resetPillTriggerState === 'function') resetPillTriggerState();
         focusMainForControl();
         isTeleprompting = true;
+        lastMirrorSyncScrollTop = null;
         syncMirrorByPixels();
         const move = () => {
             if (!isTeleprompting) return;
@@ -3846,6 +3847,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function bumpMirrorContentGeneration() {
         mirrorContentGeneration += 1;
+        invalidateMirrorScrollLeaderCache();
         return mirrorContentGeneration;
     }
 
@@ -3986,6 +3988,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (changed) {
             applyBroadcastRowHeightsToDom(merged, rows);
             pushMergedRowHeightsToMirror(merged);
+            invalidateMirrorScrollLeaderCache();
             if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
         }
         if (!document.body.classList.contains('overview-mode')) {
@@ -3996,6 +3999,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function handleRowHeightsReport(data) {
         if (!mirrorWindow || mirrorWindow.closed || !Array.isArray(data.rowHeights)) return;
+        if (isTeleprompting) return;
         if (rowHeightSyncInProgress) return;
         rowHeightSyncInProgress = true;
         try {
@@ -4160,6 +4164,7 @@ function indexToColumnLetter(colIndex) {
             spacer.style.setProperty('min-height', spacerPx + 'px', 'important');
             runway.style.setProperty('min-height', runwayPx + 'px', 'important');
             void view.offsetHeight;
+            invalidateMirrorScrollLeaderCache();
 
             if (preserveScroll) {
                 const newMax = Math.max(0, view.scrollHeight - view.clientHeight);
@@ -4226,6 +4231,7 @@ function indexToColumnLetter(colIndex) {
 
             bottomSpacer.style.setProperty('min-height', spacerPx + 'px', 'important');
             void view.offsetHeight;
+            invalidateMirrorScrollLeaderCache();
 
             if (lockToBottom) {
                 view.scrollTop = Math.max(0, view.scrollHeight - view.clientHeight);
@@ -4244,15 +4250,19 @@ function indexToColumnLetter(colIndex) {
         if (isUpdatingFromMirrorScroll || !mirrorWindow || mirrorWindow.closed) return;
         if (pageTurnInProgress) return;
         const scrollOnly = isTeleprompting;
+        const scrollPayload = getMirrorScrollSyncPayload();
+        if (scrollOnly && lastMirrorSyncScrollTop === scrollPayload.contentScrollY) return;
+        lastMirrorSyncScrollTop = scrollPayload.contentScrollY;
         const payload = {
             type: 'pixelSync',
             scrollOnly,
             ...getMirrorContentSyncMeta(),
-            ...getMirrorScrollSyncPayload(),
+            ...scrollPayload,
             indicatorPosition: getIndicatorPositionPercent(),
             indicatorViewportPx: getIndicatorViewportOffsetPx()
         };
         if (!scrollOnly) {
+            lastMirrorSyncScrollTop = null;
             payload.layout = getMirrorLayoutMetrics();
             Object.assign(payload, getMirrorPillPayload());
             const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
@@ -10026,22 +10036,44 @@ function requestMirrorFullscreen() {
     [0, 60, 180, 400, 900, 1800, 3200, 5200].forEach((ms) => setTimeout(tryOnce, ms));
 }
 
-/** Scroll sync: content Y at viewport top + row origins (not scroll ratio — different window heights). */
+/** Cached leader geometry for mirror scroll sync (invalidated when layout/heights change). */
+let mirrorScrollLeaderCache = null;
+let lastMirrorSyncScrollTop = null;
+
+function invalidateMirrorScrollLeaderCache() {
+    mirrorScrollLeaderCache = null;
+    lastMirrorSyncScrollTop = null;
+}
+
+function readMirrorScrollLeaderCache() {
+    const view = teleprompterView;
+    if (!view || !teleprompterText) return null;
+    void view.offsetHeight;
+    void teleprompterText.offsetHeight;
+    const scriptOffsetTop = Math.round(teleprompterText.offsetTop || 0);
+    const firstRow = teleprompterText.querySelector('.script-row-wrapper');
+    const scriptRow0OriginY = firstRow
+        ? Math.round(scriptOffsetTop + (firstRow.offsetTop || 0))
+        : scriptOffsetTop;
+    return { scriptOffsetTop, scriptRow0OriginY };
+}
+
+/** Scroll sync: content Y at viewport top + first-row origin (not scroll ratio — different window heights). */
 function getMirrorScrollSyncPayload() {
     const view = teleprompterView;
     if (!view || !teleprompterText) {
-        return { contentScrollY: 0, scriptOffsetTop: 0, rowOriginYs: [] };
+        return { contentScrollY: 0, scriptOffsetTop: 0, scriptRow0OriginY: 0, rowOriginYs: [] };
     }
-    void view.offsetHeight;
-    void teleprompterText.offsetHeight;
+    if (!mirrorScrollLeaderCache) {
+        mirrorScrollLeaderCache = readMirrorScrollLeaderCache();
+    }
     const contentScrollY = Math.round(view.scrollTop || 0);
-    const scriptOffsetTop = Math.round(teleprompterText.offsetTop || 0);
-    const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
-    const rowOriginYs = rows.map((row) => Math.round(scriptOffsetTop + (row.offsetTop || 0)));
+    const leader = mirrorScrollLeaderCache || { scriptOffsetTop: 0, scriptRow0OriginY: 0 };
     return {
         contentScrollY,
-        scriptOffsetTop,
-        rowOriginYs,
+        scriptOffsetTop: leader.scriptOffsetTop,
+        scriptRow0OriginY: leader.scriptRow0OriginY,
+        rowOriginYs: [leader.scriptRow0OriginY],
         scrollTop: contentScrollY
     };
 }
