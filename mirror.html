@@ -522,22 +522,41 @@
                 return { spacer: spacer, runway: runway, pillTop: pillTop, content: content };
             }
 
+            /** Bottom scroll room after blue pill — mirror is often taller than main; use local viewport and 2× main value. */
+            function resolveMirrorBottomSpacerPx(layoutBottomSpacerPx) {
+                var viewH = container ? Math.max(0, container.clientHeight || 0) : (window.innerHeight || 800);
+                var rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+                var indicatorPx = Math.round(viewH * 0.5);
+                var guideVar = document.documentElement.style.getPropertyValue('--mirror-indicator-top-px');
+                if (guideVar && container) {
+                    var rootRect = container.getBoundingClientRect();
+                    var guidePx = parseFloat(guideVar);
+                    if (!isNaN(guidePx)) {
+                        indicatorPx = Math.max(0, Math.min(viewH, Math.round(guidePx - rootRect.top)));
+                    }
+                }
+                var minChrome = Math.round(4 * rootFs);
+                var runwayAfterPill = Math.max(minChrome, Math.round(viewH - indicatorPx));
+                var extra = Math.round(2 * rootFs);
+                var localMin = Math.max(Math.round(viewH * 0.5), runwayAfterPill) + extra;
+                var fromMain = (typeof layoutBottomSpacerPx === 'number' && !isNaN(layoutBottomSpacerPx))
+                    ? Math.max(0, Math.round(layoutBottomSpacerPx))
+                    : 0;
+                return Math.max(fromMain, localMin) * 2;
+            }
+
             function defaultMirrorLayoutFromViewport() {
                 var ih = window.innerHeight || document.documentElement.clientHeight || 800;
                 var rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
                 var ts = Math.max(0, Math.round(ih * 0.5 - 8 * rootFs));
                 var tr = Math.max(Math.round(10 * rootFs), Math.round(ih * 0.22));
                 var gap = Math.round(1.4 * rootFs);
-                var indicatorPx = Math.round(ih * 0.5);
-                var runwayAfterPill = Math.max(Math.round(4 * rootFs), Math.round(ih - indicatorPx));
-                var bottomSpacerExtra = Math.round(2 * rootFs);
-                var bottomSpacerPx = Math.max(Math.round(ih * 0.5), runwayAfterPill) + bottomSpacerExtra;
                 return {
                     topSpacerPx: ts,
                     topRunwayPx: tr,
                     pillGapPx: gap,
                     leaderPx: ts + tr + gap,
-                    bottomSpacerPx: bottomSpacerPx
+                    bottomSpacerPx: resolveMirrorBottomSpacerPx(0)
                 };
             }
 
@@ -686,9 +705,7 @@
                 setBlackBand(runway, tr);
 
                 var bottomSpacer = document.getElementById('mirror-bottom-spacer');
-                var bs = typeof layout.bottomSpacerPx === 'number' && !isNaN(layout.bottomSpacerPx)
-                    ? Math.max(0, Math.round(layout.bottomSpacerPx))
-                    : 0;
+                var bs = resolveMirrorBottomSpacerPx(layout.bottomSpacerPx);
                 setBlackBand(bottomSpacer, bs);
 
                 if (pillTop) {
@@ -1026,6 +1043,11 @@
             window.addEventListener('resize', function() {
                 scheduleMirrorViewportReport();
                 if (lastPixelSyncData) applyMirrorIndicatorGuide(lastPixelSyncData);
+                var layoutSnap = (lastPixelSyncData && lastPixelSyncData.layout)
+                    ? lastPixelSyncData.layout
+                    : defaultMirrorLayoutFromViewport();
+                applyMirrorLayout(layoutSnap);
+                if (lastPixelSyncData) applyMirrorScrollSync(lastPixelSyncData);
                 var mirrorRows = display.querySelectorAll('.script-row-wrapper');
                 if (mirrorRows.length) reportMirrorRowHeightsToMain(mirrorRows);
             });
