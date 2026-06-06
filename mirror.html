@@ -248,12 +248,14 @@
         .mirror-filename-pill.hidden { display: none !important; }
         /* Same stack as main #teleprompter-view: spacer → runway → pill; heights set inline from main offsetHeight (like row heights). */
         .mirror-top-spacer,
-        .mirror-top-runway {
+        .mirror-top-runway,
+        .mirror-bottom-spacer {
             display: block;
             width: 100%;
             pointer-events: none;
             background-color: #000;
             min-height: 0;
+            flex-shrink: 0;
         }
     </style>
 </head>
@@ -265,6 +267,7 @@
         <div id="mirror-content" class="mirror-table"></div>
         <div id="mirror-runway" class="mirror-runway" aria-hidden="true"></div>
         <div id="mirror-pill-bottom" class="mirror-filename-pill mirror-filename-pill-bottom hidden" aria-hidden="true"></div>
+        <div id="mirror-bottom-spacer" class="mirror-bottom-spacer" aria-hidden="true"></div>
     </div>
     <div id="mirror-sync-guide"></div>
     <script>
@@ -495,11 +498,15 @@
                 var ts = Math.max(0, Math.round(ih * 0.5 - 8 * rootFs));
                 var tr = Math.max(Math.round(10 * rootFs), Math.round(ih * 0.22));
                 var gap = Math.round(1.4 * rootFs);
+                var indicatorPx = Math.round(ih * 0.5);
+                var runwayAfterPill = Math.max(Math.round(4 * rootFs), Math.round(ih - indicatorPx));
+                var bottomSpacerPx = Math.max(Math.round(ih * 0.5), runwayAfterPill);
                 return {
                     topSpacerPx: ts,
                     topRunwayPx: tr,
                     pillGapPx: gap,
-                    leaderPx: ts + tr + gap
+                    leaderPx: ts + tr + gap,
+                    bottomSpacerPx: bottomSpacerPx
                 };
             }
 
@@ -632,6 +639,12 @@
 
                 setBlackBand(spacer, ts);
                 setBlackBand(runway, tr);
+
+                var bottomSpacer = document.getElementById('mirror-bottom-spacer');
+                var bs = typeof layout.bottomSpacerPx === 'number' && !isNaN(layout.bottomSpacerPx)
+                    ? Math.max(0, Math.round(layout.bottomSpacerPx))
+                    : 0;
+                setBlackBand(bottomSpacer, bs);
 
                 if (pillTop) {
                     pillTop.style.minHeight = '';
