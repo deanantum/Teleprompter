@@ -3950,6 +3950,9 @@ document.addEventListener('DOMContentLoaded', function() {
             pushMergedRowHeightsToMirror(merged);
             if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
         }
+        if (!document.body.classList.contains('overview-mode')) {
+            applyRowShortColumnLineSpacing();
+        }
         return merged;
     }
 
@@ -4291,6 +4294,9 @@ function indexToColumnLetter(colIndex) {
             pushMergedRowHeightsToMirror(measuredRowHeights);
         }
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
+        if (!document.body.classList.contains('overview-mode')) {
+            applyRowShortColumnLineSpacing();
+        }
     }
 
     /** After extend: temporarily let rows size to content, measure actual height (max of visible content cols), then apply. Reduces gap under text. */
@@ -4327,6 +4333,9 @@ function indexToColumnLetter(colIndex) {
             measuredRowHeights = measureBroadcastRowHeights(rows).map(h => Math.max(1, Math.min(Math.floor(h || 1), viewportMax)));
             applyBroadcastRowHeightsToDom(measuredRowHeights, rows);
             pushMergedRowHeightsToMirror(measuredRowHeights);
+            if (!document.body.classList.contains('overview-mode')) {
+                applyRowShortColumnLineSpacing();
+            }
         }
         rows.forEach((row) => {
             row.style.alignItems = '';
@@ -4630,11 +4639,7 @@ function indexToColumnLetter(colIndex) {
                 } catch (_) {}
             }
             if (mirrorWindow && !mirrorWindow.closed && document.body.classList.contains('broadcasting')) {
-                if (mirrorReportedRowHeights.length) {
-                    syncBroadcastRowHeightsFromBothViews(mirrorReportedRowHeights);
-                } else if (measuredRowHeights.length) {
-                    pushMergedRowHeightsToMirror(measuredRowHeights);
-                }
+                pushMergedRowHeightsToMirror(measuredRowHeights);
             }
         }
     }
