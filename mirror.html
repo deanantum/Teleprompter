@@ -600,7 +600,8 @@
                 }
             }
 
-            function applyMirrorScrollSync(data) {
+            function applyMirrorScrollSync(data, options) {
+                options = options || {};
                 if (!data || !container) return;
                 var display = document.getElementById('mirror-content');
                 var mainScroll = Math.round(data.contentScrollY || data.scrollTop || 0);
@@ -617,6 +618,8 @@
                 if (target < 0) target = 0;
                 var maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
                 if (target > maxScroll) target = maxScroll;
+                if (Math.abs(container.scrollTop - target) <= 1) return;
+                suppressMirrorScrollPosts = Math.max(suppressMirrorScrollPosts, options.suppressPosts || 6);
                 container.scrollTop = target;
             }
 
@@ -900,10 +903,10 @@
                 var layoutSnap = (data && data.layout) ? data.layout : defaultMirrorLayoutFromViewport();
                 applyMirrorLayout(layoutSnap);
                 if (data) {
-                    applyMirrorScrollSync(data);
+                    applyMirrorScrollSync(data, { suppressPosts: 12 });
                     applyMirrorIndicatorGuide(data);
                 }
-                suppressMirrorScrollPosts = 8;
+                suppressMirrorScrollPosts = 12;
             }
 
             function getMirrorRowSyncPayload() {
@@ -997,7 +1000,7 @@
                     noteMirrorGeneration(data);
                     lastPixelSyncData = data;
                     var scrollOnly = !!data.scrollOnly;
-                    suppressMirrorScrollPosts = scrollOnly ? 4 : 2;
+                    suppressMirrorScrollPosts = scrollOnly ? 8 : 4;
                     if (!scrollOnly) {
                         applyMirrorPills(data);
                         if (data.layout) applyMirrorLayout(data.layout);
@@ -1016,12 +1019,12 @@
                             applyMirrorRowHeightsAndStretch(rowPayload, { heightsOnly: true });
                         }
                     }
-                    applyMirrorScrollSync(data);
+                    applyMirrorScrollSync(data, { suppressPosts: scrollOnly ? 8 : 6 });
                     applyMirrorIndicatorGuide(data);
                     if (!scrollOnly) {
                         requestAnimationFrame(function() {
-                            suppressMirrorScrollPosts = 2;
-                            applyMirrorScrollSync(data);
+                            suppressMirrorScrollPosts = 4;
+                            applyMirrorScrollSync(data, { suppressPosts: 6 });
                             applyMirrorIndicatorGuide(data);
                         });
                     }
