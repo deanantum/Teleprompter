@@ -129,8 +129,37 @@ document.addEventListener('DOMContentLoaded', function() {
     teleprompterText.style.fontSize = (fontSizeSelect?.value || "80") + "px";
     teleprompterView.focus();
 
+    let mainControlSurfaceUntil = 0;
+    let mirrorFocusReclaimTimer = null;
+
+    function markMainControlSurface(ms = 1500) {
+        mainControlSurfaceUntil = Date.now() + ms;
+    }
+
+    function isMainControlSurface(el) {
+        if (!el) return false;
+        const ribbon = document.querySelector('.top-ribbon');
+        if (ribbon?.contains(el)) return true;
+        if (runlistPanel?.contains(el)) return true;
+        if (bgColorPanel?.contains(el)) return true;
+        if (fontColorPanel?.contains(el)) return true;
+        const settings = document.getElementById('settings-overlay');
+        if (settings && !settings.classList.contains('hidden') && settings.contains(el)) return true;
+        const shortcuts = document.getElementById('shortcuts-overlay');
+        if (shortcuts && !shortcuts.classList.contains('hidden') && shortcuts.contains(el)) return true;
+        const eventPlan = document.getElementById('event-plan-overlay');
+        if (eventPlan && !eventPlan.classList.contains('hidden') && eventPlan.contains(el)) return true;
+        return false;
+    }
+
+    function shouldDeferMainFocusReclaim() {
+        if (Date.now() < mainControlSurfaceUntil) return true;
+        return isMainControlSurface(document.activeElement);
+    }
+
     /** Main window leads scroll/keyboard; mirror is display-only unless user explicitly clicks it. */
     function focusMainForControl() {
+        if (shouldDeferMainFocusReclaim()) return;
         try { window.focus(); } catch (_) {}
         if (!teleprompterView) return;
         try {
@@ -139,6 +168,27 @@ document.addEventListener('DOMContentLoaded', function() {
             teleprompterView.focus();
         }
     }
+
+    function handleMirrorFocusReclaim() {
+        if (shouldDeferMainFocusReclaim()) return;
+        if (mirrorFocusReclaimTimer) return;
+        mirrorFocusReclaimTimer = setTimeout(() => {
+            mirrorFocusReclaimTimer = null;
+            if (shouldDeferMainFocusReclaim()) return;
+            focusMainForControl();
+        }, 120);
+    }
+
+    const ribbonForFocusGuard = document.querySelector('.top-ribbon');
+    if (ribbonForFocusGuard) {
+        ribbonForFocusGuard.addEventListener('pointerdown', () => markMainControlSurface(2000), true);
+    }
+    if (runlistPanel) {
+        runlistPanel.addEventListener('pointerdown', () => markMainControlSurface(2000), true);
+    }
+    [bgColorPanel, fontColorPanel].forEach((panel) => {
+        if (panel) panel.addEventListener('pointerdown', () => markMainControlSurface(2000), true);
+    });
 
     function clearPlaceholderIfActive() {
         if (teleprompterText.dataset.placeholder !== 'true') return;
@@ -3940,8 +3990,7 @@ document.addEventListener('DOMContentLoaded', function() {
         syncMirrorStyles();
         [0, 60, 200, 450].forEach((ms) => setTimeout(() => pushMirrorLeaderLayout(), ms));
         [120, 400, 900].forEach((ms) => setTimeout(() => relayoutBroadcastAfterMirrorWidthChange(), ms));
-        focusMainForControl();
-        [0, 50, 150, 400].forEach((ms) => setTimeout(focusMainForControl, ms));
+        handleMirrorFocusReclaim();
     }
 
     let overflowReportCount = 0;
@@ -4010,16 +4059,24 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!mirrorWindow || mirrorWindow.closed || !Array.isArray(data.rowHeights)) return;
         if (isTeleprompting) return;
         if (rowHeightSyncInProgress) return;
-        rowHeightSyncInProgress = true;
-        try {
-            syncBroadcastRowHeightsFromBothViews(data.rowHeights);
-            if (!isTeleprompting) {
-                requestAnimationFrame(() => {
-                    if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
-                });
+        const applyReport = () => {
+            if (rowHeightSyncInProgress) return;
+            rowHeightSyncInProgress = true;
+            try {
+                syncBroadcastRowHeightsFromBothViews(data.rowHeights);
+                if (!isTeleprompting) {
+                    requestAnimationFrame(() => {
+                        if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+                    });
+                }
+            } finally {
+                rowHeightSyncInProgress = false;
             }
-        } finally {
-            rowHeightSyncInProgress = false;
+        };
+        if (data.rowHeights.length > 48) {
+            setTimeout(applyReport, 0);
+        } else {
+            applyReport();
         }
     }
 
@@ -4033,7 +4090,7 @@ document.addEventListener('DOMContentLoaded', function() {
             try {
                 const data = e.data || {};
                 if (data.type === 'mirrorReady') handleMirrorReady();
-                if (data.type === 'mirrorFocusReclaim') focusMainForControl();
+                if (data.type === 'mirrorFocusReclaim') handleMirrorFocusReclaim();
                 if (data.type === 'mirrorViewportWidth') handleMirrorViewportWidth(data);
                 if (data.type === 'mirrorScroll') handleMirrorScroll(data);
                 if (data.type === 'rowOverflowReport') handleRowOverflowReport(data);
@@ -4046,7 +4103,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             const data = e.data || {};
             if (data.type === 'mirrorReady') handleMirrorReady();
-            if (data.type === 'mirrorFocusReclaim') focusMainForControl();
+            if (data.type === 'mirrorFocusReclaim') handleMirrorFocusReclaim();
             if (data.type === 'mirrorViewportWidth') handleMirrorViewportWidth(data);
             if (data.type === 'mirrorScroll') handleMirrorScroll(data);
             if (data.type === 'rowOverflowReport') handleRowOverflowReport(data);
@@ -10050,7 +10107,7 @@ function requestMirrorFullscreen() {
                 if (result && typeof result.catch === 'function') result.catch(() => {});
             }
         } catch (_) {}
-        if (typeof focusMainForControl === 'function') focusMainForControl();
+        if (typeof handleMirrorFocusReclaim === 'function') handleMirrorFocusReclaim();
     };
     [0, 60, 180, 400, 900, 1800, 3200, 5200].forEach((ms) => setTimeout(tryOnce, ms));
 }
@@ -10536,8 +10593,7 @@ extendMonitorButton.onclick = async () => {
                 requestAnimationFrame(() => requestAnimationFrame(attemptRestore));
                 setTimeout(attemptRestore, 100);
                 if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(2000);
-                focusMainForControl();
-                [0, 50, 150, 400, 800].forEach((ms) => setTimeout(focusMainForControl, ms));
+                handleMirrorFocusReclaim();
                 [0, 40, 120, 350, 700].forEach((ms) => setTimeout(() => pushMirrorLeaderLayout(), ms));
             };
             mirrorWindow.addEventListener('load', sendWhenReady);
