@@ -43,11 +43,11 @@
             margin: 0;
             display: block;
         }
-        /* Blank space at end so last line can scroll up to top (matches main bottom spacer) */
+        /* Blank row between script and END pill (matches main .teleprompter-runway) */
         .mirror-runway {
             display: block;
-            min-height: 50vh;
-            height: 50vh;
+            min-height: 1.4em;
+            height: 1.4em;
             width: 100%;
             pointer-events: none;
             background-color: #000;
@@ -246,6 +246,34 @@
             margin-top: 0;
         }
         .mirror-filename-pill.hidden { display: none !important; }
+        /* Red END + green STAY/SWITCH pills (match main .stay-switch-pill) */
+        .mirror-stay-switch-pill {
+            display: block;
+            width: 100%;
+            padding: 0 0 0 16px;
+            margin-top: 0;
+            margin-bottom: 1.4em;
+            background-color: #22c55e;
+            color: #000000;
+            border-radius: 9999px;
+            line-height: 1.4;
+            font-weight: 500;
+            pointer-events: none;
+            flex-shrink: 0;
+            box-sizing: border-box;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-align: left;
+            position: relative;
+            z-index: 1;
+            -webkit-text-fill-color: currentColor;
+        }
+        .mirror-stay-switch-pill.mirror-end-pill {
+            background-color: #dc2626;
+            margin-bottom: 0.55em;
+        }
+        .mirror-stay-switch-pill.hidden { display: none !important; }
         /* Same stack as main #teleprompter-view: spacer → runway → pill; heights set inline from main offsetHeight (like row heights). */
         .mirror-top-spacer,
         .mirror-top-runway,
@@ -266,6 +294,8 @@
         <div id="mirror-pill-top" class="mirror-filename-pill hidden" aria-hidden="true"></div>
         <div id="mirror-content" class="mirror-table"></div>
         <div id="mirror-runway" class="mirror-runway" aria-hidden="true"></div>
+        <div id="mirror-end-pill" class="mirror-stay-switch-pill mirror-end-pill hidden" aria-hidden="true"></div>
+        <div id="mirror-stay-switch-pill" class="mirror-stay-switch-pill hidden" aria-hidden="true"></div>
         <div id="mirror-pill-bottom" class="mirror-filename-pill mirror-filename-pill-bottom hidden" aria-hidden="true"></div>
         <div id="mirror-bottom-spacer" class="mirror-bottom-spacer" aria-hidden="true"></div>
     </div>
@@ -500,7 +530,8 @@
                 var gap = Math.round(1.4 * rootFs);
                 var indicatorPx = Math.round(ih * 0.5);
                 var runwayAfterPill = Math.max(Math.round(4 * rootFs), Math.round(ih - indicatorPx));
-                var bottomSpacerPx = Math.max(Math.round(ih * 0.5), runwayAfterPill);
+                var bottomSpacerExtra = Math.round(2 * rootFs);
+                var bottomSpacerPx = Math.max(Math.round(ih * 0.5), runwayAfterPill) + bottomSpacerExtra;
                 return {
                     topSpacerPx: ts,
                     topRunwayPx: tr,
@@ -598,8 +629,22 @@
                     data.bottomPillFontSize,
                     data.bottomPillFontFamily
                 );
+                var endPillEl = updateOne(
+                    document.getElementById('mirror-end-pill'),
+                    data.endPill,
+                    data.endPillFontSize,
+                    data.endPillFontFamily
+                );
+                var staySwitchPillEl = updateOne(
+                    document.getElementById('mirror-stay-switch-pill'),
+                    data.staySwitchPill,
+                    data.staySwitchPillFontSize,
+                    data.staySwitchPillFontFamily
+                );
                 requestAnimationFrame(function() {
                     shrinkMirrorPillToFit(topPillEl);
+                    shrinkMirrorPillToFit(endPillEl);
+                    shrinkMirrorPillToFit(staySwitchPillEl);
                     shrinkMirrorPillToFit(bottomPillEl);
                 });
             }
@@ -667,6 +712,8 @@
                 }
                 requestAnimationFrame(function() {
                     shrinkMirrorPillToFit(pillTop);
+                    shrinkMirrorPillToFit(document.getElementById('mirror-end-pill'));
+                    shrinkMirrorPillToFit(document.getElementById('mirror-stay-switch-pill'));
                     shrinkMirrorPillToFit(document.getElementById('mirror-pill-bottom'));
                 });
             }
