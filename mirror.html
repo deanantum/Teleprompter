@@ -661,12 +661,11 @@
                 }
             }
 
-            /*
-             * Mirror shows one column at full width. Main-window row stretch (line-height
-             * balancing between col2/col3) must not be copied — it creates huge gaps (e.g. 350px lh).
-             */
-            function applyMirrorRowHeightsLocally(mirrorRows) {
-                if (!mirrorRows || !mirrorRows.length) return;
+            let suppressMirrorHeightReport = 0;
+
+            function measureMirrorRowHeightsLocally(mirrorRows) {
+                var heights = [];
+                if (!mirrorRows || !mirrorRows.length) return heights;
                 mirrorRows.forEach(function(row) {
                     row.classList.remove('row-stretch-col2', 'row-stretch-col3');
                     row.style.removeProperty('min-height');
@@ -680,16 +679,65 @@
                     void row.offsetHeight;
                     var h = Math.max(1, row.scrollHeight || row.offsetHeight || 1);
                     if (cell) h = Math.max(h, cell.scrollHeight || cell.offsetHeight || 1);
-                    row.style.setProperty('min-height', h + 'px', 'important');
-                    row.style.setProperty('height', h + 'px', 'important');
-                    row.style.setProperty('box-sizing', 'border-box', 'important');
+                    heights.push(Math.ceil(h));
+                });
+                return heights;
+            }
+
+            function applyHeightsToMirrorRows(mirrorRows, heights) {
+                if (!mirrorRows || !heights) return;
+                mirrorRows.forEach(function(row, i) {
+                    row.classList.remove('row-stretch-col2', 'row-stretch-col3');
+                    var cell = row.querySelector('.script-column.mirror-visible .cell-content');
+                    if (cell) {
+                        cell.style.removeProperty('line-height');
+                        cell.removeAttribute('data-tp-line-balance');
+                    }
+                    var h = heights[i];
+                    if (typeof h === 'number' && h > 0) {
+                        row.style.setProperty('min-height', h + 'px', 'important');
+                        row.style.setProperty('height', h + 'px', 'important');
+                        row.style.setProperty('box-sizing', 'border-box', 'important');
+                    }
                 });
             }
 
-            function applyMirrorRowHeightsAndStretch(data) {
-                if (!data) return;
+            function reportMirrorRowHeightsToMain(mirrorRows, heights) {
+                if (suppressMirrorHeightReport > 0) return;
+                var measured = heights || measureMirrorRowHeightsLocally(mirrorRows);
+                if (measured.length) postToMain({ type: 'rowHeightsReport', rowHeights: measured });
+            }
+
+            /*
+             * Mirror shows one column at full width. Main-window row stretch (line-height
+             * balancing between col2/col3) must not be copied — it creates huge gaps (e.g. 350px lh).
+             * Heights are merged on main (tallest of main + mirror) and sent back via updateRowHeights.
+             */
+            function applyMirrorRowHeightsAndStretch(data, options) {
+                options = options || {};
                 var mirrorRows = display.querySelectorAll('.script-row-wrapper');
-                applyMirrorRowHeightsLocally(mirrorRows);
+                if (!mirrorRows.length) return;
+
+                if (options.heightsOnly) {
+                    if (data && data.rowHeights && data.rowHeights.length === mirrorRows.length) {
+                        applyHeightsToMirrorRows(mirrorRows, data.rowHeights);
+                    }
+                    return;
+                }
+
+                if (data && data.rowHeights && data.rowHeights.length === mirrorRows.length && suppressMirrorHeightReport > 0) {
+                    applyHeightsToMirrorRows(mirrorRows, data.rowHeights);
+                    return;
+                }
+
+                var localHeights = measureMirrorRowHeightsLocally(mirrorRows);
+                if (data && data.rowHeights && data.rowHeights.length === mirrorRows.length) {
+                    var merged = data.rowHeights.map(function(h, i) {
+                        return Math.max(h || 0, localHeights[i] || 0, 1);
+                    });
+                    applyHeightsToMirrorRows(mirrorRows, merged);
+                }
+                reportMirrorRowHeightsToMain(mirrorRows, localHeights);
             }
 
             function getMirrorRowSyncPayload() {
@@ -784,7 +832,9 @@
                         if (data.rowHeights && data.rowHeights.length) rowPayload.rowHeights = data.rowHeights;
                         if (data.rowStretch && data.rowStretch.length) rowPayload.rowStretch = data.rowStretch;
                         if (typeof data.visibleColumnIndex === 'number') rowPayload.visibleColumnIndex = data.visibleColumnIndex;
-                        if (rowPayload.rowHeights && rowPayload.rowHeights.length) applyMirrorRowHeightsAndStretch(rowPayload);
+                        if (rowPayload.rowHeights && rowPayload.rowHeights.length) {
+                            applyMirrorRowHeightsAndStretch(rowPayload, { heightsOnly: true });
+                        }
                     }
                     applyMirrorScrollSync(data);
                     applyMirrorIndicatorGuide(data);
@@ -808,6 +858,7 @@
                     } catch (err) {}
                 }
                 if (type === 'updateRowHeights' || type === 'updateRowStretch') {
+                    suppressMirrorHeightReport = 3;
                     applyMirrorRowHeightsAndStretch(data);
                 }
             }
@@ -843,6 +894,8 @@
             window.addEventListener('resize', function() {
                 scheduleMirrorViewportReport();
                 if (lastPixelSyncData) applyMirrorIndicatorGuide(lastPixelSyncData);
+                var mirrorRows = display.querySelectorAll('.script-row-wrapper');
+                if (mirrorRows.length) reportMirrorRowHeightsToMain(mirrorRows);
             });
 
             /* Position and size are set by the opener (main window). Do not move/resize here – on PC, screen reports the primary monitor and would pull the window off the intended monitor. */
