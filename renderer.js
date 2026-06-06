@@ -3900,37 +3900,76 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     let overflowReportCount = 0;
-    function handleRowOverflowReport(data) {
-        if (!mirrorWindow || mirrorWindow.closed || !Array.isArray(data.rowHeights)) return;
-        if (overflowReportCount >= 3) return; /* prevent infinite loop */
-        const mainHeights = measuredRowHeights;
-        const merged = data.rowHeights.map((h, i) => Math.max(mainHeights[i] || 0, h || 0, 1));
-        const changed = measuredRowHeights.length !== merged.length ||
-            merged.some((h, i) => Math.abs((measuredRowHeights[i] || 0) - h) > 2);
-        if (!changed) return;
-        overflowReportCount++;
-        measuredRowHeights = merged;
-        const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
+    let rowHeightSyncInProgress = false;
+
+    function mergeBroadcastRowHeights(mainProbeHeights, mirrorHeights, rows) {
+        const viewportMax = Math.min(2000, (window.innerHeight || 800) * 2);
+        return rows.map((row, i) => {
+            const mainProbe = mainProbeHeights[i] || 0;
+            const mainActual = Math.floor(row.getBoundingClientRect().height) || 0;
+            const mirrorH = (mirrorHeights && mirrorHeights[i]) || 0;
+            const v = Math.max(mainProbe, mainActual, mirrorH, 1);
+            return Math.min(Math.floor(v), viewportMax);
+        });
+    }
+
+    function applyBroadcastRowHeightsToDom(heights, rows) {
         rows.forEach((row, i) => {
-            const h = measuredRowHeights[i];
+            const h = heights[i];
             if (h > 0) {
                 row.style.minHeight = h + 'px';
                 row.style.height = h + 'px';
             }
         });
-        mirrorWindow.postMessage({
-            type: 'updateRowHeights',
-            rowHeights: measuredRowHeights,
-            ...buildMirrorRowStretchPayload()
-        }, '*');
-        requestAnimationFrame(() => {
-            syncMirrorByPixels();
-            syncMirrorStyles();
-        });
     }
 
-    /** No-op: mirror now uses same table + hidden columns, so no row height sync. */
-    function handleRowHeightsReport() {}
+    function pushMergedRowHeightsToMirror(heights) {
+        if (!mirrorWindow || mirrorWindow.closed) return;
+        mirrorWindow.postMessage({ type: 'updateRowHeights', rowHeights: heights }, '*');
+    }
+
+    /** Merge main + mirror natural heights (tallest wins) and apply to both views. */
+    function syncBroadcastRowHeightsFromBothViews(mirrorHeights) {
+        if (!document.body.classList.contains('broadcasting') || !teleprompterText) return null;
+        const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
+        if (!rows.length) return null;
+        if (Array.isArray(mirrorHeights) && mirrorHeights.length === rows.length) {
+            mirrorReportedRowHeights = mirrorHeights.slice();
+        }
+        const mainProbe = measureBroadcastRowHeights(rows);
+        const merged = mergeBroadcastRowHeights(
+            mainProbe,
+            mirrorReportedRowHeights.length === rows.length ? mirrorReportedRowHeights : null,
+            rows
+        );
+        const changed = measuredRowHeights.length !== merged.length ||
+            merged.some((h, i) => Math.abs((measuredRowHeights[i] || 0) - h) > 1);
+        measuredRowHeights = merged;
+        if (changed) {
+            applyBroadcastRowHeightsToDom(merged, rows);
+            pushMergedRowHeightsToMirror(merged);
+            if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
+        }
+        return merged;
+    }
+
+    function handleRowHeightsReport(data) {
+        if (!mirrorWindow || mirrorWindow.closed || !Array.isArray(data.rowHeights)) return;
+        if (rowHeightSyncInProgress) return;
+        rowHeightSyncInProgress = true;
+        try {
+            syncBroadcastRowHeightsFromBothViews(data.rowHeights);
+            requestAnimationFrame(() => {
+                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+            });
+        } finally {
+            rowHeightSyncInProgress = false;
+        }
+    }
+
+    function handleRowOverflowReport(data) {
+        handleRowHeightsReport(data);
+    }
 
     try {
         const mirrorChannel = new BroadcastChannel('teleprompter-mirror-sync');
@@ -4244,20 +4283,12 @@ function indexToColumnLetter(colIndex) {
         if (!document.body.classList.contains('broadcasting')) return;
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
         if (rows.length === 0) return;
-        measuredRowHeights = measureBroadcastRowHeights(rows);
-        rows.forEach((row, i) => {
-            const h = measuredRowHeights[i];
-            if (h > 0) {
-                row.style.minHeight = h + 'px';
-                row.style.height = h + 'px';
-            }
-        });
-        if (mirrorWindow && !mirrorWindow.closed) {
-            mirrorWindow.postMessage({
-                type: 'updateRowHeights',
-                rowHeights: measuredRowHeights,
-                ...buildMirrorRowStretchPayload()
-            }, '*');
+        if (mirrorReportedRowHeights.length === rows.length) {
+            syncBroadcastRowHeightsFromBothViews(mirrorReportedRowHeights);
+        } else {
+            measuredRowHeights = measureBroadcastRowHeights(rows);
+            applyBroadcastRowHeightsToDom(measuredRowHeights, rows);
+            pushMergedRowHeightsToMirror(measuredRowHeights);
         }
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
     }
@@ -4290,21 +4321,14 @@ function indexToColumnLetter(colIndex) {
         });
         void teleprompterText.offsetHeight;
         const viewportMax = Math.min(2000, (window.innerHeight || 800) * 2);
-        const mainActualHeights = measureBroadcastRowHeights(rows).map(h => Math.max(1, Math.min(Math.floor(h || 1), viewportMax)));
-        /* Merge with mirror reported so both views get same height */
         if (mirrorReportedRowHeights.length === rows.length) {
-            measuredRowHeights = mainActualHeights.map((mh, i) => {
-                const mirrorH = mirrorReportedRowHeights[i];
-                const v = Math.max(mh, (typeof mirrorH === 'number' && mirrorH > 0 ? mirrorH : 0), 1);
-                return Math.min(v, viewportMax);
-            });
+            syncBroadcastRowHeightsFromBothViews(mirrorReportedRowHeights);
         } else {
-            measuredRowHeights = mainActualHeights.slice();
+            measuredRowHeights = measureBroadcastRowHeights(rows).map(h => Math.max(1, Math.min(Math.floor(h || 1), viewportMax)));
+            applyBroadcastRowHeightsToDom(measuredRowHeights, rows);
+            pushMergedRowHeightsToMirror(measuredRowHeights);
         }
-        rows.forEach((row, i) => {
-            const h = measuredRowHeights[i];
-            row.style.minHeight = h + 'px';
-            row.style.height = h + 'px';
+        rows.forEach((row) => {
             row.style.alignItems = '';
             row.querySelectorAll('.script-column').forEach(col => {
                 col.style.flex = '';
@@ -4318,13 +4342,6 @@ function indexToColumnLetter(colIndex) {
         });
         applyBroadcastingVisibility();
         syncColumnWidths();
-        if (mirrorWindow && !mirrorWindow.closed) {
-            mirrorWindow.postMessage({
-                type: 'updateRowHeights',
-                rowHeights: measuredRowHeights,
-                ...buildMirrorRowStretchPayload()
-            }, '*');
-        }
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
     }
 
@@ -4613,7 +4630,11 @@ function indexToColumnLetter(colIndex) {
                 } catch (_) {}
             }
             if (mirrorWindow && !mirrorWindow.closed && document.body.classList.contains('broadcasting')) {
-                pushMirrorRowStretchUpdate();
+                if (mirrorReportedRowHeights.length) {
+                    syncBroadcastRowHeightsFromBothViews(mirrorReportedRowHeights);
+                } else if (measuredRowHeights.length) {
+                    pushMergedRowHeightsToMirror(measuredRowHeights);
+                }
             }
         }
     }
@@ -5370,7 +5391,9 @@ function indexToColumnLetter(colIndex) {
         if (!rows.length) return [];
         const numCols = rows[0].querySelectorAll('.script-column').length;
         const scriptColWidth = lastColumnWidthPx != null && lastColumnWidthPx > 0 ? lastColumnWidthPx : 400;
-        const mirrorColWidth = scriptColWidth;
+        const mirrorColWidth = (mirrorViewportContentWidthPx != null && mirrorViewportContentWidthPx > 50)
+            ? mirrorViewportContentWidthPx
+            : scriptColWidth;
         const mainStyle = window.getComputedStyle(teleprompterText);
         const scriptFontPx = (row) => {
             if (row.classList.contains('row-font-12')) return '12px';
