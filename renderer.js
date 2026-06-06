@@ -1980,7 +1980,8 @@ document.addEventListener('DOMContentLoaded', function() {
         focusMainForControl();
         isTeleprompting = true;
         lastMirrorSyncScrollTop = null;
-        syncMirrorByPixels();
+        mirrorAlignFrameCounter = 0;
+        alignMirrorScrollToMain();
         const move = () => {
             if (!isTeleprompting) return;
             scrollAccum += scrollSpeed;
@@ -1988,8 +1989,17 @@ document.addEventListener('DOMContentLoaded', function() {
             if (delta !== 0) {
                 teleprompterView.scrollTop += delta;
                 scrollAccum -= delta;
+                if (!applyMirrorScrollDelta(delta)) {
+                    syncMirrorByPixels();
+                } else {
+                    lastMirrorSyncScrollTop = teleprompterView.scrollTop;
+                }
             }
-            syncMirrorByPixels();
+            mirrorAlignFrameCounter += 1;
+            if (mirrorAlignFrameCounter >= MIRROR_SCROLL_REALIGN_FRAMES) {
+                mirrorAlignFrameCounter = 0;
+                alignMirrorScrollToMain();
+            }
             if (typeof checkTopPillAndGoToPreviousFile === 'function') checkTopPillAndGoToPreviousFile();
             if (typeof checkBottomPillAndAdvanceToNextFile === 'function') checkBottomPillAndAdvanceToNextFile();
             lastScrollTopForPillTrigger = teleprompterView.scrollTop;
@@ -2050,7 +2060,7 @@ document.addEventListener('DOMContentLoaded', function() {
             speedSlider.value = 0;
             speedSlider.dispatchEvent(new Event('input'));
         }
-        syncMirrorByPixels();
+        alignMirrorScrollToMain();
         updatePlayPauseButton();
     };
 
@@ -3869,10 +3879,9 @@ document.addEventListener('DOMContentLoaded', function() {
             if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
         };
         requestAnimationFrame(() => {
-            runPixelSync();
             requestAnimationFrame(runPixelSync);
         });
-        [80, 200, 450].forEach((ms) => setTimeout(runPixelSync, ms));
+        setTimeout(runPixelSync, 250);
     }
 
     function handleMirrorScroll(data) {
@@ -4251,7 +4260,16 @@ function indexToColumnLetter(colIndex) {
         if (pageTurnInProgress) return;
         const scrollOnly = isTeleprompting;
         const scrollPayload = getMirrorScrollSyncPayload();
-        if (scrollOnly && lastMirrorSyncScrollTop === scrollPayload.contentScrollY) return;
+        if (scrollOnly) {
+            if (lastMirrorSyncScrollTop === scrollPayload.contentScrollY) return;
+            if (mirrorSupportsDirectScroll()) {
+                try {
+                    mirrorWindow.__teleprompterAlignScroll(scrollPayload);
+                    lastMirrorSyncScrollTop = scrollPayload.contentScrollY;
+                    return;
+                } catch (_) {}
+            }
+        }
         lastMirrorSyncScrollTop = scrollPayload.contentScrollY;
         const payload = {
             type: 'pixelSync',
@@ -4274,6 +4292,7 @@ function indexToColumnLetter(colIndex) {
         }
         mirrorWindow.postMessage(payload, '*');
     }
+    syncMirrorByPixelsRef = syncMirrorByPixels;
 
     /** Measures row height from line count × line-height (formula-based). Uses tight line-height and full width to avoid over-measurement. */
     function measureRowHeightsFromContent() {
@@ -10039,10 +10058,47 @@ function requestMirrorFullscreen() {
 /** Cached leader geometry for mirror scroll sync (invalidated when layout/heights change). */
 let mirrorScrollLeaderCache = null;
 let lastMirrorSyncScrollTop = null;
+let mirrorAlignFrameCounter = 0;
+const MIRROR_SCROLL_REALIGN_FRAMES = 120;
+let syncMirrorByPixelsRef = null;
 
 function invalidateMirrorScrollLeaderCache() {
     mirrorScrollLeaderCache = null;
     lastMirrorSyncScrollTop = null;
+}
+
+function mirrorSupportsDirectScroll() {
+    if (!mirrorWindow || mirrorWindow.closed) return false;
+    try {
+        return !!mirrorWindow.__teleprompterHasDirectScroll;
+    } catch (_) {
+        return false;
+    }
+}
+
+function alignMirrorScrollToMain() {
+    if (!mirrorWindow || mirrorWindow.closed) return;
+    const scrollPayload = getMirrorScrollSyncPayload();
+    if (mirrorSupportsDirectScroll()) {
+        try {
+            mirrorWindow.__teleprompterAlignScroll(scrollPayload);
+            lastMirrorSyncScrollTop = scrollPayload.contentScrollY;
+            return;
+        } catch (_) {}
+    }
+    lastMirrorSyncScrollTop = null;
+    if (typeof syncMirrorByPixelsRef === 'function') syncMirrorByPixelsRef();
+}
+
+function applyMirrorScrollDelta(delta) {
+    if (!delta || !mirrorWindow || mirrorWindow.closed) return false;
+    if (mirrorSupportsDirectScroll()) {
+        try {
+            mirrorWindow.__teleprompterApplyScrollDelta(delta);
+            return true;
+        } catch (_) {}
+    }
+    return false;
 }
 
 function readMirrorScrollLeaderCache() {
