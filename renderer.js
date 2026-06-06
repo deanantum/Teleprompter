@@ -3959,7 +3959,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function pushMergedRowHeightsToMirror(heights) {
         if (!mirrorWindow || mirrorWindow.closed) return;
-        mirrorWindow.postMessage({ type: 'updateRowHeights', rowHeights: heights }, '*');
+        mirrorWindow.postMessage({
+            type: 'updateRowHeights',
+            rowHeights: heights,
+            ...getMirrorContentSyncMeta()
+        }, '*');
     }
 
     /** Merge main + mirror natural heights (tallest wins) and apply to both views. */
@@ -5117,6 +5121,7 @@ function indexToColumnLetter(colIndex) {
                 table: rowData,
                 visibleColumnIndex,
                 contentWidth,
+                style: getMirrorStylePayload(),
                 rowColors,
                 rowFont12,
                 rowHeights,
@@ -5143,6 +5148,7 @@ function indexToColumnLetter(colIndex) {
                 table: rowData,
                 visibleColumnIndex,
                 contentWidth,
+                style: getMirrorStylePayload(),
                 rowColors,
                 rowFont12,
                 ...getMirrorScrollSyncPayload(),
@@ -8805,8 +8811,12 @@ function checkBottomPillAndAdvanceToNextFile() {
     if (!scrollingDown) return;
 
     if (atScrollEnd && typeof updateBottomScrollChrome === 'function') {
-        updateBottomScrollChrome({ preserveScroll: false, lockToBottom: true });
-        void view.offsetHeight;
+        const indicatorYPre = wrapper.getBoundingClientRect().top + wrapper.getBoundingClientRect().height / 2;
+        const pillRectPre = bottomPill.getBoundingClientRect();
+        if (pillRectPre.top > indicatorYPre - 2) {
+            updateBottomScrollChrome({ preserveScroll: false, lockToBottom: true });
+            void view.offsetHeight;
+        }
     }
 
     const viewRect = view.getBoundingClientRect();
