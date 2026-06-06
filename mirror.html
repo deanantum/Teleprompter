@@ -220,7 +220,7 @@
             z-index: 100;
             pointer-events: none;
         }
-        /* Filename pills: light blue fill, black text, pill shape, full width (match main) */
+        /* Filename pills: display-only on mirror — script changes are triggered only in renderer.js (main window). */
         .mirror-filename-pill {
             display: block;
             width: 100%;
@@ -239,6 +239,7 @@
             flex-shrink: 0;
             position: relative;
             z-index: 1;
+            pointer-events: none;
             -webkit-text-fill-color: currentColor;
         }
         .mirror-filename-pill-bottom {
@@ -246,7 +247,7 @@
             margin-top: 0;
         }
         .mirror-filename-pill.hidden { display: none !important; }
-        /* Red END + green STAY/SWITCH pills (match main .stay-switch-pill) */
+        /* Red END + green STAY/SWITCH pills (match main .stay-switch-pill; display-only, no navigation) */
         .mirror-stay-switch-pill {
             display: block;
             width: 100%;
@@ -390,6 +391,7 @@
             let suppressMirrorScrollPosts = 0;
             let lastPixelSyncData = null;
             let lastLoadContentData = null;
+            let mirrorAcceptedGeneration = 0;
             const MIRROR_ROW_COLOR_CLASSES = ['row-lines-same', 'row-col2-more', 'row-col3-more', 'row-col3-much-more', 'row-col2-one-more', 'row-col3-one-more'];
             const MIRROR_ROW_STRETCH_CLASSES = ['row-stretch-col2', 'row-stretch-col3'];
             const MIRROR_KEYWORD_PILL_CLASSES = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'];
@@ -883,6 +885,27 @@
                 reportMirrorRowHeightsToMain(mirrorRows, localHeights);
             }
 
+            function mirrorSyncIsCurrent(data) {
+                if (!data || typeof data.contentGeneration !== 'number') return true;
+                return data.contentGeneration >= mirrorAcceptedGeneration;
+            }
+
+            function noteMirrorGeneration(data) {
+                if (data && typeof data.contentGeneration === 'number' && data.contentGeneration >= mirrorAcceptedGeneration) {
+                    mirrorAcceptedGeneration = data.contentGeneration;
+                }
+            }
+
+            function finishMirrorContentLayout(data) {
+                var layoutSnap = (data && data.layout) ? data.layout : defaultMirrorLayoutFromViewport();
+                applyMirrorLayout(layoutSnap);
+                if (data) {
+                    applyMirrorScrollSync(data);
+                    applyMirrorIndicatorGuide(data);
+                }
+                suppressMirrorScrollPosts = 8;
+            }
+
             function getMirrorRowSyncPayload() {
                 if (!lastLoadContentData) return null;
                 return {
@@ -897,15 +920,21 @@
                 const data = e.data || {};
                 const type = data.type;
                 if (type === 'mirrorForceLayout' && data.layout) {
+                    if (!mirrorSyncIsCurrent(data)) return;
+                    noteMirrorGeneration(data);
                     applyMirrorLayout(data.layout);
                 }
                 if (type === 'mirrorPillSync') {
+                    if (!mirrorSyncIsCurrent(data)) return;
                     applyMirrorPills(data);
                 }
                 if (type === 'loadContent') {
+                    if (!mirrorSyncIsCurrent(data)) return;
+                    noteMirrorGeneration(data);
                     ensureMirrorTopChrome();
                     applyMirrorPills(data);
                     if (data.table && Array.isArray(data.table)) {
+                        suppressMirrorScrollPosts = 14;
                         var visibleColumnIndex = typeof data.visibleColumnIndex === 'number' ? data.visibleColumnIndex : 0;
                         if (data.contentWidth) {
                             document.documentElement.style.setProperty('--mirror-content-width', data.contentWidth);
@@ -939,18 +968,18 @@
                         applyMirrorRowClasses(mirrorRows, data.table, data.rowColors);
                         applyMirrorRowHeightsAndStretch(data);
                         applyMirrorLayout(data.layout);
-                        var layoutSnap = data.layout || defaultMirrorLayoutFromViewport();
+                        lastPixelSyncData = data;
+                        finishMirrorContentLayout(data);
                         requestAnimationFrame(function() {
                             requestAnimationFrame(function() {
-                                if (layoutSnap) applyMirrorLayout(layoutSnap);
-                                var rowsSnap = display.querySelectorAll('.script-row-wrapper');
-                                applyMirrorRowClasses(rowsSnap, data.table, data.rowColors);
-                                applyMirrorRowHeightsAndStretch(data);
+                                finishMirrorContentLayout(data);
                             });
                         });
                     }
                 }
                 if (type === 'syncStyleLite' && data.style) {
+                    if (!mirrorSyncIsCurrent(data)) return;
+                    noteMirrorGeneration(data);
                     const s = data.style;
                     display.style.fontSize = s.fontSize || '';
                     display.style.fontFamily = s.fontFamily || '';
@@ -964,6 +993,8 @@
                     if (data.layout) applyMirrorLayout(data.layout);
                 }
                 if (type === 'pixelSync') {
+                    if (!mirrorSyncIsCurrent(data)) return;
+                    noteMirrorGeneration(data);
                     lastPixelSyncData = data;
                     var scrollOnly = !!data.scrollOnly;
                     suppressMirrorScrollPosts = scrollOnly ? 4 : 2;
