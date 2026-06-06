@@ -10436,6 +10436,22 @@ function getMirrorLayoutMetrics() {
 
     const beforeScriptPx = Math.max(0, Math.round(text.offsetTop));
 
+    const bottomSpacerEl = view.querySelector('.teleprompter-bottom-spacer');
+    let bottomSpacerPx = bottomSpacerEl ? Math.round(bottomSpacerEl.offsetHeight) : 0;
+    const viewH = Math.max(0, view.clientHeight || ih);
+    const indicatorWrapper = document.getElementById('indicator-wrapper');
+    let indicatorPx = Math.round(viewH * 0.5);
+    if (indicatorWrapper) {
+        const viewRect = view.getBoundingClientRect();
+        const wrapperRect = indicatorWrapper.getBoundingClientRect();
+        const centerY = wrapperRect.top - viewRect.top + (wrapperRect.height / 2);
+        indicatorPx = Math.max(0, Math.min(viewH, Math.round(centerY)));
+    }
+    const minChrome = Math.round(4 * rootFs);
+    const runwayAfterPill = Math.max(minChrome, Math.round(viewH - indicatorPx));
+    const cssBottomSpacerPx = hasFile ? Math.max(Math.round(viewH * 0.5), runwayAfterPill) : 0;
+    if (bottomSpacerPx < 1) bottomSpacerPx = cssBottomSpacerPx;
+
     return {
         leaderPx,
         abovePillPx: leaderPx,
@@ -10443,7 +10459,8 @@ function getMirrorLayoutMetrics() {
         topSpacerPx: ts,
         topRunwayPx: tr,
         pillGapPx,
-        pillTopPx: 0
+        pillTopPx: 0,
+        bottomSpacerPx
     };
 }
 
