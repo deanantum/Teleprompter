@@ -120,6 +120,15 @@
             font-size: 12px !important;
             line-height: 1.2 !important;
         }
+        /* Shorter mirror column: evenly space lines to fill merged row height */
+        .mirror-table .script-row-wrapper .script-column.mirror-visible {
+            align-items: flex-start !important;
+            justify-content: flex-start !important;
+        }
+        .mirror-table .script-column.mirror-visible .cell-content[data-tp-line-balance],
+        .mirror-table .script-column.mirror-visible .cell-content[data-tp-line-balance] * {
+            line-height: inherit !important;
+        }
         /* Keyword pills (match main: font-size inherit, padding left only) */
         .mirror-table .script-row-wrapper.keyword-pill-red,
         .mirror-table .script-row-wrapper.keyword-pill-yellow,
@@ -684,6 +693,49 @@
                 return heights;
             }
 
+            function applyMirrorRowLineBalance(mirrorRows) {
+                if (!mirrorRows || !mirrorRows.length) return;
+                mirrorRows.forEach(function(row) {
+                    var col = row.querySelector('.script-column.mirror-visible');
+                    var cell = col && col.querySelector('.cell-content');
+                    if (!col || !cell) return;
+                    var text = (cell.textContent || '').replace(/\u00A0/g, ' ').trim();
+                    if (!text) {
+                        cell.style.removeProperty('line-height');
+                        cell.removeAttribute('data-tp-line-balance');
+                        return;
+                    }
+                    var rowH = Math.floor(row.getBoundingClientRect().height);
+                    if (rowH < 2) return;
+                    var avail = rowH - 1;
+
+                    cell.style.removeProperty('line-height');
+                    cell.removeAttribute('data-tp-line-balance');
+                    void cell.offsetHeight;
+                    var natural = measureMirrorCellNaturalHeight(cell, col);
+                    if (natural >= avail - 2) return;
+
+                    var cs = window.getComputedStyle(cell);
+                    var fontPx = parseFloat(cs.fontSize) || 16;
+                    var lo = parseFloat(cs.lineHeight);
+                    if (isNaN(lo) || lo < fontPx * 1.02) lo = fontPx * 1.15;
+                    var hi = Math.max(lo + 1, avail * 2.5);
+
+                    for (var iter = 0; iter < 30; iter++) {
+                        var mid = (lo + hi) / 2;
+                        var h = measureMirrorHeightAtLh(cell, col, mid);
+                        clearMirrorBalanceProbe(cell);
+                        cell.style.removeProperty('line-height');
+                        if (h > avail) hi = mid;
+                        else lo = mid;
+                    }
+                    cell.style.removeProperty('line-height');
+                    void cell.offsetHeight;
+                    cell.style.setProperty('line-height', lo + 'px', 'important');
+                    cell.setAttribute('data-tp-line-balance', '1');
+                });
+            }
+
             function applyHeightsToMirrorRows(mirrorRows, heights) {
                 if (!mirrorRows || !heights) return;
                 mirrorRows.forEach(function(row, i) {
@@ -700,6 +752,7 @@
                         row.style.setProperty('box-sizing', 'border-box', 'important');
                     }
                 });
+                applyMirrorRowLineBalance(mirrorRows);
             }
 
             function reportMirrorRowHeightsToMain(mirrorRows, heights) {
