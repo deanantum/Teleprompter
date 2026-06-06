@@ -524,7 +524,7 @@
                 return { spacer: spacer, runway: runway, pillTop: pillTop, content: content };
             }
 
-            /** Bottom scroll room after blue pill — mirror is often taller than main; use local viewport and 2× main value. */
+            /** Bottom scroll room after blue pill — match main px (mirror viewport may need local minimum on tall displays). */
             function resolveMirrorBottomSpacerPx(layoutBottomSpacerPx) {
                 var viewH = container ? Math.max(0, container.clientHeight || 0) : (window.innerHeight || 800);
                 var rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
@@ -544,7 +544,7 @@
                 var fromMain = (typeof layoutBottomSpacerPx === 'number' && !isNaN(layoutBottomSpacerPx))
                     ? Math.max(0, Math.round(layoutBottomSpacerPx))
                     : 0;
-                return Math.max(fromMain, localMin) * 2;
+                return Math.max(fromMain, localMin);
             }
 
             function defaultMirrorLayoutFromViewport() {
