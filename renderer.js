@@ -4171,6 +4171,8 @@ function indexToColumnLetter(colIndex) {
                 }
             }
 
+            spacerPx += Math.round(2 * rootFs);
+
             bottomSpacer.style.setProperty('min-height', spacerPx + 'px', 'important');
             void view.offsetHeight;
 
@@ -10449,7 +10451,7 @@ function getMirrorLayoutMetrics() {
     }
     const minChrome = Math.round(4 * rootFs);
     const runwayAfterPill = Math.max(minChrome, Math.round(viewH - indicatorPx));
-    const cssBottomSpacerPx = hasFile ? Math.max(Math.round(viewH * 0.5), runwayAfterPill) : 0;
+    const cssBottomSpacerPx = hasFile ? Math.max(Math.round(viewH * 0.5), runwayAfterPill) + Math.round(2 * rootFs) : 0;
     if (bottomSpacerPx < 1) bottomSpacerPx = cssBottomSpacerPx;
 
     return {
