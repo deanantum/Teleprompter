@@ -653,46 +653,43 @@
                     MIRROR_ROW_COLOR_CLASSES.forEach(function(c) { mirrorRow.classList.remove(c); });
                     MIRROR_ROW_STRETCH_CLASSES.forEach(function(c) { mirrorRow.classList.remove(c); });
                     MIRROR_KEYWORD_PILL_CLASSES.forEach(function(c) { mirrorRow.classList.remove(c); });
-                    merged.split(/\s+/).filter(Boolean).forEach(function(c) { mirrorRow.classList.add(c); });
+                    merged.split(/\s+/).filter(Boolean).forEach(function(c) {
+                        if (MIRROR_ROW_STRETCH_CLASSES.indexOf(c) < 0) mirrorRow.classList.add(c);
+                    });
                     if (meta && meta.font12) mirrorRow.classList.add('mirror-row-font-12');
                     else mirrorRow.classList.remove('mirror-row-font-12');
                 }
             }
 
-            function applyMirrorRowStretchFromMain(mirrorRows, tableData, visibleColumnIndex, rowStretch) {
-                var source = (rowStretch && rowStretch.length) ? rowStretch : tableData;
-                if (!mirrorRows || !source || !Array.isArray(source)) return;
-                source.forEach(function(row, i) {
-                    var stretchCol = row.stretchCol || 0;
-                    var lh = (row.stretchLineHeight || '').trim();
-                    if (!stretchCol || !lh || visibleColumnIndex !== stretchCol - 1) return;
-                    var mirrorRow = mirrorRows[i];
-                    if (!mirrorRow) return;
-                    var cell = mirrorRow.querySelector('.script-column.mirror-visible .cell-content');
-                    if (!cell) return;
-                    cell.style.setProperty('line-height', lh, 'important');
-                    cell.setAttribute('data-tp-line-balance', '1');
+            /*
+             * Mirror shows one column at full width. Main-window row stretch (line-height
+             * balancing between col2/col3) must not be copied — it creates huge gaps (e.g. 350px lh).
+             */
+            function applyMirrorRowHeightsLocally(mirrorRows) {
+                if (!mirrorRows || !mirrorRows.length) return;
+                mirrorRows.forEach(function(row) {
+                    row.classList.remove('row-stretch-col2', 'row-stretch-col3');
+                    row.style.removeProperty('min-height');
+                    row.style.removeProperty('height');
+                    row.style.removeProperty('box-sizing');
+                    var cell = row.querySelector('.script-column.mirror-visible .cell-content');
+                    if (cell) {
+                        cell.style.removeProperty('line-height');
+                        cell.removeAttribute('data-tp-line-balance');
+                    }
+                    void row.offsetHeight;
+                    var h = Math.max(1, row.scrollHeight || row.offsetHeight || 1);
+                    if (cell) h = Math.max(h, cell.scrollHeight || cell.offsetHeight || 1);
+                    row.style.setProperty('min-height', h + 'px', 'important');
+                    row.style.setProperty('height', h + 'px', 'important');
+                    row.style.setProperty('box-sizing', 'border-box', 'important');
                 });
             }
 
             function applyMirrorRowHeightsAndStretch(data) {
                 if (!data) return;
                 var mirrorRows = display.querySelectorAll('.script-row-wrapper');
-                if (data.rowHeights && Array.isArray(data.rowHeights) && mirrorRows.length === data.rowHeights.length) {
-                    data.rowHeights.forEach(function(h, i) {
-                        if (mirrorRows[i] && typeof h === 'number' && h > 0) {
-                            mirrorRows[i].style.setProperty('min-height', h + 'px', 'important');
-                            mirrorRows[i].style.setProperty('height', h + 'px', 'important');
-                            mirrorRows[i].style.setProperty('box-sizing', 'border-box', 'important');
-                        }
-                    });
-                }
-                var visIdx = typeof data.visibleColumnIndex === 'number'
-                    ? data.visibleColumnIndex
-                    : (lastLoadContentData && typeof lastLoadContentData.visibleColumnIndex === 'number' ? lastLoadContentData.visibleColumnIndex : 0);
-                var table = data.table || (lastLoadContentData && lastLoadContentData.table);
-                var rowStretch = data.rowStretch || null;
-                applyMirrorRowStretchFromMain(mirrorRows, table, visIdx, rowStretch);
+                applyMirrorRowHeightsLocally(mirrorRows);
             }
 
             function getMirrorRowSyncPayload() {
