@@ -134,6 +134,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let scriptRootOverride = null;
     let fileLayoutPrepStaging = null;
     let fileLayoutPrepToken = 0;
+    let mirrorManualScrollSyncRaf = null;
 
     function getScriptRoot() {
         return scriptRootOverride || teleprompterText;
@@ -158,15 +159,12 @@ document.addEventListener('DOMContentLoaded', function() {
         fileLayoutPrepToken += 1;
     }
 
-    function getFileLayoutCacheKey(index) {
+    function getFileLayoutCacheEnvKey(index) {
         if (index < 0 || index >= fileStore.length) return '';
-        const html = contentStore[index] || '';
         const vis = fileColumnVisibility[index];
         const visKey = vis ? vis.map((v) => (v === false ? '0' : '1')).join('') : '';
         return [
             index,
-            html.length,
-            html.charCodeAt(Math.min(100, Math.max(0, html.length - 1))) || 0,
             extendedFixedWidth || 0,
             mirrorViewportContentWidthPx || 0,
             isOverviewMode ? 1 : 0,
@@ -174,6 +172,11 @@ document.addEventListener('DOMContentLoaded', function() {
             fileFontFamily[index] || '',
             visKey
         ].join('|');
+    }
+
+    /** @deprecated use getFileLayoutCacheEnvKey — content hash caused spurious invalidation after line-break pass */
+    function getFileLayoutCacheKey(index) {
+        return getFileLayoutCacheEnvKey(index);
     }
 
     // =========================================
@@ -3902,7 +3905,11 @@ document.addEventListener('DOMContentLoaded', function() {
     teleprompterView.addEventListener('scroll', () => {
         /* During auto-scroll the rAF loop owns mirror sync; scroll events here caused double-sync + feedback. */
         if (isTeleprompting) return;
-        if (typeof syncMirrorScrollOnlyRef === 'function') syncMirrorScrollOnlyRef();
+        if (mirrorManualScrollSyncRaf) return;
+        mirrorManualScrollSyncRaf = requestAnimationFrame(() => {
+            mirrorManualScrollSyncRaf = null;
+            if (typeof syncMirrorScrollOnlyRef === 'function') syncMirrorScrollOnlyRef();
+        });
     });
     let bookmarkHighlightRaf = null;
     teleprompterView.addEventListener('scroll', () => {
@@ -4341,7 +4348,7 @@ function indexToColumnLetter(colIndex) {
 
             if (mirrorWindow && !mirrorWindow.closed) {
                 pushMirrorLeaderLayout();
-                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+                if (typeof syncMirrorScrollOnlyRef === 'function') syncMirrorScrollOnlyRef();
             }
         }
 
@@ -4410,13 +4417,21 @@ function indexToColumnLetter(colIndex) {
 
             if (mirrorWindow && !mirrorWindow.closed) {
                 pushMirrorLeaderLayout();
-                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+                if (lockToBottom) {
+                    if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+                } else if (typeof syncMirrorScrollOnlyRef === 'function') {
+                    syncMirrorScrollOnlyRef();
+                }
             }
         }
 
 		function syncMirrorScrollOnly() {
         if (isUpdatingFromMirrorScroll || !mirrorWindow || mirrorWindow.closed) return;
         if (pageTurnInProgress) return;
+        if (typeof alignMirrorScrollToMain === 'function') {
+            alignMirrorScrollToMain();
+            return;
+        }
         const scrollPayload = getMirrorScrollSyncPayload();
         if (lastMirrorSyncScrollTop === scrollPayload.contentScrollY) return;
         if (mirrorSupportsDirectScroll()) {
@@ -5353,6 +5368,26 @@ function indexToColumnLetter(colIndex) {
         return { table, visibleColumnIndex, rowColors, rowFont12, rowHeights };
     }
 
+    function buildMirrorDisplayHtmlFromPayload(mp) {
+        if (!mp || !mp.table || !mp.table.length) return '';
+        let html = '';
+        mp.table.forEach((row, rowIndex) => {
+            let base = (row.rowClass || '').trim();
+            const colorCls = (mp.rowColors && mp.rowColors[rowIndex]) ? String(mp.rowColors[rowIndex]).trim() : '';
+            if (colorCls && base.indexOf(colorCls) < 0) base = (colorCls + ' ' + base).trim();
+            if (row.font12) base = (base + ' mirror-row-font-12').trim();
+            html += '<div class="script-row-wrapper' + (base ? ' ' + base.trim() : '') + '">';
+            const cells = row.cells || [];
+            cells.forEach((cellText, ci) => {
+                const visible = (ci === mp.visibleColumnIndex) ? ' mirror-visible' : '';
+                const markup = cellText != null ? String(cellText).trim() : '';
+                html += '<div class="script-column' + visible + '"><div class="cell-content">' + (markup || '\u00A0') + '</div></div>';
+            });
+            html += '</div>';
+        });
+        return html;
+    }
+
     function saveFileLayoutCache(index) {
         if (index < 0 || index >= fileStore.length || !teleprompterText || isOverviewMode) return;
         const rows = teleprompterText.querySelectorAll('.script-row-wrapper');
@@ -5360,21 +5395,23 @@ function indexToColumnLetter(colIndex) {
         const html = teleprompterText.innerHTML.trim();
         if (!html || html === '<br>') return;
         contentStore[index] = html;
-        const key = getFileLayoutCacheKey(index);
+        const envKey = getFileLayoutCacheEnvKey(index);
         const mirrorPayload = buildMirrorTablePayloadFromRoot(teleprompterText, index);
+        const mirrorDisplayHtml = mirrorPayload ? buildMirrorDisplayHtmlFromPayload(mirrorPayload) : '';
         fileLayoutCache[index] = {
-            key,
+            envKey,
             html,
             rowColors: rowColorsCache.slice(),
             rowFont12: rowFont12Cache.slice(),
             measuredHeights: measuredRowHeights.slice(),
-            mirrorPayload
+            mirrorPayload,
+            mirrorDisplayHtml
         };
     }
 
     function tryApplyFileLayoutCache(index, options) {
         const cached = fileLayoutCache[index];
-        if (!cached || cached.key !== getFileLayoutCacheKey(index)) return false;
+        if (!cached || cached.envKey !== getFileLayoutCacheEnvKey(index)) return false;
         teleprompterText.style.fontSize = '';
         teleprompterText.style.fontFamily = '';
         teleprompterText.innerHTML = cached.html;
@@ -5398,6 +5435,7 @@ function indexToColumnLetter(colIndex) {
             const view = document.getElementById('teleprompter-view');
             if (view) view.scrollTop = Math.max(0, view.scrollHeight - view.clientHeight);
         }
+        invalidateMirrorScrollLeaderCache();
         return true;
     }
 
@@ -5413,12 +5451,33 @@ function indexToColumnLetter(colIndex) {
         return fileLayoutPrepStaging;
     }
 
+    function finalizeFilePrepCache(index, staging, savedIdx, savedColors, savedFont12, savedHeights) {
+        const mirrorPayload = buildMirrorTablePayloadFromRoot(staging, index);
+        const mirrorDisplayHtml = mirrorPayload ? buildMirrorDisplayHtmlFromPayload(mirrorPayload) : '';
+        fileLayoutCache[index] = {
+            envKey: getFileLayoutCacheEnvKey(index),
+            html: staging.innerHTML.trim(),
+            rowColors: rowColorsCache.slice(),
+            rowFont12: rowFont12Cache.slice(),
+            measuredHeights: measuredRowHeights.slice(),
+            mirrorPayload,
+            mirrorDisplayHtml
+        };
+        rowColorsCache = savedColors;
+        rowFont12Cache = savedFont12;
+        measuredRowHeights = savedHeights;
+        currentFileIndex = savedIdx;
+    }
+
     function runFilePrepPipeline(index) {
         if (index < 0 || index >= fileStore.length || index === currentFileIndex || isOverviewMode) return false;
         const content = contentStore[index];
         if (!content || typeof content !== 'string' || !content.trim()) return false;
-        const key = getFileLayoutCacheKey(index);
-        if (fileLayoutCache[index]?.key === key) return true;
+        if (fileLayoutCache[index]?.envKey === getFileLayoutCacheEnvKey(index)) return true;
+        let prepHtml = content;
+        if (prepHtml.length) {
+            prepHtml = applyOpenFileLineBreaksToContent(stripNumericAngleMarkers(prepHtml));
+        }
         const staging = getOrCreateFilePrepStaging();
         const w = extendedFixedWidth || teleprompterText.getBoundingClientRect().width;
         if (w > 0) {
@@ -5434,7 +5493,7 @@ function indexToColumnLetter(colIndex) {
         const savedHeights = measuredRowHeights.slice();
         currentFileIndex = index;
         runWithScriptRoot(staging, () => {
-            staging.innerHTML = content;
+            staging.innerHTML = prepHtml;
             processTableColumns();
             wrapCellContentInBlock();
             removeUuidFromFirstColumn();
@@ -5449,44 +5508,96 @@ function indexToColumnLetter(colIndex) {
                 if (prepRows.length) measuredRowHeights = measureBroadcastRowHeights(prepRows);
             }
         });
-        const mirrorPayload = buildMirrorTablePayloadFromRoot(staging, index);
-        fileLayoutCache[index] = {
-            key,
-            html: staging.innerHTML.trim(),
-            rowColors: rowColorsCache.slice(),
-            rowFont12: rowFont12Cache.slice(),
-            measuredHeights: measuredRowHeights.slice(),
-            mirrorPayload
-        };
-        rowColorsCache = savedColors;
-        rowFont12Cache = savedFont12;
-        measuredRowHeights = savedHeights;
-        currentFileIndex = savedIdx;
+        finalizeFilePrepCache(index, staging, savedIdx, savedColors, savedFont12, savedHeights);
         return true;
+    }
+
+    function runFilePrepPipelineChunked(index, done) {
+        if (index < 0 || index >= fileStore.length || index === currentFileIndex || isOverviewMode) {
+            if (done) done(false);
+            return;
+        }
+        const content = contentStore[index];
+        if (!content || typeof content !== 'string' || !content.trim()) {
+            if (done) done(false);
+            return;
+        }
+        if (fileLayoutCache[index]?.envKey === getFileLayoutCacheEnvKey(index)) {
+            if (done) done(true);
+            return;
+        }
+        let prepHtml = content;
+        if (prepHtml.length) {
+            prepHtml = applyOpenFileLineBreaksToContent(stripNumericAngleMarkers(prepHtml));
+        }
+        const staging = getOrCreateFilePrepStaging();
+        const w = extendedFixedWidth || teleprompterText.getBoundingClientRect().width;
+        if (w > 0) {
+            staging.style.width = w + 'px';
+            staging.style.maxWidth = w + 'px';
+        }
+        staging.style.fontSize = (fileFontSize[index] || fontSizeSelect?.value || '80') + 'px';
+        staging.style.fontFamily = fileFontFamily[index] || fontFamilySelect?.value || 'Arial';
+        staging.style.color = fileFontColor[index] || '#ffffff';
+        const savedIdx = currentFileIndex;
+        const savedColors = rowColorsCache.slice();
+        const savedFont12 = rowFont12Cache.slice();
+        const savedHeights = measuredRowHeights.slice();
+        currentFileIndex = index;
+        runWithScriptRoot(staging, () => {
+            staging.innerHTML = prepHtml;
+            processTableColumns();
+            wrapCellContentInBlock();
+            removeUuidFromFirstColumn();
+            stripPipeVFromFirstColumn();
+        });
+        requestAnimationFrame(() => {
+            if (currentFileIndex !== savedIdx && index !== currentFileIndex) {
+                currentFileIndex = savedIdx;
+                rowColorsCache = savedColors;
+                rowFont12Cache = savedFont12;
+                measuredRowHeights = savedHeights;
+                if (done) done(false);
+                return;
+            }
+            currentFileIndex = index;
+            runWithScriptRoot(staging, () => {
+                replaceAsciiHyphensInTextNodes(staging);
+                stripPipeVMarkersFromContentColumns();
+                applyKeywordPills();
+            });
+            requestAnimationFrame(() => {
+                currentFileIndex = index;
+                runWithScriptRoot(staging, () => {
+                    if (document.body.classList.contains('broadcasting')) {
+                        applyRowColors({ forceRecompute: true });
+                        applyRowFont12();
+                        const prepRows = Array.from(staging.querySelectorAll('.script-row-wrapper'));
+                        if (prepRows.length) measuredRowHeights = measureBroadcastRowHeights(prepRows);
+                    }
+                });
+                finalizeFilePrepCache(index, staging, savedIdx, savedColors, savedFont12, savedHeights);
+                if (done) done(true);
+            });
+        });
     }
 
     function scheduleAdjacentFilePrefetch(centerIndex) {
         if (isOverviewMode || !document.body.classList.contains('broadcasting')) return;
-        const targets = [centerIndex - 1, centerIndex + 1].filter(
-            (i) => i >= 0 && i < fileStore.length && i !== centerIndex
-        );
-        if (!targets.length) return;
+        const next = centerIndex + 1;
+        const prev = centerIndex - 1;
         fileLayoutPrepToken += 1;
         const token = fileLayoutPrepToken;
-        let ti = 0;
-        const step = (deadline) => {
-            if (token !== fileLayoutPrepToken || centerIndex !== currentFileIndex) return;
-            while (ti < targets.length && (!deadline || deadline.timeRemaining() > 6)) {
-                runFilePrepPipeline(targets[ti]);
-                ti += 1;
-            }
-            if (ti < targets.length && token === fileLayoutPrepToken) {
-                if (typeof requestIdleCallback === 'function') requestIdleCallback(step, { timeout: 5000 });
-                else setTimeout(() => step(null), 150);
-            }
+        const runIfNeeded = (idx, delayMs) => {
+            if (idx < 0 || idx >= fileStore.length || idx === centerIndex) return;
+            setTimeout(() => {
+                if (token !== fileLayoutPrepToken || centerIndex !== currentFileIndex) return;
+                if (fileLayoutCache[idx]?.envKey === getFileLayoutCacheEnvKey(idx)) return;
+                runFilePrepPipelineChunked(idx);
+            }, delayMs);
         };
-        if (typeof requestIdleCallback === 'function') requestIdleCallback(step, { timeout: 5000 });
-        else setTimeout(() => step(null), 250);
+        runIfNeeded(next, 0);
+        runIfNeeded(prev, 0);
     }
 
     function pushMirrorLoadFromCache(cached) {
@@ -5496,12 +5607,13 @@ function indexToColumnLetter(colIndex) {
         mirrorWindow.postMessage({
             type: 'loadContent',
             cachedLayout: true,
+            mirrorDisplayHtml: cached.mirrorDisplayHtml || buildMirrorDisplayHtmlFromPayload(mp),
             table: mp.table,
             visibleColumnIndex: mp.visibleColumnIndex,
             rowColors: mp.rowColors,
             rowFont12: mp.rowFont12,
             rowHeights: mp.rowHeights,
-            deferScrollSync: mirrorLayoutSettling,
+            deferScrollSync: false,
             contentWidth,
             style: getMirrorStylePayload(),
             ...getMirrorScrollSyncPayload(),
@@ -10375,8 +10487,9 @@ function loadScriptToEditor(index, options) {
     currentFileIndex = index;
     clearSelectedFontTargetSelection();
     applyCurrentFileSyncGuideVisibility();
+    const usedLayoutCache = !isOverviewMode && tryApplyFileLayoutCache(index, options);
     let content = contentStore[index];
-    if (typeof content === 'string' && content.length) {
+    if (!usedLayoutCache && typeof content === 'string' && content.length) {
         const stripped = stripNumericAngleMarkers(content);
         content = applyOpenFileLineBreaksToContent(stripped);
         if (content !== contentStore[index]) {
@@ -10384,9 +10497,15 @@ function loadScriptToEditor(index, options) {
             invalidateFileLayoutCache(index);
         }
     }
-    const usedLayoutCache = !isOverviewMode && tryApplyFileLayoutCache(index, options);
     const contentHasBkmk = (content && typeof content === 'string') ? content.indexOf('{BKMK}') !== -1 : false;
     console.log('[BKMK] loadScriptToEditor index=', index, 'layoutCache=', usedLayoutCache, 'content length=', (content && content.length) || 0, 'content contains "{BKMK}":', contentHasBkmk);
+    if (switchingFile && !isOverviewMode) scheduleAdjacentFilePrefetch(index);
+    if (usedLayoutCache && switchingFile && mirrorWindow && !mirrorWindow.closed && document.body.classList.contains('broadcasting')) {
+        beginMirrorLayoutSettling(400);
+        pushMirrorLoadFromCache(fileLayoutCache[index]);
+        if (typeof syncMirrorStyles === 'function') syncMirrorStyles();
+        if (typeof pushMirrorLeaderLayout === 'function') pushMirrorLeaderLayout();
+    }
     if (!usedLayoutCache) {
     /* Reset root font styles so previous file's fontSize/fontFamily don't bleed into this file */
     teleprompterText.style.fontSize = '';
@@ -10460,17 +10579,12 @@ function loadScriptToEditor(index, options) {
         if (typeof updateBottomScrollChrome === 'function') updateBottomScrollChrome({ preserveScroll: true });
         if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(2000);
         if (typeof suppressMirrorScrollEcho === 'function') suppressMirrorScrollEcho(2500);
-        if (switchingFile && mirrorWindow && !mirrorWindow.closed && document.body.classList.contains('broadcasting')) {
-            beginMirrorLayoutSettling(usedLayoutCache ? 900 : 1600);
+        if (switchingFile && mirrorWindow && !mirrorWindow.closed && document.body.classList.contains('broadcasting') && !usedLayoutCache) {
+            beginMirrorLayoutSettling(1600);
         }
-        if (usedLayoutCache && mirrorWindow && !mirrorWindow.closed && document.body.classList.contains('broadcasting')) {
-            pushMirrorLoadFromCache(fileLayoutCache[index]);
-            if (typeof syncMirrorStyles === 'function') syncMirrorStyles();
-            if (typeof pushMirrorLeaderLayout === 'function') pushMirrorLeaderLayout();
-        } else if (typeof syncMirrorAfterEditorSettled === 'function') {
+        if (!usedLayoutCache && typeof syncMirrorAfterEditorSettled === 'function') {
             syncMirrorAfterEditorSettled();
         }
-        scheduleAdjacentFilePrefetch(index);
         if (!usedLayoutCache && !isOverviewMode && document.body.classList.contains('broadcasting')) {
             saveFileLayoutCache(index);
         }
@@ -10585,6 +10699,7 @@ function alignMirrorScrollToMain() {
         }
         return;
     }
+    if (lastMirrorSyncScrollTop === mainY) return;
     if (mirrorSupportsDirectScroll()) {
         try {
             mirrorWindow.__teleprompterAlignScroll(scrollPayload);
