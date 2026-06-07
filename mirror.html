@@ -403,6 +403,42 @@
             let mirrorAcceptedGeneration = 0;
             const MIRROR_ROW_COLOR_CLASSES = ['row-lines-same', 'row-col2-more', 'row-col3-more', 'row-col3-much-more', 'row-col2-one-more', 'row-col3-one-more'];
             const MIRROR_ROW_STRETCH_CLASSES = ['row-stretch-col2', 'row-stretch-col3'];
+            const MIRROR_GLOW_FILL_CLASSES = ['row-col2-one-more', 'row-col2-more', 'row-col3-one-more', 'row-col3-more', 'row-col3-much-more'];
+
+            function mirrorVisibleColumnIndex(row) {
+                var cols = row.querySelectorAll('.script-column');
+                for (var i = 0; i < cols.length; i++) {
+                    if (cols[i].classList.contains('mirror-visible')) return i;
+                }
+                return -1;
+            }
+
+            function rowNeedsMirrorGlowLineBalance(row) {
+                if (row.classList.contains('row-lines-same')) return false;
+                if (!MIRROR_GLOW_FILL_CLASSES.some(function(c) { return row.classList.contains(c); })) return false;
+                var visIdx = mirrorVisibleColumnIndex(row);
+                if (visIdx < 0) return false;
+                if (row.classList.contains('row-stretch-col2') && visIdx === 1) return true;
+                if (row.classList.contains('row-stretch-col3') && visIdx === 2) return true;
+                return false;
+            }
+
+            function applyMirrorGlowLineBalanceSelective(mirrorRows) {
+                if (!mirrorRows || !mirrorRows.length) return;
+                for (var i = 0; i < mirrorRows.length; i++) {
+                    var row = mirrorRows[i];
+                    if (rowNeedsMirrorGlowLineBalance(row)) {
+                        applyMirrorRowLineBalanceOne(row);
+                    } else {
+                        var cell = row.querySelector('.script-column.mirror-visible .cell-content');
+                        if (cell) {
+                            cell.style.removeProperty('line-height');
+                            cell.removeAttribute('data-tp-line-balance');
+                        }
+                    }
+                }
+            }
+
             const MIRROR_KEYWORD_PILL_CLASSES = ['keyword-pill-red', 'keyword-pill-yellow', 'keyword-pill-green', 'keyword-pill-blue', 'keyword-pill-white'];
             const mirrorChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('teleprompter-mirror-sync') : null;
 
@@ -881,14 +917,7 @@
                 cell.removeAttribute('data-tp-line-balance');
                 void cell.offsetHeight;
                 var natural = measureMirrorCellNaturalHeight(cell, col);
-                if (natural >= avail - 2) {
-                    if (natural > avail) {
-                        var expandH = Math.ceil(natural) + 1;
-                        row.style.setProperty('min-height', expandH + 'px', 'important');
-                        row.style.setProperty('height', expandH + 'px', 'important');
-                    }
-                    return;
-                }
+                if (natural >= avail - 2) return;
 
                 var cs = window.getComputedStyle(cell);
                 var fontPx = parseFloat(cs.fontSize) || 16;
@@ -956,7 +985,10 @@
                         cell.removeAttribute('data-tp-line-balance');
                     }
                 });
-                if (!options.skipLineBalance) {
+                if (options.applyGlowLineBalance) {
+                    applyMirrorGlowLineBalanceSelective(mirrorRows);
+                    if (options.onLineBalanceComplete) options.onLineBalanceComplete();
+                } else if (!options.skipLineBalance) {
                     if (options.deferLineBalance) {
                         applyMirrorRowLineBalance(mirrorRows, { onComplete: options.onLineBalanceComplete });
                     } else {
@@ -1000,7 +1032,7 @@
 
                 if (data && data.rowHeights && data.rowHeights.length === mirrorRows.length) {
                     applyHeightsToMirrorRows(mirrorRows, data.rowHeights, {
-                        skipLineBalance: true,
+                        applyGlowLineBalance: true,
                         onLineBalanceComplete: options.onLineBalanceComplete
                     });
                     requestAnimationFrame(function() {
@@ -1104,7 +1136,7 @@
                         applyMirrorRowClasses(mirrorRows, data.table, data.rowColors);
                         suppressMirrorHeightReport = 40;
                         applyMirrorRowHeightsAndStretch(data, {
-                            skipLineBalance: true,
+                            applyGlowLineBalance: true,
                             onLineBalanceComplete: function() {
                                 invalidateMirrorRow0OriginCache();
                                 finishMirrorContentLayout(data);
@@ -1130,9 +1162,9 @@
                     suppressMirrorHeightReport = 10;
                     var styleRowPayload = getMirrorRowSyncPayload();
                     if (styleRowPayload) {
-                        applyMirrorRowHeightsAndStretch(styleRowPayload);
+                        applyMirrorRowHeightsAndStretch(styleRowPayload, { applyGlowLineBalance: true });
                         requestAnimationFrame(function() {
-                            applyMirrorRowHeightsAndStretch(styleRowPayload);
+                            applyMirrorRowHeightsAndStretch(styleRowPayload, { applyGlowLineBalance: true });
                             if (lastPixelSyncData) {
                                 applyMirrorScrollSync(lastPixelSyncData, { suppressPosts: 8 });
                                 applyMirrorIndicatorGuide(lastPixelSyncData);
