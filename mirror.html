@@ -904,6 +904,7 @@
                 }
                 cell.style.removeProperty('line-height');
                 void cell.offsetHeight;
+                lo = Math.min(lo, avail);
                 cell.style.setProperty('line-height', lo + 'px', 'important');
                 cell.setAttribute('data-tp-line-balance', '1');
             }
@@ -1000,18 +1001,21 @@
                     return;
                 }
 
-                var localHeights = measureMirrorRowHeightsLocally(mirrorRows);
                 if (data && data.rowHeights && data.rowHeights.length === mirrorRows.length) {
-                    var merged = data.rowHeights.map(function(h, i) {
-                        return Math.max(h || 0, localHeights[i] || 0, 1);
+                    applyHeightsToMirrorRows(mirrorRows, data.rowHeights, {
+                        trustHeights: true,
+                        skipLineBalance: true,
+                        onLineBalanceComplete: options.onLineBalanceComplete
                     });
-                    applyHeightsToMirrorRows(mirrorRows, merged, {
+                } else {
+                    var localHeights = measureMirrorRowHeightsLocally(mirrorRows);
+                    applyHeightsToMirrorRows(mirrorRows, localHeights, {
                         deferLineBalance: !!options.deferLineBalance,
                         onLineBalanceComplete: options.onLineBalanceComplete
                     });
-                }
-                if (!options.deferLineBalance) {
-                    reportMirrorRowHeightsToMain(mirrorRows, localHeights);
+                    if (!options.deferLineBalance) {
+                        reportMirrorRowHeightsToMain(mirrorRows, localHeights);
+                    }
                 }
             }
 
@@ -1099,25 +1103,22 @@
                         var mirrorRows = display.querySelectorAll('.script-row-wrapper');
                         applyMirrorRowClasses(mirrorRows, data.table, data.rowColors);
                         suppressMirrorHeightReport = 40;
-                        var deferBalance = mirrorRows.length > 48;
                         applyMirrorRowHeightsAndStretch(data, {
-                            deferLineBalance: deferBalance,
-                            onLineBalanceComplete: deferBalance ? function() {
+                            skipLineBalance: true,
+                            onLineBalanceComplete: function() {
                                 invalidateMirrorRow0OriginCache();
                                 finishMirrorContentLayout(data);
                                 suppressMirrorHeightReport = 10;
                                 reportMirrorRowHeightsToMain(mirrorRows);
-                            } : null
+                            }
                         });
                         applyMirrorLayout(data.layout);
                         lastPixelSyncData = data;
                         finishMirrorContentLayout(data);
-                        if (!deferBalance) {
-                            requestAnimationFrame(function() {
-                                suppressMirrorHeightReport = 10;
-                                reportMirrorRowHeightsToMain(mirrorRows);
-                            });
-                        }
+                        requestAnimationFrame(function() {
+                            suppressMirrorHeightReport = 10;
+                            reportMirrorRowHeightsToMain(mirrorRows);
+                        });
                     }
                 }
                 if (type === 'syncStyleLite' && data.style) {
