@@ -123,6 +123,12 @@ document.addEventListener('DOMContentLoaded', function() {
     let mirrorScrollLeaderCache = null;
     let lastMirrorSyncScrollTop = null;
     let syncMirrorByPixelsRef = null;
+    let syncMirrorScrollOnlyRef = null;
+    /** Coalesce extend-time mirror layout (height reports, relayout) so manual scroll stays smooth. */
+    let mirrorLayoutSettling = false;
+    let mirrorLayoutSettleTimer = null;
+    let mirrorSetupGeneration = 0;
+    let pendingMirrorHeightsReport = null;
 
     // =========================================
     // 2. IMMEDIATE UI SETUP (CRITICAL: Must be AFTER selectors)
@@ -3849,7 +3855,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     teleprompterView.addEventListener('scroll', () => {
         /* During auto-scroll the rAF loop owns mirror sync; scroll events here caused double-sync + feedback. */
-        if (!isTeleprompting) syncMirrorByPixels();
+        if (isTeleprompting) return;
+        if (typeof syncMirrorScrollOnlyRef === 'function') syncMirrorScrollOnlyRef();
     });
     let bookmarkHighlightRaf = null;
     teleprompterView.addEventListener('scroll', () => {
@@ -3940,12 +3947,43 @@ document.addEventListener('DOMContentLoaded', function() {
         setTimeout(runPixelSync, 250);
     }
 
+    function beginMirrorLayoutSettling(ms = 1400) {
+        mirrorLayoutSettling = true;
+        pendingMirrorHeightsReport = null;
+        mirrorSetupGeneration += 1;
+        const gen = mirrorSetupGeneration;
+        if (mirrorLayoutSettleTimer) clearTimeout(mirrorLayoutSettleTimer);
+        mirrorLayoutSettleTimer = setTimeout(() => {
+            mirrorLayoutSettleTimer = null;
+            if (gen !== mirrorSetupGeneration) return;
+            finishMirrorLayoutSettling();
+        }, ms);
+    }
+
+    function finishMirrorLayoutSettling() {
+        mirrorLayoutSettling = false;
+        if (!mirrorWindow || mirrorWindow.closed) return;
+        if (!document.body.classList.contains('broadcasting')) return;
+        suppressMirrorScrollEcho(900);
+        invalidateMirrorScrollLeaderCache();
+        mirrorScrollLeaderCache = readMirrorScrollLeaderCache();
+        relayoutBroadcastAfterMirrorWidthChange();
+        if (pendingMirrorHeightsReport) {
+            const heights = pendingMirrorHeightsReport;
+            pendingMirrorHeightsReport = null;
+            syncBroadcastRowHeightsFromBothViews(heights);
+        }
+        syncMirrorByPixels({ forceFull: true });
+        if (typeof syncMirrorScrollOnlyRef === 'function') syncMirrorScrollOnlyRef();
+    }
+
     function handleMirrorScroll(data) {
         if (!mirrorWindow || mirrorWindow.closed) return;
         if (Date.now() < suppressMirrorScrollEchoUntil) return;
         /* Main window is the scroll leader while auto-scrolling; ratio-based echo causes oscillation. */
         if (isTeleprompting) return;
         if (!data || typeof data.scrollTop !== 'number') return;
+        suppressMirrorScrollEcho(450);
         isUpdatingFromMirrorScroll = true;
         const maxScroll = data.scrollHeight - data.clientHeight;
         const ratio = (maxScroll > 0 && typeof data.scrollHeight === 'number')
@@ -3979,6 +4017,7 @@ document.addEventListener('DOMContentLoaded', function() {
             : parseInt(data.contentWidthPx, 10);
         if (isNaN(w) || w < 50 || mirrorViewportContentWidthPx === w) return;
         mirrorViewportContentWidthPx = w;
+        if (mirrorLayoutSettling) return;
         relayoutBroadcastAfterMirrorWidthChange();
     }
 
@@ -3986,16 +4025,18 @@ document.addEventListener('DOMContentLoaded', function() {
         if (pendingMirrorPosition) {
             sendPendingMirrorPosition();
             setTimeout(sendPendingMirrorPosition, 100);
-            setTimeout(sendPendingMirrorPosition, 300);
-            setTimeout(sendPendingMirrorPosition, 600);
         }
         pushMirrorDebugMode();
         requestMirrorFullscreen();
+        /* Extend flow uses sendWhenReady + finishMirrorLayoutSettling; skip duplicate layout bursts. */
+        if (mirrorLayoutSettling) return;
         syncColumnWidths(true);
         refreshMirrorData();
         syncMirrorStyles();
-        [0, 60, 200, 450].forEach((ms) => setTimeout(() => pushMirrorLeaderLayout(), ms));
-        [120, 400, 900].forEach((ms) => setTimeout(() => relayoutBroadcastAfterMirrorWidthChange(), ms));
+        requestAnimationFrame(() => {
+            pushMirrorLeaderLayout();
+            requestAnimationFrame(() => pushMirrorLeaderLayout());
+        });
         handleMirrorFocusReclaim();
     }
 
@@ -4065,6 +4106,10 @@ document.addEventListener('DOMContentLoaded', function() {
     function handleRowHeightsReport(data) {
         if (!mirrorWindow || mirrorWindow.closed || !Array.isArray(data.rowHeights)) return;
         if (isTeleprompting) return;
+        if (mirrorLayoutSettling) {
+            pendingMirrorHeightsReport = data.rowHeights.slice();
+            return;
+        }
         if (rowHeightSyncInProgress) return;
         const applyReport = () => {
             if (rowHeightSyncInProgress) return;
@@ -4073,7 +4118,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 syncBroadcastRowHeightsFromBothViews(data.rowHeights);
                 if (!isTeleprompting) {
                     requestAnimationFrame(() => {
-                        if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
+                        if (typeof syncMirrorScrollOnlyRef === 'function') syncMirrorScrollOnlyRef();
                     });
                 }
             } finally {
@@ -4319,10 +4364,28 @@ function indexToColumnLetter(colIndex) {
             }
         }
 
-		function syncMirrorByPixels() {
+		function syncMirrorScrollOnly() {
         if (isUpdatingFromMirrorScroll || !mirrorWindow || mirrorWindow.closed) return;
         if (pageTurnInProgress) return;
-        const scrollOnly = isTeleprompting;
+        const scrollPayload = getMirrorScrollSyncPayload();
+        if (lastMirrorSyncScrollTop === scrollPayload.contentScrollY) return;
+        if (mirrorSupportsDirectScroll()) {
+            try {
+                mirrorWindow.__teleprompterAlignScroll(scrollPayload);
+                lastMirrorSyncScrollTop = scrollPayload.contentScrollY;
+                return;
+            } catch (_) {}
+        }
+        syncMirrorByPixels({ scrollOnly: true });
+    }
+    syncMirrorScrollOnlyRef = syncMirrorScrollOnly;
+
+		function syncMirrorByPixels(options) {
+        options = options || {};
+        if (isUpdatingFromMirrorScroll || !mirrorWindow || mirrorWindow.closed) return;
+        if (pageTurnInProgress) return;
+        const scrollOnly = isTeleprompting || options.scrollOnly === true ||
+            (mirrorLayoutSettling && options.forceFull !== true);
         const scrollPayload = getMirrorScrollSyncPayload();
         if (scrollOnly) {
             if (lastMirrorSyncScrollTop === scrollPayload.contentScrollY) return;
@@ -5311,6 +5374,13 @@ function indexToColumnLetter(colIndex) {
             clearInterval(mirrorCloseCheckInterval);
             mirrorCloseCheckInterval = null;
         }
+        mirrorSetupGeneration += 1;
+        mirrorLayoutSettling = false;
+        if (mirrorLayoutSettleTimer) {
+            clearTimeout(mirrorLayoutSettleTimer);
+            mirrorLayoutSettleTimer = null;
+        }
+        pendingMirrorHeightsReport = null;
         mirrorWindow = null;
         pendingMirrorPosition = null;
         mirrorViewportContentWidthPx = null;
@@ -10454,6 +10524,13 @@ extendMonitorButton.onclick = async () => {
     const isExtended = document.body.classList.contains('broadcasting') && mirrorWindow && !mirrorWindow.closed;
 
     if (isExtended) {
+        mirrorSetupGeneration += 1;
+        mirrorLayoutSettling = false;
+        if (mirrorLayoutSettleTimer) {
+            clearTimeout(mirrorLayoutSettleTimer);
+            mirrorLayoutSettleTimer = null;
+        }
+        pendingMirrorHeightsReport = null;
         const maxScroll = teleprompterView.scrollHeight - teleprompterView.clientHeight;
         const scrollRatio = maxScroll > 0 ? teleprompterView.scrollTop / maxScroll : 0;
 
@@ -10584,6 +10661,8 @@ extendMonitorButton.onclick = async () => {
         }
 
         const mirrorUrl = 'mirror.html?v=' + Date.now() + (getMirrorDebugMode() ? '&debug=1' : '');
+        beginMirrorLayoutSettling(1600);
+        suppressMirrorScrollEcho(2500);
         mirrorWindow = window.open(mirrorUrl, 'TeleprompterMirror', specs);
         if (mirrorWindow) {
             requestMirrorFullscreen();
@@ -10628,7 +10707,7 @@ extendMonitorButton.onclick = async () => {
                 refreshMirrorData();
                 const attemptRestore = () => {
                     restoreScrollPosition();
-                    syncMirrorByPixels();
+                    if (typeof syncMirrorScrollOnlyRef === 'function') syncMirrorScrollOnlyRef();
                     if (typeof resetPillTriggerState === 'function') resetPillTriggerState();
                 };
                 requestAnimationFrame(attemptRestore);
@@ -10636,7 +10715,10 @@ extendMonitorButton.onclick = async () => {
                 setTimeout(attemptRestore, 100);
                 if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(2000);
                 handleMirrorFocusReclaim();
-                [0, 40, 120, 350, 700].forEach((ms) => setTimeout(() => pushMirrorLeaderLayout(), ms));
+                requestAnimationFrame(() => {
+                    pushMirrorLeaderLayout();
+                    requestAnimationFrame(() => pushMirrorLeaderLayout());
+                });
             };
             mirrorWindow.addEventListener('load', sendWhenReady);
             setTimeout(sendWhenReady, 800);
