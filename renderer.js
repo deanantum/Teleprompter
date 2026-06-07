@@ -4733,6 +4733,36 @@ function indexToColumnLetter(colIndex) {
         return [stretchCol, qAvail, rowH, w2, w3, hl2, hl3, f12].join('|');
     }
 
+    /** In extend mode, primary script column visible on main (col2 when col3 is on mirror). */
+    function getMainBroadcastVisibleContentColumn(row) {
+        const cols = row.querySelectorAll('.script-column');
+        for (let i = cols.length - 1; i >= 0; i--) {
+            const c = cols[i];
+            if (c.classList.contains('broadcast-hidden') || c.classList.contains('user-col-hidden')) continue;
+            if (i === 0 && cols.length > 2) continue;
+            return { col: c, stretchCol: i + 1 };
+        }
+        for (let i = cols.length - 1; i >= 0; i--) {
+            const c = cols[i];
+            if (c.classList.contains('broadcast-hidden') || c.classList.contains('user-col-hidden')) continue;
+            return { col: c, stretchCol: i + 1 };
+        }
+        return null;
+    }
+
+    /** Which cell receives line-balance on main (stretch col, or visible col when stretch is mirror-only). */
+    function getRowLineBalanceTarget(row) {
+        const classStretch = row.classList.contains('row-stretch-col2') ? 2 : (row.classList.contains('row-stretch-col3') ? 3 : 0);
+        if (!classStretch) return null;
+        const stretchColEl = row.querySelector(`.script-column:nth-child(${classStretch})`);
+        if (!stretchColEl || stretchColEl.classList.contains('user-col-hidden')) return null;
+        if (document.body.classList.contains('broadcasting') && stretchColEl.classList.contains('broadcast-hidden')) {
+            return getMainBroadcastVisibleContentColumn(row);
+        }
+        if (stretchColEl.classList.contains('broadcast-hidden')) return null;
+        return { col: stretchColEl, stretchCol: classStretch };
+    }
+
     /**
      * Shorter column (by rendered height) gets extra line-spacing to fill the row. Skipped in Aa overview.
      * Non-collapsed selection skews height metrics (bold/underline restore selects the whole span) — clear selection during measure, then restore.
@@ -4760,10 +4790,11 @@ function indexToColumnLetter(colIndex) {
 
             /* Clear line-balance only on columns that are not the stretched one (avoids wiping then failing to re-apply after format changes). */
             rows.forEach(row => {
-                const stretchCol = row.classList.contains('row-stretch-col2') ? 2 : (row.classList.contains('row-stretch-col3') ? 3 : 0);
-                if (!stretchCol) row.removeAttribute(TP_ROW_BALANCE_KEY);
+                const target = getRowLineBalanceTarget(row);
+                const balanceCol = target ? target.stretchCol : 0;
+                if (!balanceCol) row.removeAttribute(TP_ROW_BALANCE_KEY);
                 for (const i of [2, 3]) {
-                    if (stretchCol === i) continue;
+                    if (balanceCol === i) continue;
                     const col = row.querySelector(`.script-column:nth-child(${i})`);
                     if (!col || col.classList.contains('user-col-hidden')) continue;
                     const locker = col.querySelector('.cell-locker');
@@ -4776,10 +4807,9 @@ function indexToColumnLetter(colIndex) {
             });
 
             rows.forEach(row => {
-                const stretchCol = row.classList.contains('row-stretch-col2') ? 2 : (row.classList.contains('row-stretch-col3') ? 3 : 0);
-                if (!stretchCol) return;
-                const col = row.querySelector(`.script-column:nth-child(${stretchCol})`);
-                if (!col || col.classList.contains('user-col-hidden') || col.classList.contains('broadcast-hidden')) return;
+                const target = getRowLineBalanceTarget(row);
+                if (!target) return;
+                const { col, stretchCol } = target;
                 const locker = col.querySelector('.cell-locker');
                 const cell = col.querySelector('.cell-content') || locker;
                 if (!cell) return;
