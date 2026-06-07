@@ -122,8 +122,6 @@ document.addEventListener('DOMContentLoaded', function() {
     /** Mirror scroll sync state — declared before syncMirrorByPixelsRef is assigned. */
     let mirrorScrollLeaderCache = null;
     let lastMirrorSyncScrollTop = null;
-    let mirrorAlignFrameCounter = 0;
-    const MIRROR_SCROLL_REALIGN_FRAMES = 120;
     let syncMirrorByPixelsRef = null;
 
     // =========================================
@@ -2037,7 +2035,8 @@ document.addEventListener('DOMContentLoaded', function() {
         focusMainForControl();
         isTeleprompting = true;
         lastMirrorSyncScrollTop = null;
-        mirrorAlignFrameCounter = 0;
+        invalidateMirrorScrollLeaderCache();
+        mirrorScrollLeaderCache = readMirrorScrollLeaderCache();
         alignMirrorScrollToMain();
         const move = () => {
             if (!isTeleprompting) return;
@@ -2046,15 +2045,6 @@ document.addEventListener('DOMContentLoaded', function() {
             if (delta !== 0) {
                 teleprompterView.scrollTop += delta;
                 scrollAccum -= delta;
-                if (!applyMirrorScrollDelta(delta)) {
-                    syncMirrorByPixels();
-                } else {
-                    lastMirrorSyncScrollTop = teleprompterView.scrollTop;
-                }
-            }
-            mirrorAlignFrameCounter += 1;
-            if (mirrorAlignFrameCounter >= MIRROR_SCROLL_REALIGN_FRAMES) {
-                mirrorAlignFrameCounter = 0;
                 alignMirrorScrollToMain();
             }
             if (typeof checkTopPillAndGoToPreviousFile === 'function') checkTopPillAndGoToPreviousFile();
@@ -4007,9 +3997,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const viewportMax = Math.min(2000, (window.innerHeight || 800) * 2);
         return rows.map((row, i) => {
             const mainProbe = mainProbeHeights[i] || 0;
-            const mainActual = Math.floor(row.getBoundingClientRect().height) || 0;
             const mirrorH = (mirrorHeights && mirrorHeights[i]) || 0;
-            const v = Math.max(mainProbe, mainActual, mirrorH, 1);
+            const v = Math.max(mainProbe, mirrorH, 1);
             return Math.min(Math.floor(v), viewportMax);
         });
     }
@@ -4035,6 +4024,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     /** Merge main + mirror natural heights (tallest wins) and apply to both views. */
     function syncBroadcastRowHeightsFromBothViews(mirrorHeights) {
+        if (isTeleprompting) return null;
         if (!document.body.classList.contains('broadcasting') || !teleprompterText) return null;
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
         if (!rows.length) return null;
@@ -4715,7 +4705,7 @@ function indexToColumnLetter(colIndex) {
                 const stretchCol = row.classList.contains('row-stretch-col2') ? 2 : (row.classList.contains('row-stretch-col3') ? 3 : 0);
                 if (!stretchCol) return;
                 const col = row.querySelector(`.script-column:nth-child(${stretchCol})`);
-                if (!col || col.classList.contains('user-col-hidden')) return;
+                if (!col || col.classList.contains('user-col-hidden') || col.classList.contains('broadcast-hidden')) return;
                 const locker = col.querySelector('.cell-locker');
                 const cell = col.querySelector('.cell-content') || locker;
                 if (!cell) return;
@@ -4776,6 +4766,7 @@ function indexToColumnLetter(colIndex) {
                 }
                 cell.style.removeProperty('line-height');
                 void cell.offsetHeight;
+                lo = Math.min(lo, avail);
                 cell.style.setProperty('line-height', lo + 'px', 'important');
                 cell.setAttribute('data-tp-line-balance', '1');
                 row.setAttribute(TP_ROW_BALANCE_KEY, balanceKey);
@@ -4939,7 +4930,7 @@ function indexToColumnLetter(colIndex) {
             const col2 = cols[Math.min(idxCol2, n - 1)];
             const col3 = cols[Math.min(idxCol3, n - 1)];
             /* Tallest column sets row height; stretch the *other* column with line-spacing (word-count class is only for red/green). */
-            if (!document.body.classList.contains('overview-mode')) {
+            if (!document.body.classList.contains('overview-mode') && cls !== 'row-lines-same') {
                 const locker2 = col2.querySelector('.cell-locker');
                 const c2 = col2.querySelector('.cell-content') || locker2;
                 const locker3 = col3.querySelector('.cell-locker');
@@ -10494,7 +10485,6 @@ extendMonitorButton.onclick = async () => {
 
         /* Table is now at final width; sync column widths again so layout is correct, then measure row heights */
         syncColumnWidths(true);
-        applyRowShortColumnLineSpacing();
         void teleprompterText.offsetHeight;
         const rowsForMeasure = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
         measuredRowHeights = measureBroadcastRowHeights(rowsForMeasure);
@@ -10505,6 +10495,7 @@ extendMonitorButton.onclick = async () => {
                 row.style.height = h + 'px';
             }
         });
+        applyRowShortColumnLineSpacing();
         restoreScrollPosition();
         if (typeof resetPillTriggerState === 'function') resetPillTriggerState();
         if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(2000);
