@@ -1173,14 +1173,13 @@
                             applyGlowLineBalance: true,
                             onLineBalanceComplete: function() {
                                 invalidateMirrorRow0OriginCache();
-                                finishMirrorContentLayout(data);
+                                if (!data.deferScrollSync) finishMirrorContentLayout(data);
                                 suppressMirrorHeightReport = 10;
                                 reportMirrorRowHeightsToMain(mirrorRows);
                             }
                         });
                         applyMirrorLayout(data.layout);
                         lastPixelSyncData = data;
-                        finishMirrorContentLayout(data);
                         requestAnimationFrame(function() {
                             suppressMirrorHeightReport = 10;
                             reportMirrorRowHeightsToMain(mirrorRows);
