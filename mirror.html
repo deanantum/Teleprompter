@@ -82,7 +82,6 @@
         .mirror-table .cell-content {
             flex: 1;
             display: block;
-            line-height: 1.1 !important;
             font-size: inherit;
             word-wrap: break-word;
             overflow-wrap: break-word;
@@ -94,6 +93,9 @@
             margin: 0;
             min-width: 0;
             overflow: visible;
+        }
+        .mirror-table .cell-content:not([data-tp-line-balance]) {
+            line-height: 1.1 !important;
         }
         .mirror-table .cell-content b,
         .mirror-table .cell-content i,
@@ -133,6 +135,8 @@
         }
         .mirror-table .script-row-wrapper.mirror-row-font-12 .script-column .cell-content {
             font-size: 12px !important;
+        }
+        .mirror-table .script-row-wrapper.mirror-row-font-12 .script-column .cell-content:not([data-tp-line-balance]) {
             line-height: 1.2 !important;
         }
         /* Shorter mirror column: evenly space lines to fill merged row height */
@@ -413,21 +417,29 @@
                 return -1;
             }
 
-            function rowNeedsMirrorGlowLineBalance(row) {
+            function rowNeedsMirrorGlowLineBalance(row, meta) {
                 if (row.classList.contains('row-lines-same')) return false;
                 if (!MIRROR_GLOW_FILL_CLASSES.some(function(c) { return row.classList.contains(c); })) return false;
                 var visIdx = mirrorVisibleColumnIndex(row);
                 if (visIdx < 0) return false;
-                if (row.classList.contains('row-stretch-col2') && visIdx === 1) return true;
-                if (row.classList.contains('row-stretch-col3') && visIdx === 2) return true;
+                var stretchCol = 0;
+                if (row.classList.contains('row-stretch-col2')) stretchCol = 2;
+                else if (row.classList.contains('row-stretch-col3')) stretchCol = 3;
+                else if (meta && meta.stretchCol) stretchCol = meta.stretchCol;
+                if (stretchCol === 2 && visIdx === 1) return true;
+                if (stretchCol === 3 && visIdx === 2) return true;
                 return false;
             }
 
-            function applyMirrorGlowLineBalanceSelective(mirrorRows) {
+            function applyMirrorGlowLineBalanceSelective(mirrorRows, tableData) {
                 if (!mirrorRows || !mirrorRows.length) return;
+                if (!tableData && lastLoadContentData && lastLoadContentData.table) {
+                    tableData = lastLoadContentData.table;
+                }
                 for (var i = 0; i < mirrorRows.length; i++) {
                     var row = mirrorRows[i];
-                    if (rowNeedsMirrorGlowLineBalance(row)) {
+                    var meta = tableData && tableData[i];
+                    if (rowNeedsMirrorGlowLineBalance(row, meta)) {
                         applyMirrorRowLineBalanceOne(row);
                     } else {
                         var cell = row.querySelector('.script-column.mirror-visible .cell-content');
@@ -836,8 +848,10 @@
                     MIRROR_ROW_STRETCH_CLASSES.forEach(function(c) { mirrorRow.classList.remove(c); });
                     MIRROR_KEYWORD_PILL_CLASSES.forEach(function(c) { mirrorRow.classList.remove(c); });
                     merged.split(/\s+/).filter(Boolean).forEach(function(c) {
-                        if (MIRROR_ROW_STRETCH_CLASSES.indexOf(c) < 0) mirrorRow.classList.add(c);
+                        mirrorRow.classList.add(c);
                     });
+                    if (meta && meta.stretchCol === 2) mirrorRow.classList.add('row-stretch-col2');
+                    else if (meta && meta.stretchCol === 3) mirrorRow.classList.add('row-stretch-col3');
                     if (meta && meta.font12) mirrorRow.classList.add('mirror-row-font-12');
                     else mirrorRow.classList.remove('mirror-row-font-12');
                 }
