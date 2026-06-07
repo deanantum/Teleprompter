@@ -1169,6 +1169,10 @@
                         var mirrorRows = display.querySelectorAll('.script-row-wrapper');
                         applyMirrorRowClasses(mirrorRows, data.table, data.rowColors);
                         suppressMirrorHeightReport = 40;
+                        if (data.cachedLayout && data.rowHeights && data.rowHeights.length) {
+                            applyMirrorRowHeightsAndStretch(data, { heightsOnly: true });
+                            if (!data.deferScrollSync) finishMirrorContentLayout(data);
+                        } else {
                         applyMirrorRowHeightsAndStretch(data, {
                             applyGlowLineBalance: true,
                             onLineBalanceComplete: function() {
@@ -1178,6 +1182,7 @@
                                 reportMirrorRowHeightsToMain(mirrorRows);
                             }
                         });
+                        }
                         applyMirrorLayout(data.layout);
                         lastPixelSyncData = data;
                         requestAnimationFrame(function() {
