@@ -4348,7 +4348,7 @@ function indexToColumnLetter(colIndex) {
 
             if (mirrorWindow && !mirrorWindow.closed) {
                 pushMirrorLeaderLayout();
-                if (typeof syncMirrorScrollOnlyRef === 'function') syncMirrorScrollOnlyRef();
+                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
             }
         }
 
@@ -4417,21 +4417,13 @@ function indexToColumnLetter(colIndex) {
 
             if (mirrorWindow && !mirrorWindow.closed) {
                 pushMirrorLeaderLayout();
-                if (lockToBottom) {
-                    if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
-                } else if (typeof syncMirrorScrollOnlyRef === 'function') {
-                    syncMirrorScrollOnlyRef();
-                }
+                if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
             }
         }
 
 		function syncMirrorScrollOnly() {
         if (isUpdatingFromMirrorScroll || !mirrorWindow || mirrorWindow.closed) return;
         if (pageTurnInProgress) return;
-        if (typeof alignMirrorScrollToMain === 'function') {
-            alignMirrorScrollToMain();
-            return;
-        }
         const scrollPayload = getMirrorScrollSyncPayload();
         if (lastMirrorSyncScrollTop === scrollPayload.contentScrollY) return;
         if (mirrorSupportsDirectScroll()) {
@@ -5435,7 +5427,6 @@ function indexToColumnLetter(colIndex) {
             const view = document.getElementById('teleprompter-view');
             if (view) view.scrollTop = Math.max(0, view.scrollHeight - view.clientHeight);
         }
-        invalidateMirrorScrollLeaderCache();
         return true;
     }
 
@@ -5474,10 +5465,6 @@ function indexToColumnLetter(colIndex) {
         const content = contentStore[index];
         if (!content || typeof content !== 'string' || !content.trim()) return false;
         if (fileLayoutCache[index]?.envKey === getFileLayoutCacheEnvKey(index)) return true;
-        let prepHtml = content;
-        if (prepHtml.length) {
-            prepHtml = applyOpenFileLineBreaksToContent(stripNumericAngleMarkers(prepHtml));
-        }
         const staging = getOrCreateFilePrepStaging();
         const w = extendedFixedWidth || teleprompterText.getBoundingClientRect().width;
         if (w > 0) {
@@ -5493,7 +5480,7 @@ function indexToColumnLetter(colIndex) {
         const savedHeights = measuredRowHeights.slice();
         currentFileIndex = index;
         runWithScriptRoot(staging, () => {
-            staging.innerHTML = prepHtml;
+            staging.innerHTML = content;
             processTableColumns();
             wrapCellContentInBlock();
             removeUuidFromFirstColumn();
@@ -5526,10 +5513,6 @@ function indexToColumnLetter(colIndex) {
             if (done) done(true);
             return;
         }
-        let prepHtml = content;
-        if (prepHtml.length) {
-            prepHtml = applyOpenFileLineBreaksToContent(stripNumericAngleMarkers(prepHtml));
-        }
         const staging = getOrCreateFilePrepStaging();
         const w = extendedFixedWidth || teleprompterText.getBoundingClientRect().width;
         if (w > 0) {
@@ -5545,7 +5528,7 @@ function indexToColumnLetter(colIndex) {
         const savedHeights = measuredRowHeights.slice();
         currentFileIndex = index;
         runWithScriptRoot(staging, () => {
-            staging.innerHTML = prepHtml;
+            staging.innerHTML = content;
             processTableColumns();
             wrapCellContentInBlock();
             removeUuidFromFirstColumn();
@@ -5597,7 +5580,7 @@ function indexToColumnLetter(colIndex) {
             }, delayMs);
         };
         runIfNeeded(next, 0);
-        runIfNeeded(prev, 0);
+        runIfNeeded(prev, 80);
     }
 
     function pushMirrorLoadFromCache(cached) {
@@ -5613,7 +5596,7 @@ function indexToColumnLetter(colIndex) {
             rowColors: mp.rowColors,
             rowFont12: mp.rowFont12,
             rowHeights: mp.rowHeights,
-            deferScrollSync: false,
+            deferScrollSync: mirrorLayoutSettling,
             contentWidth,
             style: getMirrorStylePayload(),
             ...getMirrorScrollSyncPayload(),
@@ -10487,9 +10470,8 @@ function loadScriptToEditor(index, options) {
     currentFileIndex = index;
     clearSelectedFontTargetSelection();
     applyCurrentFileSyncGuideVisibility();
-    const usedLayoutCache = !isOverviewMode && tryApplyFileLayoutCache(index, options);
     let content = contentStore[index];
-    if (!usedLayoutCache && typeof content === 'string' && content.length) {
+    if (typeof content === 'string' && content.length) {
         const stripped = stripNumericAngleMarkers(content);
         content = applyOpenFileLineBreaksToContent(stripped);
         if (content !== contentStore[index]) {
@@ -10497,15 +10479,9 @@ function loadScriptToEditor(index, options) {
             invalidateFileLayoutCache(index);
         }
     }
+    const usedLayoutCache = !isOverviewMode && tryApplyFileLayoutCache(index, options);
     const contentHasBkmk = (content && typeof content === 'string') ? content.indexOf('{BKMK}') !== -1 : false;
     console.log('[BKMK] loadScriptToEditor index=', index, 'layoutCache=', usedLayoutCache, 'content length=', (content && content.length) || 0, 'content contains "{BKMK}":', contentHasBkmk);
-    if (switchingFile && !isOverviewMode) scheduleAdjacentFilePrefetch(index);
-    if (usedLayoutCache && switchingFile && mirrorWindow && !mirrorWindow.closed && document.body.classList.contains('broadcasting')) {
-        beginMirrorLayoutSettling(400);
-        pushMirrorLoadFromCache(fileLayoutCache[index]);
-        if (typeof syncMirrorStyles === 'function') syncMirrorStyles();
-        if (typeof pushMirrorLeaderLayout === 'function') pushMirrorLeaderLayout();
-    }
     if (!usedLayoutCache) {
     /* Reset root font styles so previous file's fontSize/fontFamily don't bleed into this file */
     teleprompterText.style.fontSize = '';
@@ -10579,12 +10555,17 @@ function loadScriptToEditor(index, options) {
         if (typeof updateBottomScrollChrome === 'function') updateBottomScrollChrome({ preserveScroll: true });
         if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(2000);
         if (typeof suppressMirrorScrollEcho === 'function') suppressMirrorScrollEcho(2500);
-        if (switchingFile && mirrorWindow && !mirrorWindow.closed && document.body.classList.contains('broadcasting') && !usedLayoutCache) {
-            beginMirrorLayoutSettling(1600);
+        if (switchingFile && mirrorWindow && !mirrorWindow.closed && document.body.classList.contains('broadcasting')) {
+            beginMirrorLayoutSettling(usedLayoutCache ? 900 : 1600);
         }
-        if (!usedLayoutCache && typeof syncMirrorAfterEditorSettled === 'function') {
+        if (usedLayoutCache && mirrorWindow && !mirrorWindow.closed && document.body.classList.contains('broadcasting')) {
+            pushMirrorLoadFromCache(fileLayoutCache[index]);
+            if (typeof syncMirrorStyles === 'function') syncMirrorStyles();
+            if (typeof pushMirrorLeaderLayout === 'function') pushMirrorLeaderLayout();
+        } else if (typeof syncMirrorAfterEditorSettled === 'function') {
             syncMirrorAfterEditorSettled();
         }
+        scheduleAdjacentFilePrefetch(index);
         if (!usedLayoutCache && !isOverviewMode && document.body.classList.contains('broadcasting')) {
             saveFileLayoutCache(index);
         }
@@ -10699,7 +10680,6 @@ function alignMirrorScrollToMain() {
         }
         return;
     }
-    if (lastMirrorSyncScrollTop === mainY) return;
     if (mirrorSupportsDirectScroll()) {
         try {
             mirrorWindow.__teleprompterAlignScroll(scrollPayload);
