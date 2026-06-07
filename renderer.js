@@ -5207,7 +5207,15 @@ function indexToColumnLetter(colIndex) {
         const text = (cellEl.textContent || '').replace(/\u00a0/g, ' ').trim();
         if (!text) return '';
         const raw = (cellEl.innerHTML || '').trim();
-        return raw || '';
+        if (!raw) return '';
+        if (cellHasPreservedInlineFormatting(cellEl)) return raw;
+        const probe = document.createElement('div');
+        probe.innerHTML = raw;
+        const rendered = (probe.textContent || '').replace(/\u00a0/g, ' ').trim();
+        if (rendered.length < text.length) {
+            return plainTextWithOpenFileBreaksToCellHtml(cellEl.textContent || '');
+        }
+        return raw;
     }
 
     function buildMirrorRowMeta(row, rowIndex) {
@@ -7938,10 +7946,15 @@ const TP_PIPEV_LINE_START_RX = /^\s*\|v(?:\u2011|-)?[A-Za-z0-9_.]+\|?/i;
 /** Only suppress a break when |v follows on the same line (e.g. ". |v5"), not on the next row. */
 const TP_PIPEV_SAME_LINE_AHEAD_RX = /(?!\s+\|v(?:\u2011|-)?[A-Za-z0-9_.]+\|?)/i;
 
+/** Known HTML tags only — ASL direction markers like "(<L)" must not match (old /<[a-z]/ did). */
+const TP_HTML_SOURCE_TAG_RX = /<\s*\/?(?:p|div|br|span|table|tr|td|th|html|body|h[1-6]|b|i|u|strong|em|script|style)\b/i;
+const TP_HTML_SOURCE_ESCAPED_TAG_RX = /&lt;\s*\/?(?:p|div|br|span|table|tr|td|th|html|body|h[1-6]|b|i|u|strong|em|script|style)\b/i;
+
 /** True when the string looks like HTML/markup (must not run quote regex on it). */
 function looksLikeHtmlSource(text) {
     if (!text || typeof text !== 'string') return false;
-    return /<[a-z!?\/]/i.test(text) || /&lt;[a-z!?\/]/i.test(text) || /\bclass\s*=/i.test(text)
+    return TP_HTML_SOURCE_TAG_RX.test(text) || TP_HTML_SOURCE_ESCAPED_TAG_RX.test(text)
+        || /\bclass\s*=\s*["']/i.test(text)
         || /script-container|script-row-wrapper|script-column/i.test(text);
 }
 
@@ -7995,7 +8008,6 @@ function insertOpenFileLineBreaksPlainTextCore(text) {
 
 function insertOpenFileLineBreaksInPlainText(text) {
     if (!text || typeof text !== 'string') return text;
-    if (looksLikeHtmlSource(text)) return text;
     let t = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const lines = t.split('\n');
     t = lines.map((line) => {
@@ -8009,7 +8021,7 @@ function insertOpenFileLineBreaksInPlainText(text) {
 
 /** Plain speech only → safe cell HTML with <br> elements (never escape or break real tags). */
 function plainTextWithOpenFileBreaksToCellHtml(text) {
-    if (!text || looksLikeHtmlSource(text)) return text || '';
+    if (!text) return text || '';
     const broken = insertOpenFileLineBreaksInPlainText(text);
     return broken
         .replace(/&/g, '&amp;')
