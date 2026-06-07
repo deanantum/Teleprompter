@@ -7852,7 +7852,7 @@ const TP_BREAK_WS = '[ \\t\\u00A0]';
 function insertOpenFileLineBreaksPlainTextCore(text) {
     const ellipsisSpans = [];
     let t = text;
-    t = t.replace(/(^|\s)([A-Z])\.(?=\s)/g, `$1$2${MIDDLE_INITIAL_PERIOD_PLACEHOLDER}`);
+    t = t.replace(/(^|\s)([A-Za-z])\.(?=\s)/g, `$1$2${MIDDLE_INITIAL_PERIOD_PLACEHOLDER}`);
     t = t.replace(/\.{3,}|\u2026/g, (m) => {
         const id = ellipsisSpans.length;
         ellipsisSpans.push(m);
@@ -8051,7 +8051,9 @@ async function processFileContent(file, index) {
                     const { html, selectedColCount, totalColCount } = await buildXlsxScriptContainerHtmlFromWorkbook(arrayBuffer, workbook);
                     const currentIdx = fileStore.findIndex(f => f === file);
                     const slot = currentIdx >= 0 ? currentIdx : index;
-                    contentStore[slot] = html;
+                    let processed = stripNumericAngleMarkers(html);
+                    processed = applyOpenFileLineBreaksToContent(processed);
+                    contentStore[slot] = processed;
                     fileColumnCount[slot] = selectedColCount;
                     fileColumnVisibility[slot] = Array.from({ length: selectedColCount }, () => true);
                     fileFirstColIsId[slot] = selectedColCount > 0 && isFirstColumnNumeric(sheet);
@@ -8314,6 +8316,25 @@ function processTableColumns() {
     /* Ensure blank/empty rows have nbsp so they keep height and stay separated */
     ensureEmptyRowsHaveNbsp();
     trimScriptTableToMaxColumns();
+}
+
+/** After sentence line breaks: sync column widths and row heights so main/mirror stay aligned. */
+function remeasureScriptLayoutAfterLineBreaks() {
+    if (!teleprompterText) return;
+    void teleprompterText.offsetHeight;
+    if (typeof applyMainScriptViewportWidth === 'function') applyMainScriptViewportWidth();
+    if (typeof syncColumnWidths === 'function') syncColumnWidths(true);
+    if (document.body.classList.contains('broadcasting')) {
+        if (typeof measureRowHeightsWithProbeForBroadcasting === 'function') {
+            measureRowHeightsWithProbeForBroadcasting();
+        }
+    }
+    if (typeof scheduleRowShortColumnLineSpacing === 'function') {
+        scheduleRowShortColumnLineSpacing(true);
+    }
+    if (typeof invalidateMirrorScrollLeaderCache === 'function') {
+        invalidateMirrorScrollLeaderCache();
+    }
 }
 
 /** Plain text / non-table scripts: wrap loose lines in single-column rows so width sync and wrapping apply. */
@@ -8698,6 +8719,7 @@ function loadFileContent(file, index) {
                     const { html } = await buildXlsxScriptContainerHtmlFromWorkbook(arrayBuffer, workbook);
                     let { html: normalized } = normalizeContentToMax3Columns(html);
                     normalized = stripNumericAngleMarkers(normalized);
+                    normalized = applyOpenFileLineBreaksToContent(normalized);
                     contentStore[index] = normalized;
                     if (currentFileIndex === index) {
                         teleprompterText.innerHTML = normalized;
@@ -9989,8 +10011,8 @@ function loadScriptToEditor(index, options) {
     let content = contentStore[index];
     if (typeof content === 'string' && content.length) {
         const stripped = stripNumericAngleMarkers(content);
-        if (stripped !== content) contentStore[index] = stripped;
-        content = stripped;
+        content = applyOpenFileLineBreaksToContent(stripped);
+        if (content !== contentStore[index]) contentStore[index] = content;
     }
     const contentHasBkmk = (content && typeof content === 'string') ? content.indexOf('{BKMK}') !== -1 : false;
     console.log('[BKMK] loadScriptToEditor index=', index, 'content length=', (content && content.length) || 0, 'content contains "{BKMK}":', contentHasBkmk);
@@ -10045,7 +10067,7 @@ function loadScriptToEditor(index, options) {
         wrapCellContentInBlock();
         applyKeywordPills();
         if (!isOverviewMode) applyFileScriptSettingsToEditor(index);
-        syncColumnWidths(true);
+        remeasureScriptLayoutAfterLineBreaks();
         applyTableFirstColumnFontLock();
         shrinkAllPillsToFit();
         if (currentFileIndex >= 0 && currentFileIndex < contentStore.length) {
