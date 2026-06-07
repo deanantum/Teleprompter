@@ -419,14 +419,13 @@
             }
 
             function rowNeedsMirrorGlowLineBalance(row, meta) {
-                if (row.classList.contains('row-lines-same')) return false;
-                if (!MIRROR_GLOW_FILL_CLASSES.some(function(c) { return row.classList.contains(c); })) return false;
                 var visIdx = mirrorVisibleColumnIndex(row);
                 if (visIdx < 0) return false;
                 var stretchCol = 0;
                 if (row.classList.contains('row-stretch-col2')) stretchCol = 2;
                 else if (row.classList.contains('row-stretch-col3')) stretchCol = 3;
                 else if (meta && meta.stretchCol) stretchCol = meta.stretchCol;
+                if (!stretchCol) return false;
                 if (stretchCol === 2 && visIdx === 1) return true;
                 if (stretchCol === 3 && visIdx === 2) return true;
                 return false;
