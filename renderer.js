@@ -5402,31 +5402,14 @@ function indexToColumnLetter(colIndex) {
         return Math.max(100, getStageScriptContentWidthPx());
     }
 
-    /** Mirror column width for broadcast row-height probe (avoid narrow fallback that wraps col3 text). */
+    /** Mirror column width for col3 row-height probe — use mirror viewport only, not main col width (main is often wider → under-counts col3 wrap). */
     function getBroadcastMirrorColWidthPx(rows) {
         const mirrorW = getMirrorViewportContentWidthPx();
         if (mirrorW != null && mirrorW > 50) return mirrorW;
-        if (rows && rows.length) {
-            const numCols = rows[0].querySelectorAll('.script-column').length;
-            const lastVisible = getLastVisibleColumnIndex(numCols);
-            let mainColIdx = lastVisible >= 0 ? lastVisible - 1 : 1;
-            if (mainColIdx < 0) mainColIdx = numCols > 1 ? 1 : 0;
-            const cols = rows[0].querySelectorAll('.script-column');
-            const mainCol = cols[mainColIdx];
-            if (mainCol && !mainCol.classList.contains('broadcast-hidden')) {
-                const w = Math.floor(mainCol.getBoundingClientRect().width);
-                if (w > 50) return w;
-            }
-            const col2 = cols[1];
-            if (col2) {
-                const w = Math.floor(col2.getBoundingClientRect().width);
-                if (w > 50) return w;
-            }
+        const pendingOuter = pendingMirrorPosition && pendingMirrorPosition.width;
+        if (pendingOuter > 50) {
+            return Math.max(50, Math.floor(pendingOuter - MIRROR_SCROLL_PADDING_LEFT - MIRROR_SCROLLBAR_ALLOWANCE));
         }
-        const stageW = getBroadcastTeleprompterTextWidthPx();
-        if (stageW > 50) return stageW;
-        const scriptW = getStageScriptContentWidthPx();
-        if (scriptW > 50) return scriptW;
         return (lastColumnWidthPx != null && lastColumnWidthPx > 0) ? lastColumnWidthPx : 400;
     }
 
