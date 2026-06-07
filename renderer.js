@@ -119,6 +119,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     } catch (_) {}
 
+    /** Mirror scroll sync state — declared before syncMirrorByPixelsRef is assigned. */
+    let mirrorScrollLeaderCache = null;
+    let lastMirrorSyncScrollTop = null;
+    let mirrorAlignFrameCounter = 0;
+    const MIRROR_SCROLL_REALIGN_FRAMES = 120;
+    let syncMirrorByPixelsRef = null;
+
     // =========================================
     // 2. IMMEDIATE UI SETUP (CRITICAL: Must be AFTER selectors)
     // =========================================
@@ -10111,13 +10118,6 @@ function requestMirrorFullscreen() {
     };
     [0, 60, 180, 400, 900, 1800, 3200, 5200].forEach((ms) => setTimeout(tryOnce, ms));
 }
-
-/** Cached leader geometry for mirror scroll sync (invalidated when layout/heights change). */
-let mirrorScrollLeaderCache = null;
-let lastMirrorSyncScrollTop = null;
-let mirrorAlignFrameCounter = 0;
-const MIRROR_SCROLL_REALIGN_FRAMES = 120;
-let syncMirrorByPixelsRef = null;
 
 function invalidateMirrorScrollLeaderCache() {
     mirrorScrollLeaderCache = null;
