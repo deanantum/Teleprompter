@@ -3938,6 +3938,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (typeof refreshMirrorData === 'function') refreshMirrorData();
         if (typeof syncMirrorStyles === 'function') syncMirrorStyles();
         if (typeof pushMirrorLeaderLayout === 'function') pushMirrorLeaderLayout();
+        if (mirrorLayoutSettling) return;
         const runPixelSync = () => {
             if (typeof syncMirrorByPixels === 'function') syncMirrorByPixels();
         };
@@ -3967,6 +3968,7 @@ document.addEventListener('DOMContentLoaded', function() {
         suppressMirrorScrollEcho(900);
         invalidateMirrorScrollLeaderCache();
         mirrorScrollLeaderCache = readMirrorScrollLeaderCache();
+        lastMirrorSyncScrollTop = null;
         relayoutBroadcastAfterMirrorWidthChange();
         if (pendingMirrorHeightsReport) {
             const heights = pendingMirrorHeightsReport;
@@ -5322,6 +5324,7 @@ function indexToColumnLetter(colIndex) {
                 rowColors,
                 rowFont12,
                 rowHeights,
+                deferScrollSync: mirrorLayoutSettling,
                 ...getMirrorScrollSyncPayload(),
                 ...getMirrorContentSyncMeta(),
                 ...pillPayload,
@@ -10197,6 +10200,9 @@ function loadScriptToEditor(index, options) {
         if (typeof updateBottomScrollChrome === 'function') updateBottomScrollChrome({ preserveScroll: true });
         if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(2000);
         if (typeof suppressMirrorScrollEcho === 'function') suppressMirrorScrollEcho(2500);
+        if (switchingFile && mirrorWindow && !mirrorWindow.closed && document.body.classList.contains('broadcasting')) {
+            beginMirrorLayoutSettling(1600);
+        }
         if (typeof syncMirrorAfterEditorSettled === 'function') syncMirrorAfterEditorSettled();
         if (options && options.resumeTeleprompt && typeof startScrolling === 'function') {
             requestAnimationFrame(() => startScrolling());
@@ -10290,10 +10296,29 @@ function mirrorSupportsDirectScroll() {
 function alignMirrorScrollToMain() {
     if (!mirrorWindow || mirrorWindow.closed) return;
     const scrollPayload = getMirrorScrollSyncPayload();
+    const mainY = scrollPayload.contentScrollY;
+    if (mirrorLayoutSettling) {
+        if (lastMirrorSyncScrollTop == null) {
+            lastMirrorSyncScrollTop = mainY;
+            if (mirrorSupportsDirectScroll()) {
+                try {
+                    mirrorWindow.__teleprompterAlignScroll(scrollPayload);
+                    return;
+                } catch (_) {}
+            }
+        } else {
+            const delta = mainY - lastMirrorSyncScrollTop;
+            if (delta !== 0) {
+                applyMirrorScrollDelta(delta);
+                lastMirrorSyncScrollTop = mainY;
+            }
+        }
+        return;
+    }
     if (mirrorSupportsDirectScroll()) {
         try {
             mirrorWindow.__teleprompterAlignScroll(scrollPayload);
-            lastMirrorSyncScrollTop = scrollPayload.contentScrollY;
+            lastMirrorSyncScrollTop = mainY;
             return;
         } catch (_) {}
     }
