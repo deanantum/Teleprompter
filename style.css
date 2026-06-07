@@ -477,6 +477,8 @@ body.format-pickup-mode #teleprompter-text,
     gap: 6px;
     border-bottom: 1px solid var(--border-color);
     z-index: 10;
+    position: relative;
+    pointer-events: auto;
 }
 
 .top-ribbon-row {
