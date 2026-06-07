@@ -2028,18 +2028,25 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function startScrolling() {
-        if (isTeleprompting) return;
+        if (isTeleprompting && !isPaused) return;
         hideRunlistForPlayback();
         if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(1200);
         if (typeof resetPillTriggerState === 'function') resetPillTriggerState();
         focusMainForControl();
+        const wasPaused = isPaused;
         isTeleprompting = true;
-        lastMirrorSyncScrollTop = null;
-        invalidateMirrorScrollLeaderCache();
-        mirrorScrollLeaderCache = readMirrorScrollLeaderCache();
-        alignMirrorScrollToMain();
+        isPaused = false;
+        if (mirrorWindow && !mirrorWindow.closed) {
+            mirrorWindow.postMessage({ type: 'setTeleprompting', active: true }, '*');
+        }
+        if (!wasPaused) {
+            lastMirrorSyncScrollTop = null;
+            invalidateMirrorScrollLeaderCache();
+            mirrorScrollLeaderCache = readMirrorScrollLeaderCache();
+            alignMirrorScrollToMain();
+        }
         const move = () => {
-            if (!isTeleprompting) return;
+            if (!isTeleprompting || isPaused) return;
             scrollAccum += scrollSpeed;
             const delta = Math.trunc(scrollAccum);
             if (delta !== 0) {
@@ -2068,7 +2075,6 @@ document.addEventListener('DOMContentLoaded', function() {
             startScrolling();
         } else {
             isPaused = true;
-            isTeleprompting = false;
             if (animationFrameId) cancelAnimationFrame(animationFrameId);
             animationFrameId = null;
         }
@@ -2098,6 +2104,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     stopButton.onclick = () => {
         isTeleprompting = false;
+        if (mirrorWindow && !mirrorWindow.closed) {
+            mirrorWindow.postMessage({ type: 'setTeleprompting', active: false }, '*');
+        }
         isPaused = false;
         scrollAccum = 0;
         if (animationFrameId) cancelAnimationFrame(animationFrameId);
@@ -3909,7 +3918,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function getMirrorContentSyncMeta() {
-        return { contentGeneration: mirrorContentGeneration, fileIndex: currentFileIndex };
+        return { contentGeneration: mirrorContentGeneration, fileIndex: currentFileIndex, teleprompting: isTeleprompting };
     }
 
     function suppressMirrorScrollEcho(ms = 1200) {
@@ -4015,6 +4024,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function pushMergedRowHeightsToMirror(heights) {
         if (!mirrorWindow || mirrorWindow.closed) return;
+        if (isTeleprompting) return;
         mirrorWindow.postMessage({
             type: 'updateRowHeights',
             rowHeights: heights,
@@ -4665,6 +4675,7 @@ function indexToColumnLetter(colIndex) {
      * Non-collapsed selection skews height metrics (bold/underline restore selects the whole span) — clear selection during measure, then restore.
      */
     function applyRowShortColumnLineSpacing() {
+        if (isTeleprompting) return;
         const sel = typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null;
         let savedNonCollapsedRange = null;
         if (sel && sel.rangeCount > 0 && teleprompterText) {
@@ -4792,6 +4803,7 @@ function indexToColumnLetter(colIndex) {
      * force=true: 0ms debounce (resize, load, mirror, ribbon). force=false: 100ms debounce.
      */
     function scheduleRowShortColumnLineSpacing(force) {
+        if (isTeleprompting) return;
         if (tpLineBalanceDebounceTimer) clearTimeout(tpLineBalanceDebounceTimer);
         const delay = force ? 0 : 100;
         tpLineBalanceDebounceTimer = setTimeout(() => {
