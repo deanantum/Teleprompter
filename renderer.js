@@ -4428,13 +4428,13 @@ function indexToColumnLetter(colIndex) {
         if (!document.body.classList.contains('broadcasting')) return;
         const rows = Array.from(teleprompterText.querySelectorAll('.script-row-wrapper'));
         if (rows.length === 0) return;
-        if (mirrorReportedRowHeights.length === rows.length) {
-            syncBroadcastRowHeightsFromBothViews(mirrorReportedRowHeights);
-        } else {
-            measuredRowHeights = measureBroadcastRowHeights(rows);
-            applyBroadcastRowHeightsToDom(measuredRowHeights, rows);
-            pushMergedRowHeightsToMirror(measuredRowHeights);
-        }
+        const mainProbe = measureBroadcastRowHeights(rows);
+        const merged = mirrorReportedRowHeights.length === rows.length
+            ? mergeBroadcastRowHeights(mainProbe, mirrorReportedRowHeights, rows)
+            : mainProbe;
+        measuredRowHeights = merged;
+        applyBroadcastRowHeightsToDom(measuredRowHeights, rows);
+        pushMergedRowHeightsToMirror(measuredRowHeights);
         if (typeof updateBookmarkPositions === 'function') updateBookmarkPositions();
         if (!document.body.classList.contains('overview-mode')) {
             applyRowShortColumnLineSpacing();
@@ -5390,6 +5390,7 @@ function indexToColumnLetter(colIndex) {
 
     function relayoutBroadcastAfterMirrorWidthChange() {
         if (!document.body.classList.contains('broadcasting')) return;
+        mirrorReportedRowHeights = [];
         syncColumnWidths(true);
         measureRowHeightsWithProbeForBroadcasting();
         refreshMirrorData();
@@ -5399,6 +5400,34 @@ function indexToColumnLetter(colIndex) {
     /** Main script width in extend mode: use the stage width (runlist is docked on the left). */
     function getBroadcastTeleprompterTextWidthPx() {
         return Math.max(100, getStageScriptContentWidthPx());
+    }
+
+    /** Mirror column width for broadcast row-height probe (avoid narrow fallback that wraps col3 text). */
+    function getBroadcastMirrorColWidthPx(rows) {
+        const mirrorW = getMirrorViewportContentWidthPx();
+        if (mirrorW != null && mirrorW > 50) return mirrorW;
+        if (rows && rows.length) {
+            const numCols = rows[0].querySelectorAll('.script-column').length;
+            const lastVisible = getLastVisibleColumnIndex(numCols);
+            let mainColIdx = lastVisible >= 0 ? lastVisible - 1 : 1;
+            if (mainColIdx < 0) mainColIdx = numCols > 1 ? 1 : 0;
+            const cols = rows[0].querySelectorAll('.script-column');
+            const mainCol = cols[mainColIdx];
+            if (mainCol && !mainCol.classList.contains('broadcast-hidden')) {
+                const w = Math.floor(mainCol.getBoundingClientRect().width);
+                if (w > 50) return w;
+            }
+            const col2 = cols[1];
+            if (col2) {
+                const w = Math.floor(col2.getBoundingClientRect().width);
+                if (w > 50) return w;
+            }
+        }
+        const stageW = getBroadcastTeleprompterTextWidthPx();
+        if (stageW > 50) return stageW;
+        const scriptW = getStageScriptContentWidthPx();
+        if (scriptW > 50) return scriptW;
+        return (lastColumnWidthPx != null && lastColumnWidthPx > 0) ? lastColumnWidthPx : 400;
     }
 
     function applyMainScriptViewportWidth() {
@@ -5562,10 +5591,8 @@ function indexToColumnLetter(colIndex) {
     function measureBroadcastRowHeights(rows) {
         if (!rows.length) return [];
         const numCols = rows[0].querySelectorAll('.script-column').length;
-        const scriptColWidth = lastColumnWidthPx != null && lastColumnWidthPx > 0 ? lastColumnWidthPx : 400;
-        const mirrorColWidth = (mirrorViewportContentWidthPx != null && mirrorViewportContentWidthPx > 50)
-            ? mirrorViewportContentWidthPx
-            : scriptColWidth;
+        const mirrorColWidth = getBroadcastMirrorColWidthPx(rows);
+        const scriptColWidth = mirrorColWidth;
         const mainStyle = window.getComputedStyle(teleprompterText);
         const scriptFontPx = (row) => {
             if (row.classList.contains('row-font-12')) return '12px';
@@ -5573,6 +5600,13 @@ function indexToColumnLetter(colIndex) {
             if (!Number.isNaN(fromSelect) && fromSelect > 0) return fromSelect + 'px';
             const fromRoot = parseFloat(mainStyle.fontSize);
             return (fromRoot > 0 ? fromRoot : 80) + 'px';
+        };
+        const cellFontPx = (cell, row) => {
+            if (cell) {
+                const px = parseFloat(window.getComputedStyle(cell).fontSize);
+                if (px > 0) return px + 'px';
+            }
+            return scriptFontPx(row);
         };
         const probe = document.createElement('div');
         probe.style.position = 'absolute';
@@ -5595,10 +5629,10 @@ function indexToColumnLetter(colIndex) {
                 }
                 colW = Math.max(20, colW);
                 probe.style.width = colW + 'px';
-                probe.style.fontSize = scriptFontPx(row);
+                const cell = col.querySelector('.cell-locker') || col.querySelector('.cell-content') || col;
+                probe.style.fontSize = cellFontPx(cell, row);
                 probe.style.fontFamily = mainStyle.fontFamily || '';
                 probe.style.lineHeight = row.classList.contains('row-font-12') ? '1.2' : '1.1';
-                const cell = col.querySelector('.cell-locker') || col.querySelector('.cell-content') || col;
                 const text = cell ? (cell.innerText || '').trim() || '\u00A0' : '\u00A0';
                 probe.textContent = text;
                 maxH = Math.max(maxH, Math.max(1, probe.scrollHeight || 0));
@@ -5606,10 +5640,10 @@ function indexToColumnLetter(colIndex) {
             const mirrorCol = cols[numCols - 1];
             if (mirrorCol) {
                 probe.style.width = mirrorColWidth + 'px';
-                probe.style.fontSize = scriptFontPx(row);
+                const mirrorCell = mirrorCol.querySelector('.cell-locker') || mirrorCol.querySelector('.cell-content') || mirrorCol;
+                probe.style.fontSize = cellFontPx(mirrorCell, row);
                 probe.style.fontFamily = mainStyle.fontFamily || '';
                 probe.style.lineHeight = row.classList.contains('row-font-12') ? '1.2' : '1.1';
-                const mirrorCell = mirrorCol.querySelector('.cell-locker') || mirrorCol.querySelector('.cell-content') || mirrorCol;
                 const mirrorText = mirrorCell ? (mirrorCell.innerText || '').trim() || '\u00A0' : '\u00A0';
                 probe.textContent = mirrorText;
                 maxH = Math.max(maxH, Math.max(1, probe.scrollHeight || 0));
@@ -10483,6 +10517,21 @@ extendMonitorButton.onclick = async () => {
         teleprompterText.style.width = extendedFixedWidth + 'px';
         teleprompterText.style.maxWidth = extendedFixedWidth + 'px';
 
+        /* Position mirror before row-height probe so getMirrorViewportContentWidthPx can use frame width */
+        let mirrorLeft, mirrorTop;
+        const mirrorFrame = getMirrorFrameSize(secondaryScreen, extendedWindowWidth, extendedWindowHeight);
+        const mirrorW = mirrorFrame.width;
+        const mirrorH = mirrorFrame.height;
+        if (secondaryScreen) {
+            mirrorLeft = secondaryScreen.availLeft;
+            mirrorTop = secondaryScreen.availTop;
+        } else {
+            const fallback = getFallbackMirrorPosition(mirrorW, mirrorH);
+            mirrorLeft = fallback.left;
+            mirrorTop = fallback.top;
+        }
+        pendingMirrorPosition = { left: mirrorLeft, top: mirrorTop, width: mirrorW, height: mirrorH };
+
         /* Table is now at final width; sync column widths again so layout is correct, then measure row heights */
         syncColumnWidths(true);
         void teleprompterText.offsetHeight;
@@ -10500,22 +10549,7 @@ extendMonitorButton.onclick = async () => {
         if (typeof resetPillTriggerState === 'function') resetPillTriggerState();
         if (typeof suppressPillNavigationFor === 'function') suppressPillNavigationFor(2000);
 
-        /* Position mirror on other monitor: use getScreenDetails when available, else user's "second monitor position" setting */
-        let mirrorLeft, mirrorTop;
-        const mirrorFrame = getMirrorFrameSize(secondaryScreen, extendedWindowWidth, extendedWindowHeight);
-        const mirrorW = mirrorFrame.width;
-        const mirrorH = mirrorFrame.height;
-        if (secondaryScreen) {
-            mirrorLeft = secondaryScreen.availLeft;
-            mirrorTop = secondaryScreen.availTop;
-        } else {
-            const fallback = getFallbackMirrorPosition(mirrorW, mirrorH);
-            mirrorLeft = fallback.left;
-            mirrorTop = fallback.top;
-        }
         const specs = `left=${mirrorLeft},top=${mirrorTop},width=${mirrorW},height=${mirrorH},toolbar=no,menubar=no,location=no,status=no,scrollbars=no`;
-
-        pendingMirrorPosition = { left: mirrorLeft, top: mirrorTop, width: mirrorW, height: mirrorH };
         if (!secondaryScreen) {
             const posLabel = getSecondMonitorPosition();
             console.log('Mirror manual position: ' + posLabel + ' → x=' + mirrorLeft + ', y=' + mirrorTop + ', size ' + mirrorW + '×' + mirrorH);
