@@ -4941,8 +4941,8 @@ function indexToColumnLetter(colIndex) {
             }
             const col2 = cols[Math.min(idxCol2, n - 1)];
             const col3 = cols[Math.min(idxCol3, n - 1)];
-            /* Tallest column sets row height; stretch the *other* column with line-spacing (word-count class is only for red/green). */
-            if (!document.body.classList.contains('overview-mode') && cls !== 'row-lines-same') {
+            /* Tallest column sets row height; stretch the *other* column with line-spacing (applies to black rows too when heights differ). */
+            if (!document.body.classList.contains('overview-mode')) {
                 const locker2 = col2.querySelector('.cell-locker');
                 const c2 = col2.querySelector('.cell-content') || locker2;
                 const locker3 = col3.querySelector('.cell-locker');
