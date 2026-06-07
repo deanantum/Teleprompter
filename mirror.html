@@ -1153,6 +1153,9 @@
                                 };
                             }) : null
                         };
+                        if (data.mirrorDisplayHtml) {
+                            display.innerHTML = data.mirrorDisplayHtml;
+                        } else {
                         var html = '';
                         data.table.forEach(function(row, rowIndex) {
                             var cells = row.cells || [];
@@ -1166,9 +1169,11 @@
                             html += '</div>';
                         });
                         display.innerHTML = html;
+                        }
                         var mirrorRows = display.querySelectorAll('.script-row-wrapper');
                         applyMirrorRowClasses(mirrorRows, data.table, data.rowColors);
-                        suppressMirrorHeightReport = 40;
+                        invalidateMirrorRow0OriginCache();
+                        suppressMirrorHeightReport = data.cachedLayout ? 80 : 40;
                         if (data.cachedLayout && data.rowHeights && data.rowHeights.length) {
                             applyMirrorRowHeightsAndStretch(data, { heightsOnly: true });
                             if (!data.deferScrollSync) finishMirrorContentLayout(data);
